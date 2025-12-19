@@ -20,7 +20,7 @@
 //	./wg-i2p -name peer2 -privkey <base64-private-key> \
 //	    -peer-pubkey <peer1-public-key> \
 //	    -peer-endpoint <peer1-i2p-address>.b32.i2p
-
+/*
 package main
 
 import (
@@ -133,3 +133,5 @@ func toHex(b64 string) string {
 	}
 	return fmt.Sprintf("%x", data)
 }
+*/
+package main
