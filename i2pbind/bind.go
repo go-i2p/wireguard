@@ -69,11 +69,12 @@ func (e *I2PEndpoint) DstToString() string {
 	return e.dest.Base32()
 }
 
-// DstToBytes returns bytes representation of the destination for MAC2 cookies
+// DstToBytes returns bytes representation of the destination for MAC2 cookies.
+// Returns the raw 32-byte I2P destination hash for cryptographic operations.
 func (e *I2PEndpoint) DstToBytes() []byte {
-	// Return the hash of the destination for cookie calculations
+	// Return the raw hash bytes (not base32-encoded string) for cookie calculations
 	hash := e.dest.DestHash()
-	return []byte(hash.Hash())
+	return hash[:]
 }
 
 // DstIP returns the destination "IP" - for I2P this is not meaningful
