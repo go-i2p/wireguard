@@ -165,6 +165,46 @@ func TestNewI2PBindWithSAM(t *testing.T) {
 	}
 }
 
+func TestNewI2PBindWithOptions(t *testing.T) {
+	customSAM := "192.168.1.1:7656"
+	customOptions := []string{"inbound.length=2", "outbound.length=2"}
+
+	bind := NewI2PBindWithOptions("test-tunnel", customSAM, customOptions)
+	if bind == nil {
+		t.Fatal("NewI2PBindWithOptions returned nil")
+	}
+
+	if bind.name != "test-tunnel" {
+		t.Errorf("Expected name 'test-tunnel', got '%s'", bind.name)
+	}
+
+	if bind.samAddr != customSAM {
+		t.Errorf("Expected SAM address '%s', got '%s'", customSAM, bind.samAddr)
+	}
+
+	if len(bind.samOptions) != len(customOptions) {
+		t.Errorf("Expected %d SAM options, got %d", len(customOptions), len(bind.samOptions))
+	}
+
+	for i, opt := range customOptions {
+		if bind.samOptions[i] != opt {
+			t.Errorf("SAM option mismatch at index %d: expected '%s', got '%s'", i, opt, bind.samOptions[i])
+		}
+	}
+}
+
+func TestNewI2PBindWithOptions_NilOptions(t *testing.T) {
+	// Test that nil options are handled correctly (should use defaults in Open)
+	bind := NewI2PBindWithOptions("test-tunnel", DefaultSAMAddress, nil)
+	if bind == nil {
+		t.Fatal("NewI2PBindWithOptions returned nil")
+	}
+
+	if bind.samOptions != nil {
+		t.Error("Expected nil samOptions when nil passed to constructor")
+	}
+}
+
 func TestI2PBind_BatchSize(t *testing.T) {
 	bind := NewI2PBind("test-tunnel")
 	batchSize := bind.BatchSize()

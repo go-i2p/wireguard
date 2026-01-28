@@ -100,8 +100,9 @@ type I2PBind struct {
 	mu sync.Mutex
 
 	// Configuration
-	name    string // Tunnel name for I2P
-	samAddr string // SAM bridge address
+	name       string   // Tunnel name for I2P
+	samAddr    string   // SAM bridge address
+	samOptions []string // SAM session options (tunnel parameters)
 
 	// I2P session components
 	garlic     *onramp.Garlic
@@ -118,9 +119,22 @@ func NewI2PBind(name string) *I2PBind {
 
 // NewI2PBindWithSAM creates a new I2P Bind with a custom SAM address
 func NewI2PBindWithSAM(name, samAddr string) *I2PBind {
+	return NewI2PBindWithOptions(name, samAddr, nil)
+}
+
+// NewI2PBindWithOptions creates a new I2P Bind with custom SAM address and tunnel options.
+// The options parameter allows configuring I2P tunnel parameters such as:
+//   - inbound.length, outbound.length (tunnel hop count, default 3)
+//   - inbound.quantity, outbound.quantity (number of tunnels)
+//   - inbound.backupQuantity, outbound.backupQuantity (backup tunnels)
+//
+// If options is nil or empty, onramp.OPT_DEFAULTS will be used.
+// See github.com/go-i2p/sam3 for available options.
+func NewI2PBindWithOptions(name, samAddr string, options []string) *I2PBind {
 	return &I2PBind{
-		name:    name,
-		samAddr: samAddr,
+		name:       name,
+		samAddr:    samAddr,
+		samOptions: options,
 	}
 }
 
@@ -133,8 +147,14 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		return nil, 0, conn.ErrBindAlreadyOpen
 	}
 
-	// Create a new Garlic session
-	garlic, err := onramp.NewGarlic(b.name, b.samAddr, onramp.OPT_DEFAULTS)
+	// Use configured options or fall back to defaults
+	options := b.samOptions
+	if len(options) == 0 {
+		options = onramp.OPT_DEFAULTS
+	}
+
+	// Create a new Garlic session with configured options
+	garlic, err := onramp.NewGarlic(b.name, b.samAddr, options)
 	if err != nil {
 		return nil, 0, err
 	}
