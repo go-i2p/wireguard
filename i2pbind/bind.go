@@ -20,7 +20,6 @@ import (
 
 	"github.com/go-i2p/i2pkeys"
 	"github.com/go-i2p/onramp"
-	"github.com/go-i2p/sam3"
 
 	"golang.zx2c4.com/wireguard/conn"
 )
@@ -104,8 +103,8 @@ type I2PBind struct {
 	samAddr string // SAM bridge address
 
 	// I2P session components
-	garlic          *onramp.Garlic
-	datagramSession *sam3.DatagramSession
+	garlic     *onramp.Garlic
+	packetConn net.PacketConn
 
 	// State
 	closed bool
@@ -129,7 +128,7 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.datagramSession != nil {
+	if b.packetConn != nil {
 		return nil, 0, conn.ErrBindAlreadyOpen
 	}
 
@@ -140,21 +139,13 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	}
 	b.garlic = garlic
 
-	// Get a PacketConn (which is a DatagramSession internally)
+	// Get a PacketConn (uses hybrid2 protocol internally)
 	packetConn, err := garlic.ListenPacket()
 	if err != nil {
 		garlic.Close()
 		return nil, 0, err
 	}
-
-	// Type assert to get the DatagramSession for full functionality
-	ds, ok := packetConn.(*sam3.DatagramSession)
-	if !ok {
-		packetConn.Close()
-		garlic.Close()
-		return nil, 0, errors.New("i2pbind: expected DatagramSession from ListenPacket")
-	}
-	b.datagramSession = ds
+	b.packetConn = packetConn
 	b.closed = false
 
 	// Create receive function
@@ -168,10 +159,10 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 	return func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
 		b.mu.Lock()
-		ds := b.datagramSession
+		pc := b.packetConn
 		b.mu.Unlock()
 
-		if ds == nil {
+		if pc == nil {
 			return 0, net.ErrClosed
 		}
 
@@ -180,7 +171,7 @@ func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 			return 0, nil
 		}
 
-		numBytes, addr, err := ds.ReadFrom(packets[0])
+		numBytes, addr, err := pc.ReadFrom(packets[0])
 		if err != nil {
 			return 0, err
 		}
@@ -215,11 +206,11 @@ func (b *I2PBind) Close() error {
 
 	var errs []error
 
-	if b.datagramSession != nil {
-		if err := b.datagramSession.Close(); err != nil {
+	if b.packetConn != nil {
+		if err := b.packetConn.Close(); err != nil {
 			errs = append(errs, err)
 		}
-		b.datagramSession = nil
+		b.packetConn = nil
 	}
 
 	if b.garlic != nil {
@@ -244,10 +235,10 @@ func (b *I2PBind) SetMark(mark uint32) error {
 // Send transmits packets to the specified I2P endpoint
 func (b *I2PBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
 	b.mu.Lock()
-	ds := b.datagramSession
+	pc := b.packetConn
 	b.mu.Unlock()
 
-	if ds == nil {
+	if pc == nil {
 		return net.ErrClosed
 	}
 
@@ -262,7 +253,7 @@ func (b *I2PBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
 			return errors.New("i2pbind: datagram exceeds I2P maximum size (31KB)")
 		}
 
-		_, err := ds.WriteTo(buf, i2pEp.dest)
+		_, err := pc.WriteTo(buf, i2pEp.dest)
 		if err != nil {
 			return err
 		}
@@ -291,11 +282,15 @@ func (b *I2PBind) LocalAddress() (string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.datagramSession == nil {
+	if b.packetConn == nil {
 		return "", errors.New("i2pbind: bind not open")
 	}
 
-	return b.datagramSession.LocalI2PAddr().Base32(), nil
+	localAddr := b.packetConn.LocalAddr()
+	if i2pAddr, ok := localAddr.(i2pkeys.I2PAddr); ok {
+		return i2pAddr.Base32(), nil
+	}
+	return localAddr.String(), nil
 }
 
 // LocalDestination returns the full I2P destination
@@ -303,9 +298,14 @@ func (b *I2PBind) LocalDestination() (i2pkeys.I2PAddr, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.datagramSession == nil {
+	if b.packetConn == nil {
 		return "", errors.New("i2pbind: bind not open")
 	}
 
-	return b.datagramSession.LocalI2PAddr(), nil
+	localAddr := b.packetConn.LocalAddr()
+	if i2pAddr, ok := localAddr.(i2pkeys.I2PAddr); ok {
+		return i2pAddr, nil
+	}
+	// Try to parse from string representation
+	return i2pkeys.NewI2PAddrFromString(localAddr.String())
 }
