@@ -298,7 +298,15 @@ func (b *I2PBind) BatchSize() int {
 	return 1
 }
 
-// LocalAddress returns this node's I2P destination address
+// LocalAddress returns this node's I2P destination address in base32 format.
+//
+// This method will return an error if:
+//   - The bind has not been opened yet (call Open() first)
+//   - The SAM bridge is not running or accessible
+//   - The I2P session failed to establish
+//
+// After a successful Open() call, LocalAddress() should always succeed.
+// If it fails after Open(), the I2P session may have been terminated.
 func (b *I2PBind) LocalAddress() (string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
