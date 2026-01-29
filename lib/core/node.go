@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // NodeState represents the current state of the node.
@@ -54,6 +55,13 @@ type Node struct {
 	cancel context.CancelFunc
 	// done signals that the node has fully stopped
 	done chan struct{}
+
+	// startedAt tracks when the node started
+	startedAt time.Time
+
+	// Event callbacks for embedded API integration
+	onStateChange func(oldState, newState NodeState)
+	onError       func(err error, message string)
 }
 
 // NewNode creates a new Node with the given configuration.
@@ -95,9 +103,12 @@ func (n *Node) Start(ctx context.Context) error {
 		n.mu.Unlock()
 		return fmt.Errorf("cannot start node in state %s", n.state)
 	}
+	oldState := n.state
 	n.state = StateStarting
 	n.done = make(chan struct{})
 	n.mu.Unlock()
+
+	n.emitStateChange(oldState, StateStarting)
 
 	// Create a cancellable context for the node's lifetime
 	nodeCtx, cancel := context.WithCancel(ctx)
@@ -111,6 +122,7 @@ func (n *Node) Start(ctx context.Context) error {
 	// Ensure data directory exists
 	if err := n.config.EnsureDataDir(); err != nil {
 		n.transitionToStopped()
+		n.emitError(err, "failed to create data directory")
 		return fmt.Errorf("creating data directory: %w", err)
 	}
 
@@ -121,8 +133,10 @@ func (n *Node) Start(ctx context.Context) error {
 
 	n.mu.Lock()
 	n.state = StateRunning
+	n.startedAt = time.Now()
 	n.mu.Unlock()
 
+	n.emitStateChange(StateStarting, StateRunning)
 	n.logger.Info("node started")
 
 	// Start the main run loop in a goroutine
@@ -138,7 +152,13 @@ func (n *Node) run(ctx context.Context) {
 	<-ctx.Done()
 
 	n.logger.Info("node shutting down")
-	n.transitionToStopped()
+
+	n.mu.Lock()
+	oldState := n.state
+	n.state = StateStopped
+	n.mu.Unlock()
+
+	n.emitStateChange(oldState, StateStopped)
 }
 
 // Stop gracefully shuts down the node.
@@ -153,6 +173,7 @@ func (n *Node) Stop(ctx context.Context) error {
 	cancel := n.cancel
 	n.mu.Unlock()
 
+	n.emitStateChange(StateRunning, StateStopping)
 	n.logger.Info("stopping node")
 
 	// Signal all goroutines to stop
@@ -196,4 +217,61 @@ func (n *Node) Done() <-chan struct{} {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.done
+}
+
+// StartedAt returns when the node was started.
+// Returns zero time if not started.
+func (n *Node) StartedAt() time.Time {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.startedAt
+}
+
+// Uptime returns how long the node has been running.
+// Returns zero if not running.
+func (n *Node) Uptime() time.Duration {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.startedAt.IsZero() || n.state != StateRunning {
+		return 0
+	}
+	return time.Since(n.startedAt)
+}
+
+// SetOnStateChange sets a callback for state changes.
+// The callback is invoked synchronously during state transitions.
+func (n *Node) SetOnStateChange(callback func(oldState, newState NodeState)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.onStateChange = callback
+}
+
+// SetOnError sets a callback for error events.
+// The callback is invoked when recoverable errors occur.
+func (n *Node) SetOnError(callback func(err error, message string)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.onError = callback
+}
+
+// emitStateChange notifies the state change callback if set.
+func (n *Node) emitStateChange(oldState, newState NodeState) {
+	n.mu.RLock()
+	callback := n.onStateChange
+	n.mu.RUnlock()
+
+	if callback != nil {
+		callback(oldState, newState)
+	}
+}
+
+// emitError notifies the error callback if set.
+func (n *Node) emitError(err error, message string) {
+	n.mu.RLock()
+	callback := n.onError
+	n.mu.RUnlock()
+
+	if callback != nil {
+		callback(err, message)
+	}
 }

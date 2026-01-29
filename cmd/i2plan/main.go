@@ -40,6 +40,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/go-i2p/wireguard/lib/core"
+	"github.com/go-i2p/wireguard/lib/embedded"
 	"github.com/go-i2p/wireguard/lib/rpc"
 	"github.com/go-i2p/wireguard/lib/tui"
 	"github.com/go-i2p/wireguard/lib/web"
@@ -127,30 +128,48 @@ func run() int {
 		return handleWeb(logger, webDataDir)
 	}
 
-	// Load configuration
+	// Build embedded VPN configuration
+	// Start with defaults, then apply config file, then CLI overrides
+	vpnConfig := embedded.DefaultConfig()
+	vpnConfig.Logger = logger
+
+	// Load configuration file for additional settings
 	cfg, err := core.LoadConfig(*configPath)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		return 1
 	}
 
+	// Apply config file values
+	vpnConfig.NodeName = cfg.Node.Name
+	vpnConfig.DataDir = cfg.Node.DataDir
+	vpnConfig.SAMAddress = cfg.I2P.SAMAddress
+	vpnConfig.TunnelLength = cfg.I2P.TunnelLength
+	vpnConfig.TunnelSubnet = cfg.Mesh.TunnelSubnet
+	vpnConfig.MaxPeers = cfg.Mesh.MaxPeers
+	vpnConfig.EnableRPC = cfg.RPC.Enabled
+	vpnConfig.RPCSocket = cfg.RPC.Socket
+	vpnConfig.EnableWeb = cfg.Web.Enabled
+	vpnConfig.WebListenAddr = cfg.Web.Listen
+
 	// Apply command-line overrides
 	if *nodeName != "" {
-		cfg.Node.Name = *nodeName
+		vpnConfig.NodeName = *nodeName
 	}
 	if *dataDir != "" {
-		cfg.Node.DataDir = *dataDir
+		vpnConfig.DataDir = *dataDir
 	}
 	if *samAddr != "" {
-		cfg.I2P.SAMAddress = *samAddr
+		vpnConfig.SAMAddress = *samAddr
 	}
 
-	// Create and start the node
-	node, err := core.NewNode(cfg, logger)
+	// Create the embedded VPN
+	vpn, err := embedded.New(vpnConfig)
 	if err != nil {
-		logger.Error("failed to create node", "error", err)
+		logger.Error("failed to create VPN", "error", err)
 		return 1
 	}
+	defer vpn.Close()
 
 	// Create a context that is cancelled on SIGINT/SIGTERM
 	ctx, cancel := context.WithCancel(context.Background())
@@ -159,30 +178,30 @@ func run() int {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start the node
-	if err := node.Start(ctx); err != nil {
-		logger.Error("failed to start node", "error", err)
+	// Start the VPN
+	if err := vpn.Start(ctx); err != nil {
+		logger.Error("failed to start VPN", "error", err)
 		return 1
 	}
 
-	logger.Info("i2plan started", "name", cfg.Node.Name, "version", Version)
+	logger.Info("i2plan started", "name", vpnConfig.NodeName, "version", Version)
 
 	// Wait for shutdown signal
 	select {
 	case sig := <-sigChan:
 		logger.Info("received signal, shutting down", "signal", sig)
-	case <-node.Done():
-		logger.Info("node stopped unexpectedly")
+	case <-vpn.Done():
+		logger.Info("VPN stopped unexpectedly")
 	}
 
 	// Graceful shutdown
 	cancel()
 
 	// Create a new context for shutdown with reasonable timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30000000000) // 30 seconds
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
-	if err := node.Stop(shutdownCtx); err != nil {
+	if err := vpn.Stop(shutdownCtx); err != nil {
 		logger.Error("shutdown error", "error", err)
 		return 1
 	}
