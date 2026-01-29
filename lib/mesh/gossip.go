@@ -42,6 +42,9 @@ func DefaultGossipConfig() GossipConfig {
 type MessageSender interface {
 	// SendTo sends a message to a specific peer by node ID.
 	SendTo(nodeID string, data []byte) error
+	// SendToDest sends a message directly to an I2P destination.
+	// This is useful for initial handshakes before a peer is registered.
+	SendToDest(i2pDest string, data []byte) error
 	// Broadcast sends a message to all connected peers.
 	Broadcast(data []byte) error
 }
@@ -696,7 +699,11 @@ func (g *GossipEngine) handleHandshakeInit(msg *Message) error {
 		// Send directly to the initiator's I2P destination
 		if sendErr := g.sender.SendTo(init.NodeID, responseData); sendErr != nil {
 			// Fall back to destination-based send if nodeID not registered
-			g.logger.Debug("SendTo failed, peer may not be registered yet", "error", sendErr)
+			g.logger.Debug("SendTo failed, falling back to SendToDest", "error", sendErr)
+			if fallbackErr := g.sender.SendToDest(init.I2PDest, responseData); fallbackErr != nil {
+				g.logger.Error("failed to send handshake response via fallback", "error", fallbackErr)
+				return fallbackErr
+			}
 		}
 
 		g.logger.Info("sent handshake response",

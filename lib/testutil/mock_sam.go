@@ -180,6 +180,15 @@ func (t *MockTransport) SendTo(nodeID string, data []byte) error {
 	}
 }
 
+// SendToDest sends a message directly to an I2P destination.
+// In the mock, this is a no-op that always succeeds since we don't simulate I2P destinations.
+func (t *MockTransport) SendToDest(i2pDest string, data []byte) error {
+	// In a mock environment, we can't actually send to I2P destinations.
+	// This method exists to satisfy the MessageSender interface.
+	// For testing the fallback behavior, this always succeeds.
+	return nil
+}
+
 // Broadcast sends a message to all peers.
 func (t *MockTransport) Broadcast(data []byte) error {
 	t.mu.RLock()

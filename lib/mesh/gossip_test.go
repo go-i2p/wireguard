@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -14,11 +15,13 @@ type mockSender struct {
 	mu         sync.Mutex
 	broadcasts [][]byte
 	sends      map[string][][]byte
+	destSends  map[string][][]byte
 }
 
 func newMockSender() *mockSender {
 	return &mockSender{
-		sends: make(map[string][][]byte),
+		sends:     make(map[string][][]byte),
+		destSends: make(map[string][][]byte),
 	}
 }
 
@@ -26,6 +29,13 @@ func (m *mockSender) SendTo(nodeID string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sends[nodeID] = append(m.sends[nodeID], data)
+	return nil
+}
+
+func (m *mockSender) SendToDest(i2pDest string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.destSends[i2pDest] = append(m.destSends[i2pDest], data)
 	return nil
 }
 
@@ -46,6 +56,51 @@ func (m *mockSender) getSendCount(nodeID string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.sends[nodeID])
+}
+
+func (m *mockSender) getDestSendCount(i2pDest string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.destSends[i2pDest])
+}
+
+// mockFailingSender is a sender that fails SendTo but succeeds on SendToDest.
+// This is used to test the fallback behavior in handshake init handling.
+type mockFailingSender struct {
+	mu         sync.Mutex
+	destSends  map[string][][]byte
+	broadcasts [][]byte
+}
+
+func newMockFailingSender() *mockFailingSender {
+	return &mockFailingSender{
+		destSends: make(map[string][][]byte),
+	}
+}
+
+func (m *mockFailingSender) SendTo(nodeID string, data []byte) error {
+	// Always fail to simulate unregistered peer
+	return errors.New("peer not registered for sending")
+}
+
+func (m *mockFailingSender) SendToDest(i2pDest string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.destSends[i2pDest] = append(m.destSends[i2pDest], data)
+	return nil
+}
+
+func (m *mockFailingSender) Broadcast(data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.broadcasts = append(m.broadcasts, data)
+	return nil
+}
+
+func (m *mockFailingSender) getDestSendCount(i2pDest string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.destSends[i2pDest])
 }
 
 func TestDefaultGossipConfig(t *testing.T) {
@@ -546,6 +601,69 @@ func TestGossipEngine_HandleHandshakeInit_InvalidToken(t *testing.T) {
 	peer, found := pm.GetPeer("remote-node")
 	if found && peer.State == PeerStateConnected {
 		t.Error("Peer should not be connected with invalid token")
+	}
+}
+
+// TestGossipEngine_HandleHandshakeInit_Fallback tests that when SendTo fails
+// (because the peer isn't registered yet), the response is sent via SendToDest
+// using the I2P destination from the handshake init message.
+func TestGossipEngine_HandleHandshakeInit_Fallback(t *testing.T) {
+	sender := newMockFailingSender()
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "local-node",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+	pm.AddValidToken([]byte("valid-token"))
+
+	ge := NewGossipEngine(GossipEngineConfig{
+		PeerManager: pm,
+		Sender:      sender,
+		NodeID:      "local-node",
+		I2PDest:     "local.b32.i2p",
+		WGPublicKey: key.PublicKey().String(),
+		TunnelIP:    ip.String(),
+		NetworkID:   "test-network",
+	})
+
+	// Create handshake init message from a remote peer
+	remoteKey, _ := wgtypes.GeneratePrivateKey()
+	remoteIP := AllocateTunnelIP(remoteKey.PublicKey())
+	remoteI2PDest := "remote-peer.b32.i2p"
+
+	init := &HandshakeInit{
+		I2PDest:     remoteI2PDest,
+		WGPublicKey: remoteKey.PublicKey().String(),
+		TunnelIP:    remoteIP.String(),
+		NetworkID:   "test-network",
+		AuthToken:   []byte("valid-token"),
+		NodeID:      "remote-node",
+	}
+
+	payload, _ := EncodeMessage(MsgHandshakeInit, init)
+	msg, _ := DecodeMessage(payload)
+
+	err := ge.HandleMessage(msg)
+	if err != nil {
+		t.Fatalf("HandleMessage(HandshakeInit) error = %v", err)
+	}
+
+	// Check that the fallback SendToDest was called with the remote I2P destination
+	destSendCount := sender.getDestSendCount(remoteI2PDest)
+	if destSendCount != 1 {
+		t.Errorf("SendToDest call count = %d, want 1 (fallback should be used)", destSendCount)
+	}
+
+	// Verify peer was still added to manager
+	peer, found := pm.GetPeer("remote-node")
+	if !found {
+		t.Error("Peer not added to manager after handshake init")
+	} else if peer.State != PeerStatePending {
+		t.Errorf("Peer state = %v, want Pending", peer.State)
 	}
 }
 
