@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/go-i2p/wireguard/lib/ratelimit"
 )
 
 // NodeProvider provides access to node state for RPC handlers.
@@ -56,13 +58,36 @@ type ConfigProvider interface {
 	SetConfig(key string, value any) (oldValue any, err error)
 }
 
+// BanProvider provides ban list operations for RPC handlers.
+type BanProvider interface {
+	// ListBans returns all active bans.
+	ListBans() []BanEntry
+	// AddBan adds a peer to the ban list.
+	AddBan(nodeID, reason, description string, duration time.Duration) error
+	// RemoveBan removes a peer from the ban list.
+	RemoveBan(nodeID string) bool
+}
+
+// BanEntry is used by BanProvider to return ban information.
+type BanEntry struct {
+	NodeID      string
+	I2PDest     string
+	Reason      string
+	Description string
+	BannedAt    time.Time
+	ExpiresAt   time.Time
+	StrikeCount int
+}
+
 // Handlers provides RPC handlers with access to the node.
 type Handlers struct {
-	node   NodeProvider
-	peers  PeerProvider
-	invite InviteProvider
-	routes RouteProvider
-	config ConfigProvider
+	node            NodeProvider
+	peers           PeerProvider
+	invite          InviteProvider
+	routes          RouteProvider
+	config          ConfigProvider
+	bans            BanProvider
+	inviteRateLimit *ratelimit.Limiter // Rate limiter for invite acceptance
 }
 
 // HandlersConfig configures the RPC handlers.
@@ -72,16 +97,19 @@ type HandlersConfig struct {
 	Invite InviteProvider
 	Routes RouteProvider
 	Config ConfigProvider
+	Bans   BanProvider
 }
 
 // NewHandlers creates RPC handlers.
 func NewHandlers(cfg HandlersConfig) *Handlers {
 	return &Handlers{
-		node:   cfg.Node,
-		peers:  cfg.Peers,
-		invite: cfg.Invite,
-		routes: cfg.Routes,
-		config: cfg.Config,
+		node:            cfg.Node,
+		peers:           cfg.Peers,
+		invite:          cfg.Invite,
+		routes:          cfg.Routes,
+		config:          cfg.Config,
+		bans:            cfg.Bans,
+		inviteRateLimit: ratelimit.New(0.1, 5), // 0.1/sec (1 per 10s), burst 5
 	}
 }
 
@@ -95,6 +123,9 @@ func (h *Handlers) RegisterAll(s *Server) {
 	s.RegisterHandler("routes.list", h.RoutesList)
 	s.RegisterHandler("config.get", h.ConfigGet)
 	s.RegisterHandler("config.set", h.ConfigSet)
+	s.RegisterHandler("bans.list", h.BansList)
+	s.RegisterHandler("bans.add", h.BansAdd)
+	s.RegisterHandler("bans.remove", h.BansRemove)
 }
 
 // Status returns the node status.
@@ -199,6 +230,11 @@ func (h *Handlers) InviteCreate(ctx context.Context, params json.RawMessage) (an
 func (h *Handlers) InviteAccept(ctx context.Context, params json.RawMessage) (any, *Error) {
 	if h.invite == nil {
 		return nil, ErrInternal("invites not available")
+	}
+
+	// Rate limit invite acceptance to prevent brute-force attacks
+	if !h.inviteRateLimit.Allow() {
+		return nil, ErrRateLimited()
 	}
 
 	var p InviteAcceptParams
@@ -331,4 +367,107 @@ func formatPlural(n int, singular, plural string) string {
 // formatInt formats an integer as a string.
 func formatInt(n int) string {
 	return string(rune('0'+n/10)) + string(rune('0'+n%10))
+}
+
+// ---- Ban Handlers ----
+
+// BansList returns all banned peers.
+func (h *Handlers) BansList(ctx context.Context, params json.RawMessage) (any, *Error) {
+	if h.bans == nil {
+		return nil, ErrInternal("bans not available")
+	}
+
+	bans := h.bans.ListBans()
+	result := &BanListResult{
+		Bans: make([]BanInfo, 0, len(bans)),
+	}
+
+	for _, b := range bans {
+		info := BanInfo{
+			NodeID:      b.NodeID,
+			I2PDest:     b.I2PDest,
+			Reason:      b.Reason,
+			Description: b.Description,
+			BannedAt:    b.BannedAt,
+			StrikeCount: b.StrikeCount,
+		}
+		if !b.ExpiresAt.IsZero() {
+			info.ExpiresAt = &b.ExpiresAt
+		}
+		result.Bans = append(result.Bans, info)
+	}
+
+	return result, nil
+}
+
+// BansAdd bans a peer.
+func (h *Handlers) BansAdd(ctx context.Context, params json.RawMessage) (any, *Error) {
+	if h.bans == nil {
+		return nil, ErrInternal("bans not available")
+	}
+
+	var p BanAddParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, ErrInvalidParams(err.Error())
+	}
+	if p.NodeID == "" {
+		return nil, ErrInvalidParams("node_id is required")
+	}
+
+	reason := p.Reason
+	if reason == "" {
+		reason = "manual"
+	}
+
+	var duration time.Duration
+	if p.Duration != "" {
+		var err error
+		duration, err = time.ParseDuration(p.Duration)
+		if err != nil {
+			return nil, ErrInvalidParams("invalid duration: " + err.Error())
+		}
+	}
+
+	if err := h.bans.AddBan(p.NodeID, reason, p.Description, duration); err != nil {
+		return nil, ErrInternal(err.Error())
+	}
+
+	msg := "peer banned"
+	if duration > 0 {
+		msg = "peer banned for " + duration.String()
+	} else {
+		msg = "peer banned permanently"
+	}
+
+	return &BanAddResult{
+		Success: true,
+		Message: msg,
+	}, nil
+}
+
+// BansRemove unbans a peer.
+func (h *Handlers) BansRemove(ctx context.Context, params json.RawMessage) (any, *Error) {
+	if h.bans == nil {
+		return nil, ErrInternal("bans not available")
+	}
+
+	var p BanRemoveParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, ErrInvalidParams(err.Error())
+	}
+	if p.NodeID == "" {
+		return nil, ErrInvalidParams("node_id is required")
+	}
+
+	if !h.bans.RemoveBan(p.NodeID) {
+		return &BanRemoveResult{
+			Success: false,
+			Message: "peer not found in ban list",
+		}, nil
+	}
+
+	return &BanRemoveResult{
+		Success: true,
+		Message: "peer unbanned",
+	}, nil
 }

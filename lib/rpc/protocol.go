@@ -31,6 +31,8 @@ const (
 	ErrCodePermissionDenied = -32002
 	// Not found (generic)
 	ErrCodeNotFound = -32003
+	// Rate limit exceeded
+	ErrCodeRateLimited = -32004
 )
 
 // Request represents a JSON-RPC request.
@@ -143,6 +145,11 @@ func ErrPermissionDenied(details string) *Error {
 // ErrNotFound returns a not found error.
 func ErrNotFound(resource string) *Error {
 	return NewError(ErrCodeNotFound, "not found", resource)
+}
+
+// ErrRateLimited returns a rate limit exceeded error.
+func ErrRateLimited() *Error {
+	return NewError(ErrCodeRateLimited, "rate limit exceeded", nil)
 }
 
 // ---- Request/Response types for each RPC method ----
@@ -321,4 +328,69 @@ type LogEntry struct {
 	Message string `json:"message"`
 	// Component is the component that generated the log
 	Component string `json:"component,omitempty"`
+}
+
+// ---- Ban Management Types ----
+
+// BanListParams is the request for "bans.list" method.
+type BanListParams struct {
+	// IncludeExpired includes expired bans in the result
+	IncludeExpired bool `json:"include_expired,omitempty"`
+}
+
+// BanListResult is the response for "bans.list" method.
+type BanListResult struct {
+	Bans []BanInfo `json:"bans"`
+}
+
+// BanInfo represents a banned peer.
+type BanInfo struct {
+	// NodeID is the banned node's identifier
+	NodeID string `json:"node_id"`
+	// I2PDest is the banned node's I2P destination (if known)
+	I2PDest string `json:"i2p_dest,omitempty"`
+	// Reason is why the peer was banned
+	Reason string `json:"reason"`
+	// Description provides additional context
+	Description string `json:"description,omitempty"`
+	// BannedAt is when the ban was created
+	BannedAt time.Time `json:"banned_at"`
+	// ExpiresAt is when the ban expires (zero means permanent)
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// StrikeCount is how many violations led to this ban
+	StrikeCount int `json:"strike_count"`
+}
+
+// BanAddParams is the request for "bans.add" method.
+type BanAddParams struct {
+	// NodeID is the node to ban (required)
+	NodeID string `json:"node_id"`
+	// Reason is why the peer is being banned
+	Reason string `json:"reason,omitempty"`
+	// Description provides additional context
+	Description string `json:"description,omitempty"`
+	// Duration is how long the ban lasts (0 = permanent)
+	Duration string `json:"duration,omitempty"`
+}
+
+// BanAddResult is the response for "bans.add" method.
+type BanAddResult struct {
+	// Success indicates if the ban was added
+	Success bool `json:"success"`
+	// Message provides additional context
+	Message string `json:"message"`
+}
+
+// BanRemoveParams is the request for "bans.remove" method.
+type BanRemoveParams struct {
+	// NodeID is the node to unban
+	NodeID string `json:"node_id"`
+}
+
+// BanRemoveResult is the response for "bans.remove" method.
+type BanRemoveResult struct {
+	// Success indicates if the ban was removed
+	Success bool `json:"success"`
+	// Message provides additional context
+	Message string `json:"message"`
 }

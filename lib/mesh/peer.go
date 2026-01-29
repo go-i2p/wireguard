@@ -82,6 +82,9 @@ type PeerManager struct {
 	// Validation
 	validTokens [][]byte // invite tokens that can authorize new peers
 
+	// Ban list for blocking misbehaving peers
+	banList *BanList
+
 	// Callbacks
 	onPeerConnected    func(*Peer)
 	onPeerDisconnected func(*Peer)
@@ -100,6 +103,7 @@ type PeerManagerConfig struct {
 	NetworkID   string
 	MaxPeers    int
 	Logger      *slog.Logger
+	BanList     *BanList
 }
 
 // NewPeerManager creates a new PeerManager.
@@ -122,9 +126,17 @@ func NewPeerManager(cfg PeerManagerConfig) *PeerManager {
 		wgPublicKey:     cfg.WGPublicKey,
 		tunnelIP:        cfg.TunnelIP,
 		networkID:       cfg.NetworkID,
+		banList:         cfg.BanList,
 		maxPeers:        maxPeers,
 		handshakeTimout: 30 * time.Second,
 	}
+}
+
+// SetBanList sets the ban list for the peer manager.
+func (pm *PeerManager) SetBanList(bl *BanList) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.banList = bl
 }
 
 // AddValidToken adds an invite token that can authorize new peers.
@@ -151,6 +163,20 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		"from_node", init.NodeID,
 		"i2p_dest", truncateDest(init.I2PDest))
 
+	// Check if peer is banned
+	if pm.banList != nil {
+		if pm.banList.IsBanned(init.NodeID) {
+			pm.logger.Warn("rejected handshake from banned peer",
+				"node_id", init.NodeID)
+			return pm.rejectHandshake("banned"), nil
+		}
+		if pm.banList.IsBannedByDest(init.I2PDest) {
+			pm.logger.Warn("rejected handshake from banned I2P dest",
+				"i2p_dest", truncateDest(init.I2PDest))
+			return pm.rejectHandshake("banned"), nil
+		}
+	}
+
 	// Validate network ID
 	if init.NetworkID != pm.networkID {
 		return pm.rejectHandshake("network ID mismatch"), nil
@@ -158,6 +184,10 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 
 	// Validate auth token
 	if !pm.validateToken(init.AuthToken) {
+		// Record a strike for invalid tokens
+		if pm.banList != nil {
+			pm.banList.RecordStrike(init.NodeID, BanReasonHandshakeFailures, "invalid auth token")
+		}
 		return pm.rejectHandshake("invalid auth token"), nil
 	}
 

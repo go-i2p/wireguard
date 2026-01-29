@@ -52,10 +52,11 @@ func TestIdentity_DeriveNodeID_Deterministic(t *testing.T) {
 		t.Fatalf("NewIdentity failed: %v", err)
 	}
 
-	// Create another identity with same private key
-	id2 := newIdentityFromPrivateKey(id1.PrivateKey())
+	// Node ID is derived from WG public key, so it should be consistent
+	// when derived from the same public key
+	derivedID := deriveNodeID(id1.PublicKey())
 
-	if id1.NodeID() != id2.NodeID() {
+	if id1.NodeID() != derivedID {
 		t.Error("node ID should be deterministic from public key")
 	}
 }
@@ -236,5 +237,113 @@ func TestIdentity_FilePermissions(t *testing.T) {
 	perm := info.Mode().Perm()
 	if perm != 0600 {
 		t.Errorf("identity file should have 0600 permissions, got %o", perm)
+	}
+}
+
+func TestIdentity_SignAndVerify(t *testing.T) {
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatalf("NewIdentity failed: %v", err)
+	}
+
+	message := []byte("test message to sign")
+
+	// Sign the message
+	signature := id.Sign(message)
+
+	// Ed25519 signatures are 64 bytes
+	if len(signature) != SignatureLength {
+		t.Errorf("signature should be %d bytes, got %d", SignatureLength, len(signature))
+	}
+
+	// Verify with own key
+	if !id.Verify(message, signature) {
+		t.Error("signature should verify with own key")
+	}
+
+	// Verify with wrong message should fail
+	if id.Verify([]byte("wrong message"), signature) {
+		t.Error("signature should not verify with wrong message")
+	}
+
+	// Verify with wrong signature should fail
+	wrongSig := make([]byte, SignatureLength)
+	if id.Verify(message, wrongSig) {
+		t.Error("wrong signature should not verify")
+	}
+}
+
+func TestIdentity_VerifyWithPublicKey(t *testing.T) {
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatalf("NewIdentity failed: %v", err)
+	}
+
+	message := []byte("message for public key verification")
+	signature := id.Sign(message)
+
+	// Get the public key
+	pubKey := id.VerifyingKey()
+
+	// Verify using the public key directly
+	if !VerifyWithPublicKey(pubKey, message, signature) {
+		t.Error("should verify with extracted public key")
+	}
+
+	// Verify using hex-encoded public key
+	pubKeyHex := id.VerifyingKeyHex()
+	if !VerifyWithPublicKeyHex(pubKeyHex, message, signature) {
+		t.Error("should verify with hex-encoded public key")
+	}
+}
+
+func TestIdentity_SignMessage(t *testing.T) {
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatalf("NewIdentity failed: %v", err)
+	}
+
+	message := []byte("message to sign")
+
+	// Create signed message
+	signedMsg := id.SignMessage(message)
+
+	// Should be signature + message
+	expectedLen := SignatureLength + len(message)
+	if len(signedMsg) != expectedLen {
+		t.Errorf("signed message should be %d bytes, got %d", expectedLen, len(signedMsg))
+	}
+
+	// Extract and verify
+	signature, data, ok := ExtractSignedMessage(signedMsg)
+	if !ok {
+		t.Fatal("failed to extract signed message")
+	}
+
+	if string(data) != string(message) {
+		t.Error("extracted message should match original")
+	}
+
+	if !id.Verify(data, signature) {
+		t.Error("extracted signature should verify")
+	}
+}
+
+func TestExtractSignedMessage_TooShort(t *testing.T) {
+	_, _, ok := ExtractSignedMessage(make([]byte, SignatureLength-1))
+	if ok {
+		t.Error("should fail for message shorter than signature length")
+	}
+}
+
+func TestVerifyWithPublicKeyHex_InvalidHex(t *testing.T) {
+	if VerifyWithPublicKeyHex("not-valid-hex", []byte("msg"), make([]byte, SignatureLength)) {
+		t.Error("should fail for invalid hex")
+	}
+}
+
+func TestVerifyWithPublicKeyHex_WrongLength(t *testing.T) {
+	if VerifyWithPublicKeyHex("abcd", []byte("msg"), make([]byte, SignatureLength)) {
+		t.Error("should fail for wrong key length")
 	}
 }
