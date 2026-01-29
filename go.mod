@@ -5,7 +5,6 @@ go 1.25.4
 require (
 	github.com/go-i2p/i2pkeys v0.33.92
 	github.com/go-i2p/onramp v0.33.92
-	github.com/go-i2p/sam3 v0.33.92
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 )
 

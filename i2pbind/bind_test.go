@@ -1,15 +1,43 @@
 package i2pbind
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-i2p/i2pkeys"
 )
 
+// testI2PDestination is a valid base64-encoded I2P destination for testing.
+// This is a 516-character base64 string that represents a minimal valid destination.
+// Format: 256 bytes public key + 128 bytes signing key + null certificate = 387 bytes
+// Base64 encoded: 387 * 4/3 ≈ 516 characters
+const testI2PDestination = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 // getTestAddress returns a valid I2P address for testing.
-// Uses the i2pkeys.FiveHundredAs() which provides a valid test destination.
+// Uses a hardcoded valid base64 destination since FiveHundredAs() may return
+// empty on some systems due to base64 validation.
 func getTestAddress() i2pkeys.I2PAddr {
-	return i2pkeys.FiveHundredAs()
+	// First try the library function
+	addr := i2pkeys.FiveHundredAs()
+	if addr != "" {
+		return addr
+	}
+	// Fallback to our known-good test destination
+	return i2pkeys.I2PAddr(testI2PDestination)
+}
+
+// mustGetNonEmptyTestAddress returns a test address and fails the test if empty.
+func mustGetNonEmptyTestAddress(t *testing.T) i2pkeys.I2PAddr {
+	t.Helper()
+	addr := getTestAddress()
+	if addr == "" {
+		// Create a minimal valid address for testing - 516+ chars of valid base64
+		addr = i2pkeys.I2PAddr(strings.Repeat("A", 520))
+	}
+	if addr == "" {
+		t.Fatal("Could not create a valid test I2P address")
+	}
+	return addr
 }
 
 func TestNewI2PEndpoint(t *testing.T) {
@@ -51,7 +79,7 @@ func TestI2PEndpoint_DstToString(t *testing.T) {
 }
 
 func TestI2PEndpoint_ClearSrc(t *testing.T) {
-	addr := getTestAddress()
+	addr := mustGetNonEmptyTestAddress(t)
 
 	ep := &I2PEndpoint{
 		dest: addr,
@@ -60,7 +88,7 @@ func TestI2PEndpoint_ClearSrc(t *testing.T) {
 
 	// Before clearing, src should be set (not empty string)
 	if ep.src == "" {
-		t.Error("Source I2PAddr should not be empty before ClearSrc")
+		t.Errorf("Source I2PAddr should not be empty before ClearSrc, got len=%d", len(addr))
 	}
 
 	ep.ClearSrc()
@@ -77,7 +105,7 @@ func TestI2PEndpoint_ClearSrc(t *testing.T) {
 }
 
 func TestI2PEndpoint_SrcToString(t *testing.T) {
-	addr := getTestAddress()
+	addr := mustGetNonEmptyTestAddress(t)
 
 	// Test with no source set
 	ep := NewI2PEndpoint(addr)
@@ -89,7 +117,7 @@ func TestI2PEndpoint_SrcToString(t *testing.T) {
 	ep.src = addr
 	// Verify src is actually set (not empty string)
 	if ep.src == "" {
-		t.Error("Source I2PAddr should be set")
+		t.Errorf("Source I2PAddr should be set, got len=%d", len(addr))
 	}
 
 	// Clear and verify
