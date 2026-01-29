@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -56,6 +57,9 @@ type BanListConfig struct {
 	StrikeThreshold int
 	// AutoBanDuration is how long auto-bans last.
 	AutoBanDuration time.Duration
+	// CleanupInterval is how often to clean up expired bans.
+	// If zero, defaults to 1 hour.
+	CleanupInterval time.Duration
 	// Logger for logging ban events.
 	Logger *slog.Logger
 }
@@ -74,6 +78,12 @@ type BanList struct {
 	persistPath     string
 	strikeThreshold int
 	autoBanDuration time.Duration
+	cleanupInterval time.Duration
+
+	// Cleanup loop control
+	cancel  func()
+	done    chan struct{}
+	running bool
 }
 
 // NewBanList creates a new BanList.
@@ -93,6 +103,11 @@ func NewBanList(cfg BanListConfig) *BanList {
 		autoBanDuration = 24 * time.Hour // Default: 24h
 	}
 
+	cleanupInterval := cfg.CleanupInterval
+	if cleanupInterval <= 0 {
+		cleanupInterval = 1 * time.Hour // Default: 1h
+	}
+
 	bl := &BanList{
 		bans:            make(map[string]*BanEntry),
 		dests:           make(map[string]string),
@@ -101,6 +116,7 @@ func NewBanList(cfg BanListConfig) *BanList {
 		persistPath:     cfg.PersistPath,
 		strikeThreshold: strikeThreshold,
 		autoBanDuration: autoBanDuration,
+		cleanupInterval: cleanupInterval,
 	}
 
 	// Load persisted bans
@@ -111,6 +127,72 @@ func NewBanList(cfg BanListConfig) *BanList {
 	}
 
 	return bl
+}
+
+// Start begins the background cleanup loop for expired bans.
+// The loop runs until Stop() is called or the context is canceled.
+func (bl *BanList) Start(ctx context.Context) error {
+	bl.mu.Lock()
+	if bl.running {
+		bl.mu.Unlock()
+		return nil // Already running
+	}
+	bl.running = true
+	bl.done = make(chan struct{})
+
+	// Create a cancellable context for the cleanup loop
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	bl.cancel = cancel
+	bl.mu.Unlock()
+
+	go bl.cleanupLoop(cleanupCtx)
+
+	bl.logger.Info("ban list cleanup loop started",
+		"interval", bl.cleanupInterval)
+
+	return nil
+}
+
+// Stop halts the background cleanup loop.
+func (bl *BanList) Stop() {
+	bl.mu.Lock()
+	if !bl.running {
+		bl.mu.Unlock()
+		return
+	}
+	bl.running = false
+	if bl.cancel != nil {
+		bl.cancel()
+	}
+	done := bl.done
+	bl.mu.Unlock()
+
+	// Wait for cleanup loop to exit
+	if done != nil {
+		<-done
+	}
+
+	bl.logger.Info("ban list cleanup loop stopped")
+}
+
+// cleanupLoop periodically removes expired bans.
+func (bl *BanList) cleanupLoop(ctx context.Context) {
+	defer close(bl.done)
+
+	ticker := time.NewTicker(bl.cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			removed := bl.CleanupExpired()
+			if removed > 0 {
+				bl.logger.Debug("cleaned up expired bans", "count", removed)
+			}
+		}
+	}
 }
 
 // Ban adds a peer to the ban list.

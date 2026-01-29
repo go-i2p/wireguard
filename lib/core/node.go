@@ -582,6 +582,11 @@ func (n *Node) initMesh(ctx context.Context) error {
 		return fmt.Errorf("starting gossip engine: %w", err)
 	}
 
+	// Start ban list cleanup loop
+	if err := n.banList.Start(ctx); err != nil {
+		return fmt.Errorf("starting ban list cleanup: %w", err)
+	}
+
 	n.logger.Info("mesh networking initialized")
 	return nil
 }
