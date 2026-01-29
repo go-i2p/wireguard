@@ -235,11 +235,11 @@ func (v *VPN) Status() Status {
 
 	// Get info from core node if available
 	if v.node != nil {
-		// TODO: Expose these from core.Node once implemented
-		// status.NodeID = v.node.NodeID()
-		// status.TunnelIP = v.node.TunnelIP()
-		// status.I2PDestination = v.node.I2PDestination()
-		// status.PeerCount = v.node.PeerCount()
+		status.NodeID = v.node.NodeID()
+		status.TunnelIP = v.node.TunnelIPAddr()
+		status.I2PDestination = v.node.I2PDestination()
+		status.I2PAddress = v.node.I2PAddress()
+		status.PeerCount = v.node.PeerCount()
 	}
 
 	return status

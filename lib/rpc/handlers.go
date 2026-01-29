@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/go-i2p/wireguard/lib/ratelimit"
@@ -366,7 +367,7 @@ func formatPlural(n int, singular, plural string) string {
 
 // formatInt formats an integer as a string.
 func formatInt(n int) string {
-	return string(rune('0'+n/10)) + string(rune('0'+n%10))
+	return strconv.Itoa(n)
 }
 
 // ---- Ban Handlers ----

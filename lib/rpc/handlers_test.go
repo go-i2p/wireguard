@@ -513,3 +513,32 @@ func TestFormatDuration(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatInt(t *testing.T) {
+	tests := []struct {
+		input    int
+		expected string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{9, "9"},
+		{10, "10"},
+		{42, "42"},
+		{99, "99"},
+		{100, "100"},   // Edge case: was broken before fix
+		{365, "365"},   // Days in a year
+		{1000, "1000"}, // Larger numbers
+		{12345, "12345"},
+		{-1, "-1"}, // Negative numbers
+		{-100, "-100"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := formatInt(tt.input)
+			if result != tt.expected {
+				t.Errorf("formatInt(%d) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

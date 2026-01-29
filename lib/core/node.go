@@ -553,6 +553,7 @@ func (n *Node) initInterfaces(ctx context.Context) error {
 			Peers:  n,
 			Invite: n,
 			Routes: n,
+			Config: n,
 			Bans:   n,
 		})
 		handlers.RegisterAll(n.rpcServer)
@@ -688,6 +689,30 @@ func (n *Node) StartTime() time.Time {
 // Version returns the software version.
 func (n *Node) Version() string {
 	return version.Version
+}
+
+// PeerCount returns the number of connected peers.
+func (n *Node) PeerCount() int {
+	n.mu.RLock()
+	pm := n.peers
+	n.mu.RUnlock()
+
+	if pm == nil {
+		return 0
+	}
+	return pm.ConnectedCount()
+}
+
+// I2PAddress returns our short I2P address (base32.b32.i2p format).
+func (n *Node) I2PAddress() string {
+	n.mu.RLock()
+	trans := n.trans
+	n.mu.RUnlock()
+
+	if trans == nil {
+		return ""
+	}
+	return trans.LocalAddress()
 }
 
 // --- PeerProvider implementation for RPC handlers ---
@@ -1036,4 +1061,134 @@ func (n *Node) TunnelIPAddr() netip.Addr {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.tunnelIP
+}
+
+// --- ConfigProvider implementation for RPC handlers ---
+
+// GetConfig returns a configuration value for the given key.
+// If key is empty, returns the entire configuration.
+// Supported keys: node.name, node.data_dir, i2p.sam_address, i2p.tunnel_length,
+// mesh.tunnel_subnet, mesh.heartbeat_interval, mesh.peer_timeout, mesh.max_peers,
+// rpc.enabled, rpc.socket, rpc.tcp_address, web.enabled, web.listen, tui.enabled
+func (n *Node) GetConfig(key string) (any, error) {
+	n.mu.RLock()
+	cfg := n.config
+	n.mu.RUnlock()
+
+	if cfg == nil {
+		return nil, errors.New("configuration not available")
+	}
+
+	// If no key specified, return the entire config
+	if key == "" {
+		return cfg, nil
+	}
+
+	// Look up specific key
+	switch key {
+	// Node config
+	case "node.name":
+		return cfg.Node.Name, nil
+	case "node.data_dir":
+		return cfg.Node.DataDir, nil
+
+	// I2P config
+	case "i2p.sam_address":
+		return cfg.I2P.SAMAddress, nil
+	case "i2p.tunnel_length":
+		return cfg.I2P.TunnelLength, nil
+
+	// Mesh config
+	case "mesh.tunnel_subnet":
+		return cfg.Mesh.TunnelSubnet, nil
+	case "mesh.heartbeat_interval":
+		return cfg.Mesh.HeartbeatInterval.String(), nil
+	case "mesh.peer_timeout":
+		return cfg.Mesh.PeerTimeout.String(), nil
+	case "mesh.max_peers":
+		return cfg.Mesh.MaxPeers, nil
+
+	// RPC config
+	case "rpc.enabled":
+		return cfg.RPC.Enabled, nil
+	case "rpc.socket":
+		return cfg.RPC.Socket, nil
+	case "rpc.tcp_address":
+		return cfg.RPC.TCPAddress, nil
+
+	// Web config
+	case "web.enabled":
+		return cfg.Web.Enabled, nil
+	case "web.listen":
+		return cfg.Web.Listen, nil
+
+	// TUI config
+	case "tui.enabled":
+		return cfg.TUI.Enabled, nil
+
+	default:
+		return nil, fmt.Errorf("unknown config key: %s", key)
+	}
+}
+
+// SetConfig sets a configuration value.
+// Note: Most configuration changes require a restart to take effect.
+// Returns the old value if successful.
+func (n *Node) SetConfig(key string, value any) (any, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.config == nil {
+		return nil, errors.New("configuration not available")
+	}
+
+	if key == "" {
+		return nil, errors.New("key is required")
+	}
+
+	var oldValue any
+
+	switch key {
+	// Node config
+	case "node.name":
+		oldValue = n.config.Node.Name
+		if s, ok := value.(string); ok {
+			n.config.Node.Name = s
+		} else {
+			return nil, errors.New("node.name must be a string")
+		}
+
+	// Mesh config (runtime adjustable)
+	case "mesh.max_peers":
+		oldValue = n.config.Mesh.MaxPeers
+		switch v := value.(type) {
+		case int:
+			n.config.Mesh.MaxPeers = v
+		case float64:
+			n.config.Mesh.MaxPeers = int(v)
+		default:
+			return nil, errors.New("mesh.max_peers must be an integer")
+		}
+
+	// RPC config
+	case "rpc.tcp_address":
+		oldValue = n.config.RPC.TCPAddress
+		if s, ok := value.(string); ok {
+			n.config.RPC.TCPAddress = s
+		} else {
+			return nil, errors.New("rpc.tcp_address must be a string")
+		}
+
+	// Read-only configs
+	case "node.data_dir", "i2p.sam_address", "i2p.tunnel_length",
+		"mesh.tunnel_subnet", "mesh.heartbeat_interval", "mesh.peer_timeout",
+		"rpc.enabled", "rpc.socket", "web.enabled", "web.listen", "tui.enabled":
+		return nil, fmt.Errorf("config key %s is read-only at runtime", key)
+
+	default:
+		return nil, fmt.Errorf("unknown config key: %s", key)
+	}
+
+	n.logger.Info("configuration updated", "key", key, "old_value", oldValue, "new_value", value)
+	return oldValue, nil
 }

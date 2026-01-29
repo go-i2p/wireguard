@@ -463,6 +463,7 @@ func (g *GossipEngine) pruneStale() {
 }
 
 // selectRandomPeers returns up to n random connected peer IDs.
+// Uses partial Fisher-Yates shuffle for efficiency - only shuffles the first n elements.
 func (g *GossipEngine) selectRandomPeers(n int) []string {
 	if g.peerManager == nil {
 		return nil
@@ -473,21 +474,25 @@ func (g *GossipEngine) selectRandomPeers(n int) []string {
 		return nil
 	}
 
-	// Shuffle and take first n
-	shuffled := make([]string, len(peers))
+	// Extract NodeIDs
+	peerIDs := make([]string, len(peers))
 	for i, p := range peers {
-		shuffled[i] = p.NodeID
+		peerIDs[i] = p.NodeID
 	}
 
-	rand.Shuffle(len(shuffled), func(i, j int) {
-		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-	})
-
-	if n > len(shuffled) {
-		n = len(shuffled)
+	// Partial Fisher-Yates: only shuffle first n elements
+	// This is O(n) instead of O(len(peers)) for full shuffle
+	if n > len(peerIDs) {
+		n = len(peerIDs)
 	}
 
-	return shuffled[:n]
+	for i := 0; i < n; i++ {
+		// Pick a random element from i to end
+		j := i + rand.Intn(len(peerIDs)-i)
+		peerIDs[i], peerIDs[j] = peerIDs[j], peerIDs[i]
+	}
+
+	return peerIDs[:n]
 }
 
 // HandleMessage processes an incoming gossip message.

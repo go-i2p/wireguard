@@ -237,3 +237,133 @@ func TestNodeState_String(t *testing.T) {
 		})
 	}
 }
+
+func TestNode_GetConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Node.DataDir = t.TempDir()
+	cfg.Node.Name = "test-node"
+
+	node, err := NewNode(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+
+	// Test getting specific keys
+	tests := []struct {
+		key  string
+		want any
+	}{
+		{"node.name", "test-node"},
+		{"rpc.enabled", true},
+		{"mesh.max_peers", DefaultMaxPeers},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got, err := node.GetConfig(tt.key)
+			if err != nil {
+				t.Fatalf("GetConfig(%q) error = %v", tt.key, err)
+			}
+			if got != tt.want {
+				t.Errorf("GetConfig(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+
+	// Test getting unknown key
+	_, err = node.GetConfig("unknown.key")
+	if err == nil {
+		t.Error("GetConfig should error for unknown key")
+	}
+
+	// Test getting entire config
+	cfg2, err := node.GetConfig("")
+	if err != nil {
+		t.Fatalf("GetConfig(\"\") error = %v", err)
+	}
+	if cfg2 == nil {
+		t.Error("GetConfig(\"\") should return config")
+	}
+}
+
+func TestNode_SetConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Node.DataDir = t.TempDir()
+
+	node, err := NewNode(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+
+	// Test setting node.name
+	oldVal, err := node.SetConfig("node.name", "new-name")
+	if err != nil {
+		t.Fatalf("SetConfig error = %v", err)
+	}
+	if oldVal != "my-node" {
+		t.Errorf("SetConfig old value = %v, want 'my-node'", oldVal)
+	}
+
+	newVal, _ := node.GetConfig("node.name")
+	if newVal != "new-name" {
+		t.Errorf("GetConfig after SetConfig = %v, want 'new-name'", newVal)
+	}
+
+	// Test setting mesh.max_peers with int
+	_, err = node.SetConfig("mesh.max_peers", 100)
+	if err != nil {
+		t.Fatalf("SetConfig mesh.max_peers error = %v", err)
+	}
+	maxPeers, _ := node.GetConfig("mesh.max_peers")
+	if maxPeers != 100 {
+		t.Errorf("mesh.max_peers = %v, want 100", maxPeers)
+	}
+
+	// Test setting read-only config
+	_, err = node.SetConfig("node.data_dir", "/tmp/new")
+	if err == nil {
+		t.Error("SetConfig should error for read-only key")
+	}
+
+	// Test setting unknown key
+	_, err = node.SetConfig("unknown.key", "value")
+	if err == nil {
+		t.Error("SetConfig should error for unknown key")
+	}
+
+	// Test setting with wrong type
+	_, err = node.SetConfig("node.name", 123)
+	if err == nil {
+		t.Error("SetConfig should error for wrong type")
+	}
+}
+
+func TestNode_PeerCount(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Node.DataDir = t.TempDir()
+
+	node, err := NewNode(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+
+	// Before start, peer count should be 0
+	if count := node.PeerCount(); count != 0 {
+		t.Errorf("PeerCount before start = %d, want 0", count)
+	}
+}
+
+func TestNode_I2PAddress(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Node.DataDir = t.TempDir()
+
+	node, err := NewNode(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+
+	// Before start, I2P address should be empty
+	if addr := node.I2PAddress(); addr != "" {
+		t.Errorf("I2PAddress before start = %q, want empty", addr)
+	}
+}
