@@ -107,12 +107,12 @@ func (s *Server) loadOrCreateAuthToken(path string) ([]byte, error) {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("creating auth dir: %w", err)
 	}
 
 	// Write token (hex-encoded)
-	if err := os.WriteFile(path, []byte(hex.EncodeToString(token)), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(hex.EncodeToString(token)), 0o600); err != nil {
 		return nil, fmt.Errorf("writing token: %w", err)
 	}
 
@@ -152,7 +152,7 @@ func (s *Server) Start(ctx context.Context, cfg ServerConfig) error {
 		os.Remove(cfg.UnixSocketPath)
 
 		// Ensure directory exists
-		if err := os.MkdirAll(filepath.Dir(cfg.UnixSocketPath), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(cfg.UnixSocketPath), 0o700); err != nil {
 			return fmt.Errorf("creating socket dir: %w", err)
 		}
 
@@ -162,7 +162,7 @@ func (s *Server) Start(ctx context.Context, cfg ServerConfig) error {
 		}
 
 		// Set socket permissions (owner only)
-		if err := os.Chmod(cfg.UnixSocketPath, 0600); err != nil {
+		if err := os.Chmod(cfg.UnixSocketPath, 0o600); err != nil {
 			listener.Close()
 			return fmt.Errorf("chmod socket: %w", err)
 		}

@@ -63,7 +63,7 @@ func TestNewServer(t *testing.T) {
 		for i := range expectedToken {
 			expectedToken[i] = byte(i)
 		}
-		if err := os.WriteFile(authFile, []byte(hex.EncodeToString(expectedToken)), 0600); err != nil {
+		if err := os.WriteFile(authFile, []byte(hex.EncodeToString(expectedToken)), 0o600); err != nil {
 			t.Fatalf("writing auth file: %v", err)
 		}
 
@@ -420,7 +420,7 @@ func TestLoadOrCreateAuthToken(t *testing.T) {
 		authFile := filepath.Join(tmpDir, "auth.token")
 
 		// Write invalid token
-		if err := os.WriteFile(authFile, []byte("not-valid-hex"), 0600); err != nil {
+		if err := os.WriteFile(authFile, []byte("not-valid-hex"), 0o600); err != nil {
 			t.Fatalf("writing file: %v", err)
 		}
 

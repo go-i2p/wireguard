@@ -88,7 +88,7 @@ func TestStateManager_LoadInvalidJSON(t *testing.T) {
 	statePath := filepath.Join(tmpDir, "invalid.json")
 
 	// Write invalid JSON
-	if err := os.WriteFile(statePath, []byte("not json"), 0600); err != nil {
+	if err := os.WriteFile(statePath, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

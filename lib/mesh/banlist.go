@@ -374,7 +374,7 @@ func (bl *BanList) saveLocked() {
 		return
 	}
 
-	if err := os.WriteFile(bl.persistPath, data, 0600); err != nil {
+	if err := os.WriteFile(bl.persistPath, data, 0o600); err != nil {
 		bl.logger.Error("failed to save ban list", "error", err)
 	}
 }

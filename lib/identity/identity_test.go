@@ -118,7 +118,7 @@ func TestLoadIdentity_InvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	idPath := filepath.Join(tmpDir, "invalid.json")
 
-	if err := os.WriteFile(idPath, []byte("not valid json"), 0600); err != nil {
+	if err := os.WriteFile(idPath, []byte("not valid json"), 0o600); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestLoadIdentity_InvalidPrivateKey(t *testing.T) {
 	idPath := filepath.Join(tmpDir, "bad-key.json")
 
 	content := `{"private_key":"not-a-valid-key","public_key":"x","node_id":"y","created_at":"2024-01-01T00:00:00Z"}`
-	if err := os.WriteFile(idPath, []byte(content), 0600); err != nil {
+	if err := os.WriteFile(idPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
@@ -235,7 +235,7 @@ func TestIdentity_FilePermissions(t *testing.T) {
 
 	// File should have restricted permissions (0600)
 	perm := info.Mode().Perm()
-	if perm != 0600 {
+	if perm != 0o600 {
 		t.Errorf("identity file should have 0600 permissions, got %o", perm)
 	}
 }

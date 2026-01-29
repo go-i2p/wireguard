@@ -181,7 +181,7 @@ func TestBanListLoadCorrupt(t *testing.T) {
 	path := filepath.Join(tmpDir, "corrupt.json")
 
 	// Write corrupt data
-	if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

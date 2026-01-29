@@ -271,8 +271,10 @@ func (v *VPN) TunnelIP() netip.Addr {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	// TODO: Get from identity once core.Node exposes it
-	return netip.Addr{}
+	if v.node == nil {
+		return netip.Addr{}
+	}
+	return v.node.TunnelIPAddr()
 }
 
 // I2PDestination returns this node's full I2P destination.
@@ -281,8 +283,10 @@ func (v *VPN) I2PDestination() string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	// TODO: Get from transport once core.Node exposes it
-	return ""
+	if v.node == nil {
+		return ""
+	}
+	return v.node.I2PDestination()
 }
 
 // I2PAddress returns this node's short I2P address (base32.b32.i2p).
@@ -291,8 +295,10 @@ func (v *VPN) I2PAddress() string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	// TODO: Get from transport once core.Node exposes it
-	return ""
+	if v.node == nil || v.node.Transport() == nil {
+		return ""
+	}
+	return v.node.Transport().LocalAddress()
 }
 
 // NodeID returns this node's unique identifier.
@@ -301,8 +307,10 @@ func (v *VPN) NodeID() string {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	// TODO: Get from identity once core.Node exposes it
-	return ""
+	if v.node == nil {
+		return ""
+	}
+	return v.node.NodeID()
 }
 
 // Config returns the VPN configuration (read-only copy).

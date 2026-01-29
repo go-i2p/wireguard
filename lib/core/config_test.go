@@ -138,7 +138,7 @@ func TestLoadConfig_InvalidTOML(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "invalid.toml")
 
 	// Write invalid TOML
-	if err := os.WriteFile(configPath, []byte("this is not [valid toml"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("this is not [valid toml"), 0o600); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 

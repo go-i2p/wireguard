@@ -149,7 +149,7 @@ func LoadConfig(path string) (*Config, error) {
 // It creates the parent directory if it doesn't exist.
 func SaveConfig(cfg *Config, path string) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
@@ -158,7 +158,7 @@ func SaveConfig(cfg *Config, path string) error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
@@ -196,5 +196,5 @@ func (c *Config) DataPath(elem ...string) string {
 
 // EnsureDataDir creates the data directory if it doesn't exist.
 func (c *Config) EnsureDataDir() error {
-	return os.MkdirAll(c.Node.DataDir, 0700)
+	return os.MkdirAll(c.Node.DataDir, 0o700)
 }

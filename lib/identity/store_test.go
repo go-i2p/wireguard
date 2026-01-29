@@ -97,7 +97,7 @@ func TestLoadInviteStore_InvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "invalid.json")
 
-	if err := os.WriteFile(storePath, []byte("not valid json"), 0600); err != nil {
+	if err := os.WriteFile(storePath, []byte("not valid json"), 0o600); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 

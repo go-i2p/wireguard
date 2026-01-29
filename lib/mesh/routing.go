@@ -310,11 +310,11 @@ func (rt *RoutingTable) Save() error {
 	}
 
 	dir := filepath.Dir(rt.filePath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
 
-	if err := os.WriteFile(rt.filePath, data, 0600); err != nil {
+	if err := os.WriteFile(rt.filePath, data, 0o600); err != nil {
 		return fmt.Errorf("writing file: %w", err)
 	}
 
