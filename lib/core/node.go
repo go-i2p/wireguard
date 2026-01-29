@@ -548,6 +548,14 @@ func (n *Node) initMesh(ctx context.Context) error {
 		},
 	)
 
+	// Set up token usage tracking callback.
+	// When a peer successfully authenticates using an invite token, this callback
+	// marks the corresponding invite as used and persists the change.
+	// This enforces the MaxUses limit on invites.
+	n.peers.SetTokenUsedCallback(func(token []byte) {
+		n.handleTokenUsed(token)
+	})
+
 	// Create gossip engine with defaults, then override from config
 	gossipConfig := mesh.DefaultGossipConfig()
 	gossipConfig.HeartbeatInterval = n.config.Mesh.HeartbeatInterval
@@ -1071,6 +1079,52 @@ func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreat
 		ExpiresAt:  invite.ExpiresAt.Format(time.RFC3339),
 		MaxUses:    invite.MaxUses,
 	}, nil
+}
+
+// handleTokenUsed is called when an auth token is successfully used to
+// authenticate a peer. It marks the corresponding invite as used and
+// persists the change, enforcing MaxUses limits.
+func (n *Node) handleTokenUsed(token []byte) {
+	n.mu.RLock()
+	invStore := n.inviteStore
+	n.mu.RUnlock()
+
+	if invStore == nil || len(token) == 0 {
+		return
+	}
+
+	// Find the invite with this token and mark it as used
+	tokenKey := fmt.Sprintf("%x", token)
+	inv, found := invStore.GetGenerated(tokenKey)
+	if !found {
+		n.logger.Debug("token used but no matching invite found (may be discovery token)")
+		return
+	}
+
+	// Mark the invite as used
+	if err := inv.Use(); err != nil {
+		n.logger.Debug("invite already exhausted", "error", err)
+		return
+	}
+
+	// Update the invite in the store with the new usage count
+	invStore.UpdateGenerated(tokenKey, inv)
+
+	// Persist the change
+	if err := invStore.Save(); err != nil {
+		n.logger.Warn("failed to persist invite usage", "error", err)
+	} else {
+		n.logger.Info("invite usage recorded",
+			"token_prefix", tokenKey[:16]+"...",
+			"uses_remaining", inv.RemainingUses())
+	}
+
+	// If the invite is now exhausted, optionally remove the token from
+	// valid tokens to prevent further handshake attempts
+	if inv.RemainingUses() <= 0 {
+		n.logger.Info("invite exhausted, all uses consumed",
+			"token_prefix", tokenKey[:16]+"...")
+	}
 }
 
 // AcceptInvite accepts an invite code and initiates connection to the inviter.

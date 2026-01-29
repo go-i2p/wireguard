@@ -114,6 +114,16 @@ func (s *InviteStore) RemoveGenerated(key string) {
 	delete(s.Generated, key)
 }
 
+// UpdateGenerated updates an existing generated invite.
+// This is used to update usage counts after an invite is used.
+func (s *InviteStore) UpdateGenerated(key string, inv *Invite) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.Generated[key]; exists {
+		s.Generated[key] = inv
+	}
+}
+
 // AddPending adds a pending invite (one we received).
 // Uses the network ID as the key.
 func (s *InviteStore) AddPending(inv *Invite) {

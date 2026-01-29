@@ -64,6 +64,8 @@ type Peer struct {
 	ConnectedAt time.Time
 	// Latency is estimated round-trip time
 	Latency time.Duration
+	// AuthToken is the token used to authenticate this peer (if any)
+	AuthToken []byte
 }
 
 // PeerManager handles peer discovery, handshakes, and state.
@@ -91,6 +93,7 @@ type PeerManager struct {
 	// Callbacks
 	onPeerConnected    func(*Peer)
 	onPeerDisconnected func(*Peer)
+	onTokenUsed        func(token []byte) // Called when an auth token is successfully used
 
 	// Configuration
 	maxPeers        int
@@ -164,6 +167,15 @@ func (pm *PeerManager) SetCallbacks(onConnected, onDisconnected func(*Peer)) {
 	pm.onPeerDisconnected = onDisconnected
 }
 
+// SetTokenUsedCallback sets a callback for when an auth token is successfully
+// used to authenticate a peer. This allows the invite system to track usage
+// and enforce MaxUses limits.
+func (pm *PeerManager) SetTokenUsedCallback(onTokenUsed func(token []byte)) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.onTokenUsed = onTokenUsed
+}
+
 // HandleHandshakeInit processes an incoming handshake initiation.
 func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeResponse, error) {
 	pm.mu.Lock()
@@ -192,8 +204,9 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		return pm.rejectHandshake("network ID mismatch"), nil
 	}
 
-	// Validate auth token
-	if !pm.validateToken(init.AuthToken) {
+	// Validate auth token and track which token was used
+	matchedToken, validToken := pm.validateToken(init.AuthToken)
+	if !validToken {
 		// Record a strike for invalid tokens
 		if pm.banList != nil {
 			pm.banList.RecordStrike(init.NodeID, BanReasonHandshakeFailures, "invalid auth token")
@@ -250,7 +263,7 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		return pm.rejectHandshake("max peers reached"), nil
 	}
 
-	// Create or update peer
+	// Create or update peer with the token that authenticated them
 	peer := &Peer{
 		NodeID:      init.NodeID,
 		I2PDest:     init.I2PDest,
@@ -258,6 +271,7 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		TunnelIP:    claimedIP,
 		State:       PeerStatePending,
 		LastSeen:    time.Now(),
+		AuthToken:   matchedToken,
 	}
 	pm.peers[init.NodeID] = peer
 
@@ -341,7 +355,13 @@ func (pm *PeerManager) HandleHandshakeComplete(complete *HandshakeComplete) erro
 		"node_id", peer.NodeID,
 		"tunnel_ip", peer.TunnelIP)
 
-	// Trigger callback
+	// Trigger token used callback if the peer authenticated with a token
+	// This allows the invite system to track usage and enforce MaxUses
+	if pm.onTokenUsed != nil && len(peer.AuthToken) > 0 {
+		go pm.onTokenUsed(peer.AuthToken)
+	}
+
+	// Trigger peer connected callback
 	if pm.onPeerConnected != nil {
 		go pm.onPeerConnected(peer)
 	}
@@ -533,13 +553,15 @@ func (pm *PeerManager) rejectHandshake(reason string) *HandshakeResponse {
 	}
 }
 
-func (pm *PeerManager) validateToken(token []byte) bool {
+// validateToken checks if the token is valid and returns the matched token.
+// Returns (matchedToken, true) if valid, (nil, false) otherwise.
+func (pm *PeerManager) validateToken(token []byte) ([]byte, bool) {
 	for _, valid := range pm.validTokens {
 		if subtle.ConstantTimeCompare(token, valid) == 1 {
-			return true
+			return valid, true
 		}
 	}
-	return false
+	return nil, false
 }
 
 func truncateDest(dest string) string {

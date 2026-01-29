@@ -314,3 +314,86 @@ func TestInviteStore_ListAccepted(t *testing.T) {
 		t.Errorf("ListAccepted should return 2, got %d", len(list))
 	}
 }
+
+func TestInviteStore_UpdateGenerated(t *testing.T) {
+	store := NewInviteStore("/tmp/test.json")
+
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatalf("NewIdentity failed: %v", err)
+	}
+	id.SetI2PDest("test.b32.i2p")
+	id.SetNetworkID("test-network")
+
+	// Create invite with MaxUses = 3
+	opts := InviteOptions{
+		Expiry:  24 * time.Hour,
+		MaxUses: 3,
+	}
+	inv, err := NewInvite(id, opts)
+	if err != nil {
+		t.Fatalf("NewInvite failed: %v", err)
+	}
+
+	key := store.AddGenerated(inv)
+
+	// Verify initial state
+	stored, ok := store.GetGenerated(key)
+	if !ok {
+		t.Fatal("GetGenerated should find invite")
+	}
+	if stored.UsedCount != 0 {
+		t.Errorf("UsedCount should be 0, got %d", stored.UsedCount)
+	}
+
+	// Simulate usage - get the invite, mark it as used, update
+	stored.Use()
+	if stored.UsedCount != 1 {
+		t.Errorf("UsedCount after Use() should be 1, got %d", stored.UsedCount)
+	}
+
+	// Update the invite in the store
+	store.UpdateGenerated(key, stored)
+
+	// Retrieve again and verify the update persisted
+	updated, ok := store.GetGenerated(key)
+	if !ok {
+		t.Fatal("GetGenerated should still find invite after update")
+	}
+	if updated.UsedCount != 1 {
+		t.Errorf("UsedCount after update should be 1, got %d", updated.UsedCount)
+	}
+	if updated.RemainingUses() != 2 {
+		t.Errorf("RemainingUses should be 2, got %d", updated.RemainingUses())
+	}
+
+	// Use again
+	updated.Use()
+	store.UpdateGenerated(key, updated)
+
+	final, _ := store.GetGenerated(key)
+	if final.UsedCount != 2 {
+		t.Errorf("UsedCount should be 2, got %d", final.UsedCount)
+	}
+	if final.RemainingUses() != 1 {
+		t.Errorf("RemainingUses should be 1, got %d", final.RemainingUses())
+	}
+}
+
+func TestInviteStore_UpdateGenerated_NonExistent(t *testing.T) {
+	store := NewInviteStore("/tmp/test.json")
+
+	id, _ := NewIdentity()
+	id.SetI2PDest("test.b32.i2p")
+	id.SetNetworkID("test-network")
+
+	inv, _ := NewInvite(id, DefaultInviteOptions())
+
+	// Try to update a key that doesn't exist
+	store.UpdateGenerated("nonexistent-key", inv)
+
+	// Should not have added the invite
+	if store.GeneratedCount() != 0 {
+		t.Error("UpdateGenerated should not add new invites")
+	}
+}

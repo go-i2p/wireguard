@@ -153,3 +153,88 @@ func TestStateManager_CreatesDirectory(t *testing.T) {
 		t.Error("state file should exist in nested directory")
 	}
 }
+
+func TestStateManager_StartStop(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+
+	sm := NewStateManager(StateManagerConfig{
+		Path:         statePath,
+		SaveInterval: 10 * time.Millisecond,
+	})
+
+	// Start should work
+	sm.Start()
+
+	// Let it run for a bit
+	time.Sleep(25 * time.Millisecond)
+
+	// Stop should work and do final save
+	sm.Stop()
+
+	// Verify file was saved
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		t.Error("state file should exist after Stop()")
+	}
+}
+
+func TestStateManager_DoubleStart(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+
+	sm := NewStateManager(StateManagerConfig{
+		Path:         statePath,
+		SaveInterval: 100 * time.Millisecond,
+	})
+
+	// First start
+	sm.Start()
+
+	// Second start should be a no-op (not panic or create second goroutine)
+	sm.Start()
+
+	// Clean up
+	sm.Stop()
+}
+
+func TestStateManager_DoubleStop(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+
+	sm := NewStateManager(StateManagerConfig{
+		Path:         statePath,
+		SaveInterval: 100 * time.Millisecond,
+	})
+
+	sm.Start()
+
+	// First stop
+	sm.Stop()
+
+	// Second stop should be a no-op (not panic)
+	sm.Stop()
+}
+
+func TestStateManager_StopWithoutStart(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+
+	sm := NewStateManager(StateManagerConfig{
+		Path:         statePath,
+		SaveInterval: 100 * time.Millisecond,
+	})
+
+	// Stop without Start should be a no-op (not block forever or panic)
+	done := make(chan struct{})
+	go func() {
+		sm.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good - Stop returned
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Stop() without Start() should return immediately, not block")
+	}
+}

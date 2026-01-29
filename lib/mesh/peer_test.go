@@ -432,3 +432,152 @@ func TestPeerManager_AddValidToken_RejectsEmpty(t *testing.T) {
 		t.Errorf("RejectReason = %q, want %q", resp.RejectReason, "invalid auth token")
 	}
 }
+
+func TestPeerManager_TokenUsedCallback(t *testing.T) {
+	// Test that the token used callback is fired when a peer connects using a token
+	key1, _ := wgtypes.GeneratePrivateKey()
+	ip1 := AllocateTunnelIP(key1.PublicKey())
+	pm1 := NewPeerManager(PeerManagerConfig{
+		NodeID:      "node-1",
+		I2PDest:     "node1.b32.i2p",
+		WGPublicKey: key1.PublicKey(),
+		TunnelIP:    ip1,
+		NetworkID:   "test-network",
+	})
+
+	// Track token usage via callback
+	var usedToken []byte
+	callbackCalled := make(chan struct{}, 1)
+	pm1.SetTokenUsedCallback(func(token []byte) {
+		usedToken = token
+		callbackCalled <- struct{}{}
+	})
+
+	// Add a valid token
+	token := []byte("invite-token-12345")
+	pm1.AddValidToken(token)
+
+	// Create initiator
+	key2, _ := wgtypes.GeneratePrivateKey()
+	ip2 := AllocateTunnelIP(key2.PublicKey())
+	pm2 := NewPeerManager(PeerManagerConfig{
+		NodeID:      "node-2",
+		I2PDest:     "node2.b32.i2p",
+		WGPublicKey: key2.PublicKey(),
+		TunnelIP:    ip2,
+		NetworkID:   "test-network",
+	})
+
+	// Perform handshake
+	init := pm2.CreateHandshakeInit(token)
+	resp, err := pm1.HandleHandshakeInit(init)
+	if err != nil || !resp.Accepted {
+		t.Fatalf("HandleHandshakeInit() failed: %v, accepted=%v", err, resp.Accepted)
+	}
+
+	err = pm2.HandleHandshakeResponse(resp)
+	if err != nil {
+		t.Fatalf("HandleHandshakeResponse() error = %v", err)
+	}
+
+	complete := pm2.CreateHandshakeComplete(true)
+	err = pm1.HandleHandshakeComplete(complete)
+	if err != nil {
+		t.Fatalf("HandleHandshakeComplete() error = %v", err)
+	}
+
+	// Wait for callback (with timeout)
+	select {
+	case <-callbackCalled:
+		// Success - callback was called
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Token used callback was not called")
+	}
+
+	// Verify the correct token was reported
+	if string(usedToken) != string(token) {
+		t.Errorf("Token used callback received wrong token: got %q, want %q", usedToken, token)
+	}
+
+	// Verify peer has the token stored
+	peer, ok := pm1.GetPeer("node-2")
+	if !ok {
+		t.Fatal("Peer not found after handshake")
+	}
+	if string(peer.AuthToken) != string(token) {
+		t.Errorf("Peer.AuthToken = %q, want %q", peer.AuthToken, token)
+	}
+}
+
+func TestPeerManager_TokenUsedCallback_NotCalledWithoutToken(t *testing.T) {
+	// Test that callback is NOT called when peer connects without a tracked token
+	// (This could happen with discovery tokens or existing peers)
+	key1, _ := wgtypes.GeneratePrivateKey()
+	ip1 := AllocateTunnelIP(key1.PublicKey())
+	pm1 := NewPeerManager(PeerManagerConfig{
+		NodeID:      "node-1",
+		I2PDest:     "node1.b32.i2p",
+		WGPublicKey: key1.PublicKey(),
+		TunnelIP:    ip1,
+		NetworkID:   "test-network",
+	})
+
+	callbackCalled := false
+	pm1.SetTokenUsedCallback(func(token []byte) {
+		callbackCalled = true
+	})
+
+	// Manually add a peer without going through handshake
+	// (simulating an existing/reconnecting peer)
+	key2, _ := wgtypes.GeneratePrivateKey()
+	ip2 := AllocateTunnelIP(key2.PublicKey())
+
+	// Complete handshake for a peer with no stored token
+	pm1.HandleHandshakeComplete(&HandshakeComplete{
+		NodeID:  "node-2",
+		Success: true,
+	})
+
+	// Give callback time to potentially fire
+	time.Sleep(20 * time.Millisecond)
+
+	// Callback should not have been called (unknown peer, no token)
+	// Note: This returns an error because peer is unknown, which is expected
+	if callbackCalled {
+		t.Error("Token used callback should not be called for unknown peer")
+	}
+
+	// Now test with a peer that exists but has no AuthToken
+	pm1.AddValidToken([]byte("token"))
+
+	// Add peer directly to simulate reconnection scenario
+	init := &HandshakeInit{
+		I2PDest:     "node2.b32.i2p",
+		WGPublicKey: key2.PublicKey().String(),
+		TunnelIP:    ip2.String(),
+		NetworkID:   "test-network",
+		AuthToken:   []byte("token"),
+		NodeID:      "node-2",
+	}
+	resp, _ := pm1.HandleHandshakeInit(init)
+	if resp.Accepted {
+		// Clear the auth token to simulate a reconnecting peer
+		pm1.mu.Lock()
+		if p, ok := pm1.peers["node-2"]; ok {
+			p.AuthToken = nil // Clear token
+		}
+		pm1.mu.Unlock()
+
+		callbackCalled = false
+		pm1.HandleHandshakeComplete(&HandshakeComplete{
+			NodeID:  "node-2",
+			Success: true,
+		})
+
+		time.Sleep(20 * time.Millisecond)
+
+		if callbackCalled {
+			t.Error("Token used callback should not be called for peer with nil AuthToken")
+		}
+	}
+}

@@ -58,8 +58,10 @@ type StateManager struct {
 	routingTable *RoutingTable
 
 	// Control
-	stopCh chan struct{}
-	doneCh chan struct{}
+	stopCh  chan struct{}
+	doneCh  chan struct{}
+	started bool
+	stopped bool
 }
 
 // StateManagerConfig configures the state manager.
@@ -191,7 +193,16 @@ func (sm *StateManager) gatherStateLocked() {
 }
 
 // Start begins automatic state saving.
+// It is safe to call Start multiple times; only the first call has effect.
 func (sm *StateManager) Start() {
+	sm.mu.Lock()
+	if sm.started {
+		sm.mu.Unlock()
+		return
+	}
+	sm.started = true
+	sm.mu.Unlock()
+
 	go func() {
 		defer close(sm.doneCh)
 		ticker := time.NewTicker(sm.interval)
@@ -211,7 +222,16 @@ func (sm *StateManager) Start() {
 }
 
 // Stop halts automatic state saving and does a final save.
+// It is safe to call Stop multiple times or before Start; extra calls are no-ops.
 func (sm *StateManager) Stop() {
+	sm.mu.Lock()
+	if sm.stopped || !sm.started {
+		sm.mu.Unlock()
+		return
+	}
+	sm.stopped = true
+	sm.mu.Unlock()
+
 	close(sm.stopCh)
 	<-sm.doneCh
 }
