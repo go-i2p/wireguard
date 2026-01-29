@@ -95,6 +95,11 @@ func (e *I2PEndpoint) Destination() i2pkeys.I2PAddr {
 	return e.dest
 }
 
+// MeshMessageHandler is a callback function for handling mesh protocol messages.
+// It is called when a non-WireGuard message is received (e.g., gossip/handshake messages).
+// The data parameter contains the raw message bytes, and from is the sender's I2P address.
+type MeshMessageHandler func(data []byte, from i2pkeys.I2PAddr)
+
 // I2PBind implements conn.Bind using I2P datagrams for transport
 type I2PBind struct {
 	mu sync.Mutex
@@ -107,6 +112,9 @@ type I2PBind struct {
 	// I2P session components
 	garlic     *onramp.Garlic
 	packetConn net.PacketConn
+
+	// Mesh message handling
+	meshHandler MeshMessageHandler // Callback for mesh protocol messages
 
 	// State
 	closed bool
@@ -136,6 +144,16 @@ func NewI2PBindWithOptions(name, samAddr string, options []string) *I2PBind {
 		samAddr:    samAddr,
 		samOptions: options,
 	}
+}
+
+// SetMeshHandler sets the callback for handling mesh protocol messages.
+// When a non-WireGuard packet is received (e.g., gossip or handshake messages),
+// the handler will be called with the raw message data and sender address.
+// This must be called before Open() to ensure no messages are dropped.
+func (b *I2PBind) SetMeshHandler(handler MeshMessageHandler) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.meshHandler = handler
 }
 
 // Open initializes the I2P datagram session and returns receive functions
@@ -176,11 +194,15 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	return []conn.ReceiveFunc{recvFunc}, 0, nil
 }
 
-// makeReceiveFunc creates the receive function for incoming I2P datagrams
+// makeReceiveFunc creates the receive function for incoming I2P datagrams.
+// It demultiplexes incoming packets between WireGuard traffic and mesh protocol messages.
+// WireGuard messages have a 4-byte little-endian type header (1-4).
+// Mesh protocol messages are JSON and start with '{' (0x7B).
 func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 	return func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
 		b.mu.Lock()
 		pc := b.packetConn
+		meshHandler := b.meshHandler
 		b.mu.Unlock()
 
 		if pc == nil {
@@ -194,26 +216,44 @@ func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 			return 0, nil
 		}
 
-		numBytes, addr, err := pc.ReadFrom(packets[0])
-		if err != nil {
-			return 0, err
-		}
-
-		sizes[0] = numBytes
-
-		// Convert the address to our I2P endpoint type
-		i2pAddr, ok := addr.(i2pkeys.I2PAddr)
-		if !ok {
-			// Try string conversion as fallback
-			addrStr := addr.String()
-			i2pAddr, err = i2pkeys.NewI2PAddrFromString(addrStr)
+		for {
+			numBytes, addr, err := pc.ReadFrom(packets[0])
 			if err != nil {
-				return 0, errors.New("i2pbind: could not parse sender address")
+				return 0, err
 			}
-		}
 
-		eps[0] = &I2PEndpoint{dest: i2pAddr}
-		return 1, nil
+			// Convert the address to our I2P endpoint type
+			i2pAddr, ok := addr.(i2pkeys.I2PAddr)
+			if !ok {
+				// Try string conversion as fallback
+				addrStr := addr.String()
+				i2pAddr, err = i2pkeys.NewI2PAddrFromString(addrStr)
+				if err != nil {
+					return 0, errors.New("i2pbind: could not parse sender address")
+				}
+			}
+
+			// Demultiplex: check if this is a mesh protocol message
+			// Mesh messages are JSON and start with '{' (0x7B)
+			// WireGuard messages have binary format with type byte 1-4
+			if numBytes > 0 && packets[0][0] == '{' {
+				// This is a mesh protocol message (gossip, handshake, etc.)
+				if meshHandler != nil {
+					// Make a copy since the buffer will be reused
+					msgCopy := make([]byte, numBytes)
+					copy(msgCopy, packets[0][:numBytes])
+					// Handle in a goroutine to avoid blocking the receive loop
+					go meshHandler(msgCopy, i2pAddr)
+				}
+				// Continue reading - don't return this packet to WireGuard
+				continue
+			}
+
+			// This is a WireGuard packet - return it normally
+			sizes[0] = numBytes
+			eps[0] = &I2PEndpoint{dest: i2pAddr}
+			return 1, nil
+		}
 	}
 }
 

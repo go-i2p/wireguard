@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/i2pkeys"
 	"github.com/go-i2p/wireguard/lib/identity"
 	"github.com/go-i2p/wireguard/lib/mesh"
 	"github.com/go-i2p/wireguard/lib/rpc"
@@ -562,6 +564,23 @@ func (n *Node) initMesh(ctx context.Context) error {
 		WGPublicKey:  n.identity.PublicKey().String(),
 		TunnelIP:     n.tunnelIP.String(),
 		NetworkID:    n.identity.NetworkID(),
+	})
+
+	// Wire up transport to route mesh protocol messages to gossip engine.
+	// The transport demultiplexes incoming I2P datagrams: WireGuard packets go to
+	// the WireGuard device, while mesh messages (JSON) are routed here.
+	n.trans.SetMeshHandler(func(data []byte, from i2pkeys.I2PAddr) {
+		var msg mesh.Message
+		if err := json.Unmarshal(data, &msg); err != nil {
+			n.logger.Debug("failed to parse mesh message", "error", err, "from", from.Base32()[:16]+"...")
+			return
+		}
+		if err := n.gossip.HandleMessage(&msg); err != nil {
+			n.logger.Debug("failed to handle mesh message",
+				"type", msg.Type,
+				"error", err,
+				"from", from.Base32()[:16]+"...")
+		}
 	})
 
 	// Set up discovery callback for auto-connecting to gossip-discovered peers
