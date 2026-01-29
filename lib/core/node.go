@@ -850,6 +850,8 @@ func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersCo
 // --- InviteProvider implementation for RPC handlers ---
 
 // CreateInvite creates a new invite code for others to join the mesh.
+// If this is the first node in a new network (no NetworkID set), a new
+// network is automatically created with a randomly generated NetworkID.
 func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreateResult, error) {
 	n.mu.RLock()
 	id := n.identity
@@ -859,6 +861,24 @@ func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreat
 
 	if id == nil || invStore == nil {
 		return nil, errors.New("node not fully initialized")
+	}
+
+	// If no NetworkID exists, this is the first node creating a new network
+	// Auto-generate a NetworkID to bootstrap the mesh
+	if id.NetworkID() == "" {
+		networkID, err := identity.GenerateNetworkID()
+		if err != nil {
+			return nil, fmt.Errorf("generating network ID: %w", err)
+		}
+		id.SetNetworkID(networkID)
+
+		// Persist the identity with the new NetworkID
+		identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
+		if err := id.Save(identityPath); err != nil {
+			n.logger.Warn("failed to save identity with network ID", "error", err)
+		}
+
+		n.logger.Info("created new mesh network", "network_id", networkID)
 	}
 
 	// Create invite options

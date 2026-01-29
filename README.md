@@ -187,12 +187,16 @@ Peers join the mesh using invite codes that contain:
 - A one-time authentication token
 - Network ID and optional metadata
 
+When you create the first invite on a fresh node, a new mesh network is automatically created with a randomly generated Network ID. Subsequent nodes that accept this invite will inherit the same Network ID, forming a unified mesh network.
+
 ```go
 // Create an invite (inviter side)
+// If this is a new node, a Network ID is automatically generated
 invite, err := node.CreateInvite()
 // Returns: i2plan://eyJpMnBfZGVzdCI6Ii4uLiIsImF1dGhfdG9rZW4iOiIuLi4ifQ==
 
 // Accept an invite (joiner side)
+// The node inherits the Network ID from the invite
 err := node.AcceptInvite("i2plan://...")
 ```
 
