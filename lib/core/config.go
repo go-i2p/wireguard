@@ -32,7 +32,6 @@ type Config struct {
 	Mesh MeshConfig `toml:"mesh"`
 	RPC  RPCConfig  `toml:"rpc"`
 	Web  WebConfig  `toml:"web"`
-	TUI  TUIConfig  `toml:"tui"`
 }
 
 // NodeConfig contains basic node identification settings.
@@ -81,11 +80,8 @@ type WebConfig struct {
 	Listen string `toml:"listen"`
 }
 
-// TUIConfig contains terminal UI settings.
-type TUIConfig struct {
-	// Enabled controls whether the TUI is available
-	Enabled bool `toml:"enabled"`
-}
+// Note: The TUI runs as a separate client connecting via RPC.
+// Use 'i2plan tui' to launch it - no configuration needed.
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
@@ -114,9 +110,6 @@ func DefaultConfig() *Config {
 		Web: WebConfig{
 			Enabled: true,
 			Listen:  DefaultWebListen,
-		},
-		TUI: TUIConfig{
-			Enabled: true,
 		},
 	}
 }

@@ -253,8 +253,5 @@ func (c *Config) toCoreConfig() *core.Config {
 			Enabled: c.EnableWeb,
 			Listen:  c.WebListenAddr,
 		},
-		TUI: core.TUIConfig{
-			Enabled: false, // TUI not used in embedded mode
-		},
 	}
 }

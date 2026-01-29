@@ -200,6 +200,28 @@ invite, err := node.CreateInvite()
 err := node.AcceptInvite("i2plan://...")
 ```
 
+### CLI Commands
+
+The `i2plan` command provides subcommands for managing the mesh VPN:
+
+```bash
+# Start the node daemon (runs in foreground)
+i2plan
+
+# Launch the interactive Terminal UI (connects to running node via RPC)
+i2plan tui
+
+# Start the Web UI server (connects to running node via RPC)
+i2plan web
+
+# Execute RPC commands directly
+i2plan rpc status
+i2plan rpc peers.list
+i2plan rpc invite.create
+```
+
+**Architecture Note:** The TUI and Web interfaces are **clients** that connect to the running node via RPC. They don't start their own node - they control an existing one. Start the node daemon first, then connect with `i2plan tui` or `i2plan web` in a separate terminal.
+
 ## How It Works
 
 The library implements WireGuard's `conn.Bind` interface, replacing UDP sockets with I2P datagram sessions. Peer endpoints use I2P destination addresses (base32 format) instead of IP addresses.

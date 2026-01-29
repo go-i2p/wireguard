@@ -1121,7 +1121,7 @@ func (n *Node) TunnelIPAddr() netip.Addr {
 // If key is empty, returns the entire configuration.
 // Supported keys: node.name, node.data_dir, i2p.sam_address, i2p.tunnel_length,
 // mesh.tunnel_subnet, mesh.heartbeat_interval, mesh.peer_timeout, mesh.max_peers,
-// rpc.enabled, rpc.socket, rpc.tcp_address, web.enabled, web.listen, tui.enabled
+// rpc.enabled, rpc.socket, rpc.tcp_address, web.enabled, web.listen
 func (n *Node) GetConfig(key string) (any, error) {
 	n.mu.RLock()
 	cfg := n.config
@@ -1173,10 +1173,6 @@ func (n *Node) GetConfig(key string) (any, error) {
 		return cfg.Web.Enabled, nil
 	case "web.listen":
 		return cfg.Web.Listen, nil
-
-	// TUI config
-	case "tui.enabled":
-		return cfg.TUI.Enabled, nil
 
 	default:
 		return nil, fmt.Errorf("unknown config key: %s", key)
@@ -1234,7 +1230,7 @@ func (n *Node) SetConfig(key string, value any) (any, error) {
 	// Read-only configs
 	case "node.data_dir", "i2p.sam_address", "i2p.tunnel_length",
 		"mesh.tunnel_subnet", "mesh.heartbeat_interval", "mesh.peer_timeout",
-		"rpc.enabled", "rpc.socket", "web.enabled", "web.listen", "tui.enabled":
+		"rpc.enabled", "rpc.socket", "web.enabled", "web.listen":
 		return nil, fmt.Errorf("config key %s is read-only at runtime", key)
 
 	default:
