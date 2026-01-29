@@ -607,7 +607,18 @@ func (n *Node) cleanup() {
 	n.logger.Info("cleanup: closing device")
 	// Close device
 	if n.device != nil {
-		n.device.Close()
+		// Device close may block, use a timeout
+		done := make(chan struct{})
+		go func() {
+			n.device.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+			n.logger.Info("cleanup: device closed")
+		case <-time.After(3 * time.Second):
+			n.logger.Warn("cleanup: device close timed out")
+		}
 		n.device = nil
 	}
 

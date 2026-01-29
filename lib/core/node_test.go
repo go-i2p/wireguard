@@ -201,16 +201,17 @@ func TestNode_DoneChannel(t *testing.T) {
 	// Stop in a goroutine
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		node.Stop(stopCtx)
 	}()
 
 	// Done channel should be closed after stop
+	// Note: device close can take up to 3 seconds to timeout
 	select {
 	case <-done:
 		// Success
-	case <-time.After(2 * time.Second):
+	case <-time.After(6 * time.Second):
 		t.Error("Done channel was not closed after Stop")
 	}
 }
