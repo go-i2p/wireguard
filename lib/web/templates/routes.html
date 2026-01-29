@@ -1,0 +1,44 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>Routes</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{else}}
+<p class="subtitle">{{.Total}} route(s) in routing table</p>
+
+{{if .Routes}}
+<table class="table">
+    <thead>
+        <tr>
+            <th>Tunnel IP</th>
+            <th>Node ID</th>
+            <th>Via</th>
+            <th>Hops</th>
+            <th>Last Seen</th>
+        </tr>
+    </thead>
+    <tbody id="routes-table">
+        {{range .Routes}}
+        <tr>
+            <td class="mono">{{.TunnelIP}}</td>
+            <td class="mono">{{truncate .NodeID 20}}</td>
+            <td class="mono">{{if .ViaNodeID}}{{truncate .ViaNodeID 16}}{{else}}<em>direct</em>{{end}}</td>
+            <td>{{.HopCount}}</td>
+            <td>{{.LastSeen}}</td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<div class="empty-state">
+    <p>No routes in the routing table.</p>
+    <p>Connect to peers to populate the routing table.</p>
+</div>
+{{end}}
+
+<div class="actions">
+    <button class="btn" onclick="refreshRoutes()">Refresh</button>
+</div>
+{{end}}
+{{end}}

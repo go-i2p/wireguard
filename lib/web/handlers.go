@@ -1,0 +1,212 @@
+package web
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+// handleDashboard renders the main dashboard page.
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	status, err := s.rpcClient.Status(ctx)
+	if err != nil {
+		s.logger.Error("rpc status error", "error", err)
+		s.renderTemplate(w, "dashboard", map[string]any{
+			"Error": "Failed to connect to node",
+		})
+		return
+	}
+
+	peers, _ := s.rpcClient.PeersList(ctx)
+	routes, _ := s.rpcClient.RoutesList(ctx)
+
+	peerCount := 0
+	if peers != nil {
+		peerCount = peers.Total
+	}
+	routeCount := 0
+	if routes != nil {
+		routeCount = routes.Total
+	}
+
+	s.renderTemplate(w, "dashboard", map[string]any{
+		"Status":     status,
+		"PeerCount":  peerCount,
+		"RouteCount": routeCount,
+	})
+}
+
+// handlePeers renders the peers page.
+func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	peers, err := s.rpcClient.PeersList(ctx)
+	if err != nil {
+		s.logger.Error("rpc peers error", "error", err)
+		s.renderTemplate(w, "peers", map[string]any{
+			"Error": "Failed to fetch peers",
+		})
+		return
+	}
+
+	s.renderTemplate(w, "peers", map[string]any{
+		"Peers": peers.Peers,
+		"Total": peers.Total,
+	})
+}
+
+// handleInvites renders the invites page.
+func (s *Server) handleInvites(w http.ResponseWriter, r *http.Request) {
+	s.renderTemplate(w, "invites", nil)
+}
+
+// handleRoutes renders the routes page.
+func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	routes, err := s.rpcClient.RoutesList(ctx)
+	if err != nil {
+		s.logger.Error("rpc routes error", "error", err)
+		s.renderTemplate(w, "routes", map[string]any{
+			"Error": "Failed to fetch routes",
+		})
+		return
+	}
+
+	s.renderTemplate(w, "routes", map[string]any{
+		"Routes": routes.Routes,
+		"Total":  routes.Total,
+	})
+}
+
+// handleSettings renders the settings page.
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	config, err := s.rpcClient.ConfigGet(ctx, "")
+	if err != nil {
+		s.logger.Error("rpc config error", "error", err)
+		s.renderTemplate(w, "settings", map[string]any{
+			"Error": "Failed to fetch configuration",
+		})
+		return
+	}
+
+	s.renderTemplate(w, "settings", map[string]any{
+		"Config": config.Value,
+	})
+}
+
+// API Handlers
+
+// handleAPIStatus returns node status as JSON.
+func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	status, err := s.rpcClient.Status(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, status)
+}
+
+// handleAPIPeers returns peers list as JSON.
+func (s *Server) handleAPIPeers(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	peers, err := s.rpcClient.PeersList(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, peers)
+}
+
+// handleAPIRoutes returns routes as JSON.
+func (s *Server) handleAPIRoutes(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	routes, err := s.rpcClient.RoutesList(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, routes)
+}
+
+// InviteCreateRequest is the request body for creating an invite.
+type InviteCreateRequest struct {
+	Expiry  string `json:"expiry,omitempty"`
+	MaxUses int    `json:"max_uses,omitempty"`
+}
+
+// handleAPIInviteCreate creates a new invite code.
+func (s *Server) handleAPIInviteCreate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var req InviteCreateRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	// Default expiry
+	if req.Expiry == "" {
+		req.Expiry = "24h"
+	}
+	if req.MaxUses == 0 {
+		req.MaxUses = 1
+	}
+
+	result, err := s.rpcClient.InviteCreate(ctx, req.Expiry, req.MaxUses)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// InviteAcceptRequest is the request body for accepting an invite.
+type InviteAcceptRequest struct {
+	InviteCode string `json:"invite_code"`
+}
+
+// handleAPIInviteAccept accepts an invite code.
+func (s *Server) handleAPIInviteAccept(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	var req InviteAcceptRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.InviteCode == "" {
+		s.writeError(w, http.StatusBadRequest, "invite_code is required")
+		return
+	}
+
+	result, err := s.rpcClient.InviteAccept(ctx, req.InviteCode)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, result)
+}

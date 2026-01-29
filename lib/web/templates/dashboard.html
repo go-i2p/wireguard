@@ -1,0 +1,61 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>Dashboard</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{else}}
+<div class="grid">
+    <div class="card">
+        <h3>Node Status</h3>
+        <div class="status-item">
+            <span class="label">State:</span>
+            <span class="value status-{{.Status.State}}">{{.Status.State}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Name:</span>
+            <span class="value">{{.Status.NodeName}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Node ID:</span>
+            <span class="value mono">{{truncate .Status.NodeID 24}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Uptime:</span>
+            <span class="value">{{.Status.Uptime}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Version:</span>
+            <span class="value">{{.Status.Version}}</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Network</h3>
+        <div class="status-item">
+            <span class="label">Tunnel IP:</span>
+            <span class="value mono">{{if .Status.TunnelIP}}{{.Status.TunnelIP}}{{else}}<em>Not set</em>{{end}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">I2P Dest:</span>
+            <span class="value mono">{{if .Status.I2PDestination}}{{truncate .Status.I2PDestination 32}}{{else}}<em>Not set</em>{{end}}</span>
+        </div>
+    </div>
+
+    <div class="card stats-card">
+        <div class="stat">
+            <span class="stat-value" id="peer-count">{{.PeerCount}}</span>
+            <span class="stat-label">Peers</span>
+        </div>
+        <div class="stat">
+            <span class="stat-value" id="route-count">{{.RouteCount}}</span>
+            <span class="stat-label">Routes</span>
+        </div>
+    </div>
+</div>
+
+<div class="actions">
+    <button class="btn btn-primary" onclick="refreshStatus()">Refresh</button>
+</div>
+{{end}}
+{{end}}

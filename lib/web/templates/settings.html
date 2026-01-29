@@ -1,0 +1,16 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>Settings</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{else}}
+<div class="card">
+    <h3>Current Configuration</h3>
+    <pre id="config-display">{{json .Config}}</pre>
+</div>
+
+<p class="muted">Configuration editing is read-only in the web interface. Use the CLI or edit config file directly.</p>
+{{end}}
+{{end}}
+{{end}}

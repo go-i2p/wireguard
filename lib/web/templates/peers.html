@@ -1,0 +1,43 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>Peers</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{else}}
+<p class="subtitle">{{.Total}} peer(s) connected</p>
+
+{{if .Peers}}
+<table class="table">
+    <thead>
+        <tr>
+            <th>Node ID</th>
+            <th>Tunnel IP</th>
+            <th>State</th>
+            <th>Last Seen</th>
+        </tr>
+    </thead>
+    <tbody id="peers-table">
+        {{range .Peers}}
+        <tr>
+            <td class="mono">{{truncate .NodeID 20}}</td>
+            <td class="mono">{{.TunnelIP}}</td>
+            <td><span class="status-badge status-{{.State}}">{{.State}}</span></td>
+            <td>{{.LastSeen}}</td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<div class="empty-state">
+    <p>No peers connected yet.</p>
+    <p>Generate an invite code to connect with others.</p>
+    <a href="/invites" class="btn btn-primary">Create Invite</a>
+</div>
+{{end}}
+
+<div class="actions">
+    <button class="btn" onclick="refreshPeers()">Refresh</button>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,30 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>i2plan - {{.CurrentPage}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">i2plan</div>
+        <ul class="nav-links">
+            <li><a href="/" {{if eq .CurrentPage "dashboard"}}class="active"{{end}}>Dashboard</a></li>
+            <li><a href="/peers" {{if eq .CurrentPage "peers"}}class="active"{{end}}>Peers</a></li>
+            <li><a href="/routes" {{if eq .CurrentPage "routes"}}class="active"{{end}}>Routes</a></li>
+            <li><a href="/invites" {{if eq .CurrentPage "invites"}}class="active"{{end}}>Invites</a></li>
+            <li><a href="/settings" {{if eq .CurrentPage "settings"}}class="active"{{end}}>Settings</a></li>
+        </ul>
+    </nav>
+    <main class="container">
+        {{template "content" .}}
+    </main>
+    <footer class="footer">
+        <p>i2plan - Decentralized WireGuard-over-I2P Mesh VPN</p>
+    </footer>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

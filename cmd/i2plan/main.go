@@ -42,6 +42,7 @@ import (
 	"github.com/go-i2p/wireguard/lib/core"
 	"github.com/go-i2p/wireguard/lib/rpc"
 	"github.com/go-i2p/wireguard/lib/tui"
+	"github.com/go-i2p/wireguard/lib/web"
 )
 
 // Version is set at build time via ldflags.
@@ -72,7 +73,8 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  i2plan [flags]            Start the node\n")
 		fmt.Fprintf(os.Stderr, "  i2plan rpc <method>       Execute RPC method\n")
-		fmt.Fprintf(os.Stderr, "  i2plan tui                Launch interactive TUI\n\n")
+		fmt.Fprintf(os.Stderr, "  i2plan tui                Launch interactive TUI\n")
+		fmt.Fprintf(os.Stderr, "  i2plan web                Start web UI server\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -113,6 +115,16 @@ func run() int {
 			tuiDataDir = filepath.Join(homeDir, ".i2plan")
 		}
 		return handleTUI(logger, tuiDataDir)
+	}
+
+	// Check for Web subcommand
+	if len(args) > 0 && args[0] == "web" {
+		// Determine data directory for RPC socket
+		webDataDir := *dataDir
+		if webDataDir == "" {
+			webDataDir = filepath.Join(homeDir, ".i2plan")
+		}
+		return handleWeb(logger, webDataDir)
 	}
 
 	// Load configuration
@@ -492,6 +504,65 @@ func handleTUI(logger *slog.Logger, dataDir string) int {
 	p := tea.NewProgram(tuiApp, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
+// handleWeb starts the web UI server.
+func handleWeb(logger *slog.Logger, dataDir string) int {
+	// Determine socket path
+	socketPath := filepath.Join(dataDir, core.DefaultRPCSocket)
+	if envSocket := os.Getenv("I2PLAN_RPC_SOCKET"); envSocket != "" {
+		socketPath = envSocket
+	}
+
+	// Determine auth file
+	authFile := filepath.Join(dataDir, "rpc_auth.token")
+	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
+		authFile = envAuth
+	}
+
+	// Default listen address
+	listenAddr := "127.0.0.1:8080"
+	if envAddr := os.Getenv("I2PLAN_WEB_ADDR"); envAddr != "" {
+		listenAddr = envAddr
+	}
+
+	// Create web server
+	server, err := web.New(web.Config{
+		ListenAddr:    listenAddr,
+		RPCSocketPath: socketPath,
+		RPCAuthFile:   authFile,
+		Logger:        logger,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Is the i2plan daemon running?\n")
+		return 1
+	}
+
+	// Start the server
+	if err := server.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting web server: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Web UI running at http://%s\n", listenAddr)
+	fmt.Println("Press Ctrl+C to stop")
+
+	// Wait for shutdown signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := server.Stop(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Error stopping web server: %v\n", err)
 		return 1
 	}
 
