@@ -43,8 +43,9 @@ func TestTransport_NotOpen(t *testing.T) {
 		t.Error("ParseEndpoint should error when not open")
 	}
 
-	if tr.Bind() != nil {
-		t.Error("Bind should return nil when not open")
+	// IsOpen should return false
+	if tr.IsOpen() {
+		t.Error("IsOpen should return false when not open")
 	}
 }
 
