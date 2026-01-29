@@ -306,6 +306,7 @@ func (b *I2PBind) BatchSize() int {
 //   - The bind has not been opened yet (call Open() first)
 //   - The SAM bridge is not running or accessible
 //   - The I2P session failed to establish
+//   - The underlying PacketConn does not return an I2P address
 //
 // After a successful Open() call, LocalAddress() should always succeed.
 // If it fails after Open(), the I2P session may have been terminated.
@@ -321,10 +322,18 @@ func (b *I2PBind) LocalAddress() (string, error) {
 	if i2pAddr, ok := localAddr.(i2pkeys.I2PAddr); ok {
 		return i2pAddr.Base32(), nil
 	}
-	return localAddr.String(), nil
+	// The PacketConn should always return an I2PAddr when using onramp.
+	// If it doesn't, something unexpected happened.
+	return "", errors.New("i2pbind: local address is not an I2P destination")
 }
 
-// LocalDestination returns the full I2P destination
+// LocalDestination returns the full I2P destination.
+//
+// This method will return an error if:
+//   - The bind has not been opened yet (call Open() first)
+//   - The underlying PacketConn does not return an I2P address
+//
+// After a successful Open() call, LocalDestination() should always succeed.
 func (b *I2PBind) LocalDestination() (i2pkeys.I2PAddr, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -337,6 +346,7 @@ func (b *I2PBind) LocalDestination() (i2pkeys.I2PAddr, error) {
 	if i2pAddr, ok := localAddr.(i2pkeys.I2PAddr); ok {
 		return i2pAddr, nil
 	}
-	// Try to parse from string representation
-	return i2pkeys.NewI2PAddrFromString(localAddr.String())
+	// The PacketConn should always return an I2PAddr when using onramp.
+	// If it doesn't, something unexpected happened.
+	return "", errors.New("i2pbind: local address is not an I2P destination")
 }
