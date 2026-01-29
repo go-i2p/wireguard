@@ -72,8 +72,16 @@ func main() {
     // Generate or load a WireGuard private key
     privKey, _ := wgtypes.GeneratePrivateKey()
     
-    // Configure the device (required before Up())
+    // Configure the device with our private key
     config := "private_key=" + hex.EncodeToString(privKey[:]) + "\n"
+    
+    // Add a peer (if you have one - replace with actual peer details)
+    // peerPubKey, _ := wgtypes.ParseKey("PEER_PUBLIC_KEY_BASE64")
+    // config += "public_key=" + hex.EncodeToString(peerPubKey[:]) + "\n"
+    // config += "endpoint=PEER_I2P_ADDRESS.b32.i2p\n"
+    // config += "allowed_ip=10.0.0.0/24\n"
+    // config += "persistent_keepalive_interval=25\n"
+    
     if err := dev.IpcSet(config); err != nil {
         log.Fatalf("Failed to configure: %v", err)
     }
@@ -130,7 +138,7 @@ For higher-level mesh VPN functionality, use the `lib/` packages:
 | `lib/rpc` | JSON-RPC server/client for node control |
 | `lib/web` | Browser-based management UI |
 | `lib/tui` | Terminal UI using BubbleTea |
-| `lib/metrics` | Prometheus-compatible metrics |
+| `lib/metrics` | Prometheus exposition format metrics (lightweight, no external deps) |
 | `lib/ratelimit` | Per-peer rate limiting |
 
 ### Using the Embedded VPN
