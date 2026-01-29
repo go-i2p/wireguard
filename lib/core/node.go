@@ -5,8 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
+	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/go-i2p/wireguard/lib/identity"
+	"github.com/go-i2p/wireguard/lib/mesh"
+	"github.com/go-i2p/wireguard/lib/rpc"
+	"github.com/go-i2p/wireguard/lib/transport"
+	"github.com/go-i2p/wireguard/lib/web"
 )
 
 // NodeState represents the current state of the node.
@@ -62,6 +70,22 @@ type Node struct {
 	// Event callbacks for embedded API integration
 	onStateChange func(oldState, newState NodeState)
 	onError       func(err error, message string)
+
+	// Core components
+	identity *identity.Identity
+	trans    *transport.Transport
+	device   *mesh.Device
+	routing  *mesh.RoutingTable
+	peers    *mesh.PeerManager
+	gossip   *mesh.GossipEngine
+	banList  *mesh.BanList
+
+	// User interfaces
+	rpcServer *rpc.Server
+	webServer *web.Server
+
+	// Derived values
+	tunnelIP netip.Addr
 }
 
 // NewNode creates a new Node with the given configuration.
@@ -126,10 +150,43 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("creating data directory: %w", err)
 	}
 
-	// TODO (Phase 1): Load or generate identity
-	// TODO (Phase 2): Open I2P transport and WireGuard device
-	// TODO (Phase 3): Start gossip protocol
-	// TODO (Phase 4+): Start RPC, Web, TUI interfaces
+	// Phase 1: Load or generate identity
+	if err := n.initIdentity(); err != nil {
+		n.transitionToStopped()
+		n.emitError(err, "failed to initialize identity")
+		return err
+	}
+
+	// Phase 2: Open I2P transport and WireGuard device
+	if err := n.initTransport(); err != nil {
+		n.transitionToStopped()
+		n.emitError(err, "failed to initialize transport")
+		return err
+	}
+
+	if err := n.initDevice(); err != nil {
+		n.cleanup()
+		n.transitionToStopped()
+		n.emitError(err, "failed to initialize device")
+		return err
+	}
+
+	// Phase 3: Initialize mesh components and start gossip
+	if err := n.initMesh(nodeCtx); err != nil {
+		n.cleanup()
+		n.transitionToStopped()
+		n.emitError(err, "failed to initialize mesh")
+		return err
+	}
+
+	// Phase 4: Start user interfaces (RPC, Web) if enabled
+	if err := n.initInterfaces(nodeCtx); err != nil {
+		n.logger.Error("failed to initialize interfaces", "error", err)
+		n.cleanup()
+		n.transitionToStopped()
+		n.emitError(err, "failed to initialize interfaces")
+		return err
+	}
 
 	n.mu.Lock()
 	n.state = StateRunning
@@ -152,6 +209,9 @@ func (n *Node) run(ctx context.Context) {
 	<-ctx.Done()
 
 	n.logger.Info("node shutting down")
+
+	// Cleanup all components
+	n.cleanup()
 
 	n.mu.Lock()
 	oldState := n.state
@@ -198,11 +258,18 @@ func (n *Node) transitionToStopped() {
 	n.mu.Unlock()
 }
 
-// State returns the current state of the node.
-func (n *Node) State() NodeState {
+// GetState returns the current state of the node (typed).
+func (n *Node) GetState() NodeState {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.state
+}
+
+// State returns the current state as a string for RPC.
+func (n *Node) State() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.state.String()
 }
 
 // Config returns the node's configuration.
@@ -274,4 +341,494 @@ func (n *Node) emitError(err error, message string) {
 	if callback != nil {
 		callback(err, message)
 	}
+}
+
+// initIdentity loads an existing identity or generates a new one.
+func (n *Node) initIdentity() error {
+	identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
+
+	n.logger.Info("loading identity", "path", identityPath)
+
+	id, err := identity.LoadIdentity(identityPath)
+	if err != nil {
+		return fmt.Errorf("loading identity: %w", err)
+	}
+
+	if id == nil {
+		// No existing identity, generate a new one
+		n.logger.Info("generating new identity")
+		id, err = identity.NewIdentity()
+		if err != nil {
+			return fmt.Errorf("generating identity: %w", err)
+		}
+
+		if err := id.Save(identityPath); err != nil {
+			return fmt.Errorf("saving identity: %w", err)
+		}
+	}
+
+	n.identity = id
+	n.logger.Info("identity loaded",
+		"node_id", id.NodeID(),
+		"public_key", id.PublicKey().String()[:16]+"...",
+	)
+
+	return nil
+}
+
+// initTransport opens the I2P transport layer.
+func (n *Node) initTransport() error {
+	n.logger.Info("opening I2P transport",
+		"sam_addr", n.config.I2P.SAMAddress,
+		"tunnel_length", n.config.I2P.TunnelLength,
+	)
+
+	// Build I2P options from config
+	options := []string{
+		fmt.Sprintf("inbound.length=%d", n.config.I2P.TunnelLength),
+		fmt.Sprintf("outbound.length=%d", n.config.I2P.TunnelLength),
+	}
+
+	n.trans = transport.NewTransport(n.config.Node.Name, n.config.I2P.SAMAddress, options)
+
+	if err := n.trans.Open(); err != nil {
+		return fmt.Errorf("opening I2P transport: %w", err)
+	}
+
+	// Store I2P destination in identity
+	localDest := n.trans.LocalAddress()
+	n.identity.SetI2PDest(localDest)
+
+	// Save identity with I2P destination
+	identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
+	if err := n.identity.Save(identityPath); err != nil {
+		n.logger.Warn("failed to save identity with I2P destination", "error", err)
+	}
+
+	n.logger.Info("I2P transport opened",
+		"local_dest", localDest[:32]+"...",
+	)
+
+	return nil
+}
+
+// initDevice creates and configures the WireGuard device.
+func (n *Node) initDevice() error {
+	// Parse tunnel subnet from config
+	subnet, err := netip.ParsePrefix(n.config.Mesh.TunnelSubnet)
+	if err != nil {
+		return fmt.Errorf("parsing tunnel subnet: %w", err)
+	}
+
+	// Derive tunnel IP from our public key
+	n.tunnelIP = mesh.AllocateTunnelIPWithSubnet(n.identity.PublicKey(), subnet)
+
+	n.logger.Info("creating WireGuard device",
+		"tunnel_ip", n.tunnelIP,
+		"subnet", subnet,
+	)
+
+	deviceCfg := mesh.DeviceConfig{
+		PrivateKey: n.identity.PrivateKey(),
+		TunnelIP:   n.tunnelIP,
+		Subnet:     subnet,
+		MTU:        1280, // Safe for I2P
+		Logger:     n.logger.With("component", "device"),
+		Bind:       n.trans.Bind(),
+	}
+
+	n.device, err = mesh.NewDevice(deviceCfg)
+	if err != nil {
+		return fmt.Errorf("creating WireGuard device: %w", err)
+	}
+
+	n.logger.Info("WireGuard device created")
+	return nil
+}
+
+// initMesh initializes mesh networking components.
+func (n *Node) initMesh(ctx context.Context) error {
+	// Parse subnet for routing table
+	subnet, err := netip.ParsePrefix(n.config.Mesh.TunnelSubnet)
+	if err != nil {
+		return fmt.Errorf("parsing tunnel subnet: %w", err)
+	}
+
+	// Create routing table
+	routesPath := filepath.Join(n.config.Node.DataDir, "routes.json")
+	n.routing = mesh.NewRoutingTable(mesh.RoutingTableConfig{
+		Subnet:   subnet,
+		FilePath: routesPath,
+	})
+
+	// Add our own route
+	_ = n.routing.AddRoute(&mesh.RouteEntry{
+		TunnelIP:    n.tunnelIP,
+		WGPublicKey: n.identity.PublicKey().String(),
+		I2PDest:     n.identity.I2PDest(),
+		NodeID:      n.identity.NodeID(),
+		LastSeen:    time.Now(),
+		CreatedAt:   time.Now(),
+		HopCount:    0,
+	})
+
+	// Create ban list
+	banListPath := filepath.Join(n.config.Node.DataDir, "banlist.json")
+	n.banList = mesh.NewBanList(mesh.BanListConfig{
+		PersistPath: banListPath,
+		Logger:      n.logger.With("component", "banlist"),
+	})
+
+	// Create peer manager
+	n.peers = mesh.NewPeerManager(mesh.PeerManagerConfig{
+		NodeID:      n.identity.NodeID(),
+		I2PDest:     n.identity.I2PDest(),
+		WGPublicKey: n.identity.PublicKey(),
+		TunnelIP:    n.tunnelIP,
+		NetworkID:   n.identity.NetworkID(),
+		MaxPeers:    n.config.Mesh.MaxPeers,
+		Logger:      n.logger.With("component", "peers"),
+		BanList:     n.banList,
+	})
+
+	// Create gossip engine with defaults, then override from config
+	gossipConfig := mesh.DefaultGossipConfig()
+	gossipConfig.HeartbeatInterval = n.config.Mesh.HeartbeatInterval
+	gossipConfig.PeerTimeout = n.config.Mesh.PeerTimeout
+	gossipConfig.Logger = n.logger.With("component", "gossip")
+
+	n.gossip = mesh.NewGossipEngine(mesh.GossipEngineConfig{
+		Config:       gossipConfig,
+		PeerManager:  n.peers,
+		RoutingTable: n.routing,
+		NodeID:       n.identity.NodeID(),
+		I2PDest:      n.identity.I2PDest(),
+		WGPublicKey:  n.identity.PublicKey().String(),
+		TunnelIP:     n.tunnelIP.String(),
+		NetworkID:    n.identity.NetworkID(),
+	})
+
+	// Start gossip engine
+	if err := n.gossip.Start(ctx); err != nil {
+		return fmt.Errorf("starting gossip engine: %w", err)
+	}
+
+	n.logger.Info("mesh networking initialized")
+	return nil
+}
+
+// initInterfaces starts RPC and Web interfaces if enabled.
+func (n *Node) initInterfaces(ctx context.Context) error {
+	// Start RPC server if enabled
+	if n.config.RPC.Enabled {
+		socketPath := filepath.Join(n.config.Node.DataDir, n.config.RPC.Socket)
+		authPath := filepath.Join(n.config.Node.DataDir, "rpc.auth")
+
+		var err error
+		n.rpcServer, err = rpc.NewServer(rpc.ServerConfig{
+			AuthFile: authPath,
+			Logger:   n.logger.With("component", "rpc"),
+		})
+		if err != nil {
+			return fmt.Errorf("creating RPC server: %w", err)
+		}
+
+		// Register handlers
+		handlers := rpc.NewHandlers(rpc.HandlersConfig{
+			Node:   n,
+			Peers:  n,
+			Routes: n,
+			Bans:   n,
+		})
+		handlers.RegisterAll(n.rpcServer)
+
+		// Start the server
+		if err := n.rpcServer.Start(ctx, rpc.ServerConfig{
+			UnixSocketPath: socketPath,
+			TCPAddress:     n.config.RPC.TCPAddress,
+		}); err != nil {
+			return fmt.Errorf("starting RPC server: %w", err)
+		}
+
+		n.logger.Info("RPC server started", "socket", socketPath)
+	}
+
+	// Start Web server if enabled
+	if n.config.Web.Enabled && n.config.RPC.Enabled {
+		socketPath := filepath.Join(n.config.Node.DataDir, n.config.RPC.Socket)
+		authPath := filepath.Join(n.config.Node.DataDir, "rpc.auth")
+
+		var err error
+		n.webServer, err = web.New(web.Config{
+			ListenAddr:    n.config.Web.Listen,
+			RPCSocketPath: socketPath,
+			RPCAuthFile:   authPath,
+			Logger:        n.logger.With("component", "web"),
+		})
+		if err != nil {
+			return fmt.Errorf("creating web server: %w", err)
+		}
+
+		if err := n.webServer.Start(); err != nil {
+			return fmt.Errorf("starting web server: %w", err)
+		}
+
+		n.logger.Info("web server started", "listen", n.config.Web.Listen)
+	}
+
+	return nil
+}
+
+// cleanup shuts down all components in reverse order.
+func (n *Node) cleanup() {
+	n.logger.Info("cleanup: stopping web server")
+	// Stop web server
+	if n.webServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = n.webServer.Stop(ctx)
+		cancel()
+		n.webServer = nil
+	}
+
+	n.logger.Info("cleanup: stopping RPC server")
+	// Stop RPC server
+	if n.rpcServer != nil {
+		_ = n.rpcServer.Stop()
+		n.rpcServer = nil
+	}
+
+	n.logger.Info("cleanup: stopping gossip engine")
+	// Stop gossip engine
+	if n.gossip != nil {
+		n.gossip.Stop()
+		n.gossip = nil
+	}
+
+	n.logger.Info("cleanup: closing device")
+	// Close device
+	if n.device != nil {
+		n.device.Close()
+		n.device = nil
+	}
+
+	n.logger.Info("cleanup: closing transport")
+	// Close transport
+	if n.trans != nil {
+		_ = n.trans.Close()
+		n.trans = nil
+	}
+	n.logger.Info("cleanup: done")
+}
+
+// --- NodeProvider implementation for RPC handlers ---
+
+// NodeName returns the configured node name.
+func (n *Node) NodeName() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.config.Node.Name
+}
+
+// NodeID returns the unique node identifier.
+func (n *Node) NodeID() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.identity == nil {
+		return ""
+	}
+	return n.identity.NodeID()
+}
+
+// TunnelIP returns our mesh tunnel IP as a string.
+func (n *Node) TunnelIP() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if !n.tunnelIP.IsValid() {
+		return ""
+	}
+	return n.tunnelIP.String()
+}
+
+// I2PDestination returns our I2P destination.
+func (n *Node) I2PDestination() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.identity == nil {
+		return ""
+	}
+	return n.identity.I2PDest()
+}
+
+// StartTime returns when the node started.
+func (n *Node) StartTime() time.Time {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.startedAt
+}
+
+// Version returns the software version.
+func (n *Node) Version() string {
+	return "0.1.0" // TODO: inject from build
+}
+
+// --- PeerProvider implementation for RPC handlers ---
+
+// ListPeers returns all known peers for RPC.
+func (n *Node) ListPeers() []rpc.PeerInfo {
+	n.mu.RLock()
+	pm := n.peers
+	n.mu.RUnlock()
+
+	if pm == nil {
+		return nil
+	}
+
+	meshPeers := pm.ListPeers()
+	result := make([]rpc.PeerInfo, len(meshPeers))
+	for i, p := range meshPeers {
+		result[i] = rpc.PeerInfo{
+			NodeID:   p.NodeID,
+			TunnelIP: p.TunnelIP.String(),
+			State:    p.State.String(),
+			LastSeen: p.LastSeen.Format(time.RFC3339),
+		}
+		if !p.ConnectedAt.IsZero() {
+			result[i].ConnectedAt = p.ConnectedAt.Format(time.RFC3339)
+		}
+		if p.Latency > 0 {
+			result[i].Latency = p.Latency.String()
+		}
+	}
+	return result
+}
+
+// ConnectPeer connects to a peer using an invite code.
+func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersConnectResult, error) {
+	// TODO: implement invite-based peer connection
+	return nil, errors.New("not implemented")
+}
+
+// --- RouteProvider implementation for RPC handlers ---
+
+// ListRoutes returns all routes for RPC.
+func (n *Node) ListRoutes() []rpc.RouteInfo {
+	n.mu.RLock()
+	rt := n.routing
+	n.mu.RUnlock()
+
+	if rt == nil {
+		return nil
+	}
+
+	routes := rt.ListRoutes()
+	result := make([]rpc.RouteInfo, len(routes))
+	for i, r := range routes {
+		result[i] = rpc.RouteInfo{
+			NodeID:    r.NodeID,
+			TunnelIP:  r.TunnelIP.String(),
+			HopCount:  r.HopCount,
+			ViaNodeID: r.ViaNodeID,
+			LastSeen:  r.LastSeen.Format(time.RFC3339),
+		}
+	}
+	return result
+}
+
+// --- BanProvider implementation for RPC handlers ---
+
+// ListBans returns all active bans for RPC.
+func (n *Node) ListBans() []rpc.BanEntry {
+	n.mu.RLock()
+	bl := n.banList
+	n.mu.RUnlock()
+
+	if bl == nil {
+		return nil
+	}
+
+	bans := bl.List()
+	result := make([]rpc.BanEntry, len(bans))
+	for i, b := range bans {
+		result[i] = rpc.BanEntry{
+			NodeID:      b.NodeID,
+			I2PDest:     b.I2PDest,
+			Reason:      string(b.Reason),
+			Description: b.Description,
+			BannedAt:    b.BannedAt,
+			ExpiresAt:   b.ExpiresAt,
+			StrikeCount: b.StrikeCount,
+		}
+	}
+	return result
+}
+
+// AddBan adds a peer to the ban list.
+func (n *Node) AddBan(nodeID, reason, description string, duration time.Duration) error {
+	n.mu.RLock()
+	bl := n.banList
+	n.mu.RUnlock()
+
+	if bl == nil {
+		return errors.New("ban list not initialized")
+	}
+
+	bl.Ban(nodeID, mesh.BanReason(reason), description, duration)
+	return nil
+}
+
+// RemoveBan removes a peer from the ban list.
+func (n *Node) RemoveBan(nodeID string) bool {
+	n.mu.RLock()
+	bl := n.banList
+	n.mu.RUnlock()
+
+	if bl == nil {
+		return false
+	}
+
+	return bl.Unban(nodeID)
+}
+
+// --- Component accessors for embedded API ---
+
+// Identity returns the node's identity.
+func (n *Node) Identity() *identity.Identity {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.identity
+}
+
+// Transport returns the I2P transport.
+func (n *Node) Transport() *transport.Transport {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.trans
+}
+
+// Device returns the WireGuard device.
+func (n *Node) Device() *mesh.Device {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.device
+}
+
+// RoutingTable returns the routing table.
+func (n *Node) RoutingTable() *mesh.RoutingTable {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.routing
+}
+
+// PeerManager returns the peer manager.
+func (n *Node) PeerManager() *mesh.PeerManager {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.peers
+}
+
+// TunnelIPAddr returns the tunnel IP as netip.Addr.
+func (n *Node) TunnelIPAddr() netip.Addr {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.tunnelIP
 }

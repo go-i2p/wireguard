@@ -33,8 +33,8 @@ func TestNewNode_Success(t *testing.T) {
 		t.Fatalf("NewNode failed: %v", err)
 	}
 
-	if node.State() != StateInitial {
-		t.Errorf("initial state should be StateInitial, got %s", node.State())
+	if node.GetState() != StateInitial {
+		t.Errorf("initial state should be StateInitial, got %s", node.GetState())
 	}
 }
 
@@ -69,8 +69,8 @@ func TestNode_StartAndStop(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	if node.State() != StateRunning {
-		t.Errorf("state after Start should be StateRunning, got %s", node.State())
+	if node.GetState() != StateRunning {
+		t.Errorf("state after Start should be StateRunning, got %s", node.GetState())
 	}
 
 	// Stop the node
@@ -81,8 +81,8 @@ func TestNode_StartAndStop(t *testing.T) {
 		t.Fatalf("Stop failed: %v", err)
 	}
 
-	if node.State() != StateStopped {
-		t.Errorf("state after Stop should be StateStopped, got %s", node.State())
+	if node.GetState() != StateStopped {
+		t.Errorf("state after Stop should be StateStopped, got %s", node.GetState())
 	}
 }
 
