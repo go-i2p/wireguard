@@ -31,6 +31,9 @@ type DeviceConfig struct {
 	MTU int
 	// Logger for device operations.
 	Logger *slog.Logger
+	// Bind is the WireGuard network binding (e.g., i2pbind.I2PBind for I2P transport).
+	// If nil, defaults to conn.NewDefaultBind() for standard UDP.
+	Bind conn.Bind
 }
 
 // Device wraps a wireguard-go device for mesh network use.
@@ -93,8 +96,14 @@ func NewDevice(cfg DeviceConfig) (*Device, error) {
 		return nil, fmt.Errorf("creating netstack TUN: %w", err)
 	}
 
+	// Use configured bind or default to standard UDP
+	bind := cfg.Bind
+	if bind == nil {
+		bind = conn.NewDefaultBind()
+	}
+
 	// Create WireGuard device
-	dev := device.NewDevice(tun, conn.NewDefaultBind(), device.NewLogger(device.LogLevelSilent, ""))
+	dev := device.NewDevice(tun, bind, device.NewLogger(device.LogLevelSilent, ""))
 
 	// Configure the device with our private key
 	ipcConfig := fmt.Sprintf("private_key=%s\n", hexKey(cfg.PrivateKey))

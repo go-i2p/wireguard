@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"math/rand"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -566,9 +567,40 @@ func (g *GossipEngine) handleRouteUpdate(msg *Message) error {
 		"from", update.NodeID,
 		"routes", len(update.Routes))
 
-	// Merge routes into our table
-	// Note: We'd need to parse the routes and call Merge
-	// For now, this is a placeholder for the full implementation
+	// Convert RouteInfo to RouteEntry and merge into our table
+	entries := make([]*RouteEntry, 0, len(update.Routes))
+	for _, ri := range update.Routes {
+		tunnelIP, err := netip.ParseAddr(ri.TunnelIP)
+		if err != nil {
+			g.logger.Debug("skipping invalid tunnel IP in route update",
+				"ip", ri.TunnelIP, "error", err)
+			continue
+		}
+
+		entry := &RouteEntry{
+			TunnelIP:    tunnelIP,
+			WGPublicKey: ri.WGPublicKey,
+			I2PDest:     ri.I2PDest,
+			NodeID:      ri.NodeID,
+			HopCount:    ri.HopCount + 1, // Increment hop count since we're receiving via another node
+			LastSeen:    ri.LastSeen,
+			ViaNodeID:   update.NodeID, // Route came via the sender
+		}
+		entries = append(entries, entry)
+	}
+
+	if len(entries) > 0 {
+		added, updated, collisions := g.routingTable.Merge(entries)
+		if added > 0 || updated > 0 {
+			g.logger.Debug("merged route update",
+				"added", added,
+				"updated", updated,
+				"collisions", len(collisions))
+		}
+		for _, coll := range collisions {
+			g.logger.Warn("route collision detected", "error", coll)
+		}
+	}
 
 	return nil
 }

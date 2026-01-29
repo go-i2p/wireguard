@@ -84,6 +84,7 @@ type KeyedLimiter struct {
 	rate     float64
 	capacity int
 	cleanup  time.Duration // how long to keep idle limiters
+	stopCh   chan struct{} // channel to stop the cleanup goroutine
 }
 
 // NewKeyed creates a per-key rate limiter.
@@ -93,9 +94,15 @@ func NewKeyed(rate float64, capacity int, cleanup time.Duration) *KeyedLimiter {
 		rate:     rate,
 		capacity: capacity,
 		cleanup:  cleanup,
+		stopCh:   make(chan struct{}),
 	}
 	go kl.cleanupLoop()
 	return kl
+}
+
+// Close stops the cleanup goroutine and releases resources.
+func (kl *KeyedLimiter) Close() {
+	close(kl.stopCh)
 }
 
 // Allow checks if a request for the given key is allowed.
@@ -114,17 +121,23 @@ func (kl *KeyedLimiter) Allow(key string) bool {
 // cleanupLoop periodically removes idle limiters.
 func (kl *KeyedLimiter) cleanupLoop() {
 	ticker := time.NewTicker(kl.cleanup)
-	for range ticker.C {
-		kl.mu.Lock()
-		now := time.Now()
-		for key, limiter := range kl.limiters {
-			limiter.mu.Lock()
-			// Remove if idle and at full capacity
-			if now.Sub(limiter.lastTime) > kl.cleanup && limiter.tokens >= limiter.capacity {
-				delete(kl.limiters, key)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-kl.stopCh:
+			return
+		case <-ticker.C:
+			kl.mu.Lock()
+			now := time.Now()
+			for key, limiter := range kl.limiters {
+				limiter.mu.Lock()
+				// Remove if idle and at full capacity
+				if now.Sub(limiter.lastTime) > kl.cleanup && limiter.tokens >= limiter.capacity {
+					delete(kl.limiters, key)
+				}
+				limiter.mu.Unlock()
 			}
-			limiter.mu.Unlock()
+			kl.mu.Unlock()
 		}
-		kl.mu.Unlock()
 	}
 }
