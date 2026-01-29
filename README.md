@@ -16,7 +16,6 @@ In addition to the low-level bind interface, this library includes a complete **
 - **Gossip-based peer discovery** - automatic mesh network formation
 - **Invite system** - secure peer authentication with expiring invite codes
 - **Routing table** - automatic IP-to-peer routing with collision detection
-- **Rate limiting** - configurable per-peer bandwidth limits
 - **Multiple interfaces** - JSON-RPC, Terminal UI (BubbleTea), and Web UI
 
 ## Prerequisites
