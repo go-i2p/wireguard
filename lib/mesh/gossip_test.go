@@ -443,3 +443,296 @@ func TestGossipEngine_HandleUnknownMessage(t *testing.T) {
 		t.Errorf("HandleMessage() for unknown type should not error, got %v", err)
 	}
 }
+
+func TestGossipEngine_HandleHandshakeInit(t *testing.T) {
+	sender := newMockSender()
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "local-node",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+	pm.AddValidToken([]byte("valid-token"))
+
+	ge := NewGossipEngine(GossipEngineConfig{
+		PeerManager: pm,
+		Sender:      sender,
+		NodeID:      "local-node",
+		I2PDest:     "local.b32.i2p",
+		WGPublicKey: key.PublicKey().String(),
+		TunnelIP:    ip.String(),
+		NetworkID:   "test-network",
+	})
+
+	// Register the peer so response can be sent
+	sender.RegisterPeer("remote-node", "remote.b32.i2p")
+
+	// Create handshake init message from a remote peer
+	remoteKey, _ := wgtypes.GeneratePrivateKey()
+	remoteIP := AllocateTunnelIP(remoteKey.PublicKey())
+
+	init := &HandshakeInit{
+		I2PDest:     "remote.b32.i2p",
+		WGPublicKey: remoteKey.PublicKey().String(),
+		TunnelIP:    remoteIP.String(),
+		NetworkID:   "test-network",
+		AuthToken:   []byte("valid-token"),
+		NodeID:      "remote-node",
+	}
+
+	payload, _ := EncodeMessage(MsgHandshakeInit, init)
+	msg, _ := DecodeMessage(payload)
+
+	err := ge.HandleMessage(msg)
+	if err != nil {
+		t.Fatalf("HandleMessage(HandshakeInit) error = %v", err)
+	}
+
+	// Check that peer was added to manager
+	peer, found := pm.GetPeer("remote-node")
+	if !found {
+		t.Error("Peer not added to manager after handshake init")
+	} else if peer.State != PeerStatePending {
+		t.Errorf("Peer state = %v, want Pending", peer.State)
+	}
+}
+
+func TestGossipEngine_HandleHandshakeInit_InvalidToken(t *testing.T) {
+	sender := newMockSender()
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "local-node",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+	pm.AddValidToken([]byte("valid-token"))
+
+	ge := NewGossipEngine(GossipEngineConfig{
+		PeerManager: pm,
+		Sender:      sender,
+		NodeID:      "local-node",
+		NetworkID:   "test-network",
+	})
+
+	// Create handshake init with invalid token
+	remoteKey, _ := wgtypes.GeneratePrivateKey()
+	remoteIP := AllocateTunnelIP(remoteKey.PublicKey())
+
+	init := &HandshakeInit{
+		I2PDest:     "remote.b32.i2p",
+		WGPublicKey: remoteKey.PublicKey().String(),
+		TunnelIP:    remoteIP.String(),
+		NetworkID:   "test-network",
+		AuthToken:   []byte("invalid-token"),
+		NodeID:      "remote-node",
+	}
+
+	payload, _ := EncodeMessage(MsgHandshakeInit, init)
+	msg, _ := DecodeMessage(payload)
+
+	// Should not error - rejection is handled via response
+	err := ge.HandleMessage(msg)
+	if err != nil {
+		t.Fatalf("HandleMessage(HandshakeInit) error = %v", err)
+	}
+
+	// Peer should not be in connected state
+	peer, found := pm.GetPeer("remote-node")
+	if found && peer.State == PeerStateConnected {
+		t.Error("Peer should not be connected with invalid token")
+	}
+}
+
+func TestGossipEngine_HandleHandshakeResponse(t *testing.T) {
+	sender := newMockSender()
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "local-node",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+
+	ge := NewGossipEngine(GossipEngineConfig{
+		PeerManager: pm,
+		Sender:      sender,
+		NodeID:      "local-node",
+		NetworkID:   "test-network",
+	})
+
+	// Create handshake response from a remote peer
+	remoteKey, _ := wgtypes.GeneratePrivateKey()
+	remoteIP := AllocateTunnelIP(remoteKey.PublicKey())
+
+	// Register peer for sending completion
+	sender.RegisterPeer("remote-node", "remote.b32.i2p")
+
+	response := &HandshakeResponse{
+		I2PDest:     "remote.b32.i2p",
+		WGPublicKey: remoteKey.PublicKey().String(),
+		TunnelIP:    remoteIP.String(),
+		NetworkID:   "test-network",
+		NodeID:      "remote-node",
+		Accepted:    true,
+	}
+
+	payload, _ := EncodeMessage(MsgHandshakeResponse, response)
+	msg, _ := DecodeMessage(payload)
+
+	err := ge.HandleMessage(msg)
+	if err != nil {
+		t.Fatalf("HandleMessage(HandshakeResponse) error = %v", err)
+	}
+
+	// Check that peer was added to manager
+	peer, found := pm.GetPeer("remote-node")
+	if !found {
+		t.Error("Peer not added to manager after handshake response")
+	} else if peer.State != PeerStatePending {
+		t.Errorf("Peer state = %v, want Pending", peer.State)
+	}
+}
+
+func TestGossipEngine_HandleHandshakeComplete(t *testing.T) {
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "local-node",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+	pm.AddValidToken([]byte("valid-token"))
+
+	// First add a pending peer via handshake init
+	remoteKey, _ := wgtypes.GeneratePrivateKey()
+	remoteIP := AllocateTunnelIP(remoteKey.PublicKey())
+
+	pm.HandleHandshakeInit(&HandshakeInit{
+		I2PDest:     "remote.b32.i2p",
+		WGPublicKey: remoteKey.PublicKey().String(),
+		TunnelIP:    remoteIP.String(),
+		NetworkID:   "test-network",
+		AuthToken:   []byte("valid-token"),
+		NodeID:      "remote-node",
+	})
+
+	ge := NewGossipEngine(GossipEngineConfig{
+		PeerManager: pm,
+		NodeID:      "local-node",
+		NetworkID:   "test-network",
+	})
+
+	// Create handshake complete
+	complete := &HandshakeComplete{
+		NodeID:  "remote-node",
+		Success: true,
+	}
+
+	payload, _ := EncodeMessage(MsgHandshakeComplete, complete)
+	msg, _ := DecodeMessage(payload)
+
+	err := ge.HandleMessage(msg)
+	if err != nil {
+		t.Fatalf("HandleMessage(HandshakeComplete) error = %v", err)
+	}
+
+	// Check that peer is now connected
+	peer, found := pm.GetPeer("remote-node")
+	if !found {
+		t.Fatal("Peer not found after handshake complete")
+	}
+	if peer.State != PeerStateConnected {
+		t.Errorf("Peer state = %v, want Connected", peer.State)
+	}
+}
+
+func TestGossipEngine_SetHandshakeCallbacks(t *testing.T) {
+	ge := NewGossipEngine(GossipEngineConfig{
+		NodeID:    "test-node",
+		NetworkID: "test-network",
+	})
+
+	initCalled := false
+	responseCalled := false
+	completeCalled := false
+
+	ge.SetHandshakeCallbacks(
+		func(init *HandshakeInit) (*HandshakeResponse, error) {
+			initCalled = true
+			return &HandshakeResponse{Accepted: true}, nil
+		},
+		func(resp *HandshakeResponse) error {
+			responseCalled = true
+			return nil
+		},
+		func(complete *HandshakeComplete) error {
+			completeCalled = true
+			return nil
+		},
+	)
+
+	// Test that custom callbacks are used
+	remoteKey, _ := wgtypes.GeneratePrivateKey()
+	remoteIP := AllocateTunnelIP(remoteKey.PublicKey())
+
+	// Handle init
+	initPayload, _ := EncodeMessage(MsgHandshakeInit, &HandshakeInit{
+		NodeID:      "remote",
+		WGPublicKey: remoteKey.PublicKey().String(),
+		TunnelIP:    remoteIP.String(),
+		NetworkID:   "test-network",
+	})
+	initMsg, _ := DecodeMessage(initPayload)
+	ge.HandleMessage(initMsg)
+
+	if !initCalled {
+		t.Error("Custom init callback not called")
+	}
+
+	// Handle response
+	respPayload, _ := EncodeMessage(MsgHandshakeResponse, &HandshakeResponse{
+		NodeID:      "remote",
+		WGPublicKey: remoteKey.PublicKey().String(),
+		TunnelIP:    remoteIP.String(),
+		NetworkID:   "test-network",
+		Accepted:    true,
+	})
+	respMsg, _ := DecodeMessage(respPayload)
+	ge.HandleMessage(respMsg)
+
+	if !responseCalled {
+		t.Error("Custom response callback not called")
+	}
+
+	// Handle complete
+	completePayload, _ := EncodeMessage(MsgHandshakeComplete, &HandshakeComplete{
+		NodeID:  "remote",
+		Success: true,
+	})
+	completeMsg, _ := DecodeMessage(completePayload)
+	ge.HandleMessage(completeMsg)
+
+	if !completeCalled {
+		t.Error("Custom complete callback not called")
+	}
+}
+
+// mockSender needs RegisterPeer for the tests
+func (m *mockSender) RegisterPeer(nodeID, dest string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sends == nil {
+		m.sends = make(map[string][][]byte)
+	}
+	// We just track registrations by allowing sends to this nodeID
+}

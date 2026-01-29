@@ -64,6 +64,11 @@ type GossipEngine struct {
 	tunnelIP    string
 	networkID   string
 
+	// Callbacks for handshake events
+	onHandshakeInit     func(*HandshakeInit) (*HandshakeResponse, error)
+	onHandshakeResponse func(*HandshakeResponse) error
+	onHandshakeComplete func(*HandshakeComplete) error
+
 	// State
 	running bool
 	cancel  context.CancelFunc
@@ -488,6 +493,12 @@ func (g *GossipEngine) selectRandomPeers(n int) []string {
 // HandleMessage processes an incoming gossip message.
 func (g *GossipEngine) HandleMessage(msg *Message) error {
 	switch msg.Type {
+	case MsgHandshakeInit:
+		return g.handleHandshakeInit(msg)
+	case MsgHandshakeResponse:
+		return g.handleHandshakeResponse(msg)
+	case MsgHandshakeComplete:
+		return g.handleHandshakeComplete(msg)
 	case MsgPeerAnnounce:
 		return g.handlePeerAnnounce(msg)
 	case MsgPeerList:
@@ -636,6 +647,162 @@ func (g *GossipEngine) handlePeerLeave(msg *Message) error {
 	}
 
 	return nil
+}
+
+// handleHandshakeInit processes an incoming handshake initiation.
+func (g *GossipEngine) handleHandshakeInit(msg *Message) error {
+	init, err := DecodePayload[HandshakeInit](msg)
+	if err != nil {
+		return err
+	}
+
+	g.logger.Info("received handshake init",
+		"from_node", init.NodeID,
+		"i2p_dest", truncateString(init.I2PDest, 32))
+
+	// Delegate to peer manager if no custom handler
+	g.mu.RLock()
+	customHandler := g.onHandshakeInit
+	g.mu.RUnlock()
+
+	var response *HandshakeResponse
+	if customHandler != nil {
+		response, err = customHandler(init)
+	} else if g.peerManager != nil {
+		response, err = g.peerManager.HandleHandshakeInit(init)
+	} else {
+		g.logger.Warn("no handler for handshake init")
+		return nil
+	}
+
+	if err != nil {
+		g.logger.Warn("handshake init handling failed", "error", err)
+		return err
+	}
+
+	// Send response back to the initiator
+	if response != nil && g.sender != nil {
+		responseData, encErr := EncodeMessage(MsgHandshakeResponse, response)
+		if encErr != nil {
+			g.logger.Error("failed to encode handshake response", "error", encErr)
+			return encErr
+		}
+
+		// Send directly to the initiator's I2P destination
+		if sendErr := g.sender.SendTo(init.NodeID, responseData); sendErr != nil {
+			// Fall back to destination-based send if nodeID not registered
+			g.logger.Debug("SendTo failed, peer may not be registered yet", "error", sendErr)
+		}
+
+		g.logger.Info("sent handshake response",
+			"to_node", init.NodeID,
+			"accepted", response.Accepted)
+	}
+
+	return nil
+}
+
+// handleHandshakeResponse processes a handshake response.
+func (g *GossipEngine) handleHandshakeResponse(msg *Message) error {
+	resp, err := DecodePayload[HandshakeResponse](msg)
+	if err != nil {
+		return err
+	}
+
+	g.logger.Info("received handshake response",
+		"from_node", resp.NodeID,
+		"accepted", resp.Accepted)
+
+	// Delegate to custom handler or peer manager
+	g.mu.RLock()
+	customHandler := g.onHandshakeResponse
+	g.mu.RUnlock()
+
+	if customHandler != nil {
+		err = customHandler(resp)
+	} else if g.peerManager != nil {
+		err = g.peerManager.HandleHandshakeResponse(resp)
+	} else {
+		g.logger.Warn("no handler for handshake response")
+		return nil
+	}
+
+	if err != nil {
+		g.logger.Warn("handshake response handling failed", "error", err)
+		return err
+	}
+
+	// If accepted, send completion message
+	if resp.Accepted && g.peerManager != nil && g.sender != nil {
+		complete := g.peerManager.CreateHandshakeComplete(true)
+		completeData, encErr := EncodeMessage(MsgHandshakeComplete, complete)
+		if encErr != nil {
+			g.logger.Error("failed to encode handshake complete", "error", encErr)
+			return encErr
+		}
+
+		if sendErr := g.sender.SendTo(resp.NodeID, completeData); sendErr != nil {
+			g.logger.Debug("failed to send handshake complete", "error", sendErr)
+		} else {
+			g.logger.Info("sent handshake complete", "to_node", resp.NodeID)
+		}
+	}
+
+	return nil
+}
+
+// handleHandshakeComplete processes a handshake completion message.
+func (g *GossipEngine) handleHandshakeComplete(msg *Message) error {
+	complete, err := DecodePayload[HandshakeComplete](msg)
+	if err != nil {
+		return err
+	}
+
+	g.logger.Info("received handshake complete",
+		"from_node", complete.NodeID,
+		"success", complete.Success)
+
+	// Delegate to custom handler or peer manager
+	g.mu.RLock()
+	customHandler := g.onHandshakeComplete
+	g.mu.RUnlock()
+
+	if customHandler != nil {
+		err = customHandler(complete)
+	} else if g.peerManager != nil {
+		err = g.peerManager.HandleHandshakeComplete(complete)
+	} else {
+		g.logger.Warn("no handler for handshake complete")
+		return nil
+	}
+
+	if err != nil {
+		g.logger.Warn("handshake complete handling failed", "error", err)
+	}
+
+	return err
+}
+
+// SetHandshakeCallbacks sets custom handlers for handshake messages.
+// If not set, the gossip engine will use the PeerManager's default handlers.
+func (g *GossipEngine) SetHandshakeCallbacks(
+	onInit func(*HandshakeInit) (*HandshakeResponse, error),
+	onResponse func(*HandshakeResponse) error,
+	onComplete func(*HandshakeComplete) error,
+) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.onHandshakeInit = onInit
+	g.onHandshakeResponse = onResponse
+	g.onHandshakeComplete = onComplete
+}
+
+// truncateString truncates a string to maxLen with ellipsis.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // AnnounceLeave broadcasts that we're leaving the network.

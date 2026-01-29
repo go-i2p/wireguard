@@ -76,6 +76,7 @@ type Node struct {
 	identity    *identity.Identity
 	inviteStore *identity.InviteStore
 	trans       *transport.Transport
+	sender      *transport.Sender
 	device      *mesh.Device
 	routing     *mesh.RoutingTable
 	peers       *mesh.PeerManager
@@ -414,6 +415,9 @@ func (n *Node) initTransport() error {
 		n.logger.Warn("failed to save identity with I2P destination", "error", err)
 	}
 
+	// Create sender for gossip message transport
+	n.sender = transport.NewSender(n.trans)
+
 	n.logger.Info("I2P transport opened",
 		"local_dest", localDest[:32]+"...",
 	)
@@ -510,6 +514,7 @@ func (n *Node) initMesh(ctx context.Context) error {
 		Config:       gossipConfig,
 		PeerManager:  n.peers,
 		RoutingTable: n.routing,
+		Sender:       n.sender,
 		NodeID:       n.identity.NodeID(),
 		I2PDest:      n.identity.I2PDest(),
 		WGPublicKey:  n.identity.PublicKey().String(),
@@ -721,10 +726,11 @@ func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersCo
 	n.mu.RLock()
 	pm := n.peers
 	trans := n.trans
+	sender := n.sender
 	id := n.identity
 	n.mu.RUnlock()
 
-	if pm == nil || trans == nil || id == nil {
+	if pm == nil || trans == nil || id == nil || sender == nil {
 		return nil, errors.New("node not fully initialized")
 	}
 
@@ -765,14 +771,29 @@ func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersCo
 		"our_node_id", handshakeInit.NodeID,
 		"our_tunnel_ip", handshakeInit.TunnelIP)
 
-	// TODO: Send handshake over the gossip layer and wait for response
-	// For now, we've done the preparatory work - the actual handshake
-	// message exchange happens via the gossip engine asynchronously
+	// Encode and send the handshake init message
+	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
+	if err != nil {
+		trans.RemovePeer(invite.I2PDest)
+		return nil, fmt.Errorf("encoding handshake: %w", err)
+	}
+
+	// Send directly to the peer's I2P destination
+	if err := sender.SendToDest(invite.I2PDest, handshakeData); err != nil {
+		n.logger.Warn("failed to send handshake init",
+			"error", err,
+			"dest", invite.I2PDest[:32]+"...")
+		// Don't fail completely - the connection may still succeed
+		// as the gossip layer may retry or find an alternative route
+	} else {
+		n.logger.Info("handshake init sent successfully",
+			"dest", invite.I2PDest[:32]+"...")
+	}
 
 	return &rpc.PeersConnectResult{
 		NodeID:   "pending",
 		TunnelIP: handshakeInit.TunnelIP,
-		Message:  fmt.Sprintf("Connection initiated to %s...", invite.I2PDest[:32]),
+		Message:  fmt.Sprintf("Handshake sent to %s...", invite.I2PDest[:32]),
 	}, nil
 }
 
