@@ -181,7 +181,6 @@ func (n *Node) Start(ctx context.Context) error {
 
 	// Phase 4: Start user interfaces (RPC, Web) if enabled
 	if err := n.initInterfaces(nodeCtx); err != nil {
-		n.logger.Error("failed to initialize interfaces", "error", err)
 		n.cleanup()
 		n.transitionToStopped()
 		n.emitError(err, "failed to initialize interfaces")
@@ -581,7 +580,6 @@ func (n *Node) initInterfaces(ctx context.Context) error {
 
 // cleanup shuts down all components in reverse order.
 func (n *Node) cleanup() {
-	n.logger.Info("cleanup: stopping web server")
 	// Stop web server
 	if n.webServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -590,24 +588,20 @@ func (n *Node) cleanup() {
 		n.webServer = nil
 	}
 
-	n.logger.Info("cleanup: stopping RPC server")
 	// Stop RPC server
 	if n.rpcServer != nil {
 		_ = n.rpcServer.Stop()
 		n.rpcServer = nil
 	}
 
-	n.logger.Info("cleanup: stopping gossip engine")
 	// Stop gossip engine
 	if n.gossip != nil {
 		n.gossip.Stop()
 		n.gossip = nil
 	}
 
-	n.logger.Info("cleanup: closing device")
-	// Close device
+	// Close device (may block, use timeout)
 	if n.device != nil {
-		// Device close may block, use a timeout
 		done := make(chan struct{})
 		go func() {
 			n.device.Close()
@@ -615,20 +609,18 @@ func (n *Node) cleanup() {
 		}()
 		select {
 		case <-done:
-			n.logger.Info("cleanup: device closed")
+			// Device closed successfully
 		case <-time.After(3 * time.Second):
-			n.logger.Warn("cleanup: device close timed out")
+			n.logger.Warn("device close timed out")
 		}
 		n.device = nil
 	}
 
-	n.logger.Info("cleanup: closing transport")
 	// Close transport
 	if n.trans != nil {
 		_ = n.trans.Close()
 		n.trans = nil
 	}
-	n.logger.Info("cleanup: done")
 }
 
 // --- NodeProvider implementation for RPC handlers ---
