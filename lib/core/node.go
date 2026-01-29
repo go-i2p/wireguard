@@ -494,14 +494,15 @@ func (n *Node) initMesh(ctx context.Context) error {
 
 	// Create peer manager
 	n.peers = mesh.NewPeerManager(mesh.PeerManagerConfig{
-		NodeID:      n.identity.NodeID(),
-		I2PDest:     n.identity.I2PDest(),
-		WGPublicKey: n.identity.PublicKey(),
-		TunnelIP:    n.tunnelIP,
-		NetworkID:   n.identity.NetworkID(),
-		MaxPeers:    n.config.Mesh.MaxPeers,
-		Logger:      n.logger.With("component", "peers"),
-		BanList:     n.banList,
+		NodeID:       n.identity.NodeID(),
+		I2PDest:      n.identity.I2PDest(),
+		WGPublicKey:  n.identity.PublicKey(),
+		TunnelIP:     n.tunnelIP,
+		NetworkID:    n.identity.NetworkID(),
+		MaxPeers:     n.config.Mesh.MaxPeers,
+		Logger:       n.logger.With("component", "peers"),
+		BanList:      n.banList,
+		RoutingTable: n.routing,
 	})
 
 	// Wire up peer connection callbacks to register/unregister peers with the sender

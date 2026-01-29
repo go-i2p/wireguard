@@ -85,6 +85,9 @@ type PeerManager struct {
 	// Ban list for blocking misbehaving peers
 	banList *BanList
 
+	// Routing table for collision detection
+	routingTable *RoutingTable
+
 	// Callbacks
 	onPeerConnected    func(*Peer)
 	onPeerDisconnected func(*Peer)
@@ -96,14 +99,15 @@ type PeerManager struct {
 
 // PeerManagerConfig configures the PeerManager.
 type PeerManagerConfig struct {
-	NodeID      string
-	I2PDest     string
-	WGPublicKey wgtypes.Key
-	TunnelIP    netip.Addr
-	NetworkID   string
-	MaxPeers    int
-	Logger      *slog.Logger
-	BanList     *BanList
+	NodeID       string
+	I2PDest      string
+	WGPublicKey  wgtypes.Key
+	TunnelIP     netip.Addr
+	NetworkID    string
+	MaxPeers     int
+	Logger       *slog.Logger
+	BanList      *BanList
+	RoutingTable *RoutingTable
 }
 
 // NewPeerManager creates a new PeerManager.
@@ -127,6 +131,7 @@ func NewPeerManager(cfg PeerManagerConfig) *PeerManager {
 		tunnelIP:        cfg.TunnelIP,
 		networkID:       cfg.NetworkID,
 		banList:         cfg.BanList,
+		routingTable:    cfg.RoutingTable,
 		maxPeers:        maxPeers,
 		handshakeTimout: 30 * time.Second,
 	}
@@ -215,6 +220,20 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 			"claimed", claimedIP,
 			"expected", expectedIP)
 		return pm.rejectHandshake("tunnel IP does not match public key"), nil
+	}
+
+	// Check for IP collision in routing table
+	// This prevents two different nodes from claiming the same tunnel IP
+	if pm.routingTable != nil {
+		if existingRoute, ok := pm.routingTable.GetRoute(claimedIP); ok {
+			if existingRoute.NodeID != init.NodeID {
+				pm.logger.Warn("tunnel IP collision detected",
+					"claimed_ip", claimedIP,
+					"new_node", init.NodeID,
+					"existing_node", existingRoute.NodeID)
+				return pm.rejectHandshake("tunnel IP already in use by another node"), nil
+			}
+		}
 	}
 
 	// Check if we already know this peer
