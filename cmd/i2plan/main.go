@@ -227,7 +227,7 @@ func handleRPC(args []string, _ *slog.Logger, dataDir string) int {
 	}
 
 	// Determine auth file
-	authFile := filepath.Join(dataDir, "rpc_auth.token")
+	authFile := filepath.Join(dataDir, "rpc.auth")
 	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
 		authFile = envAuth
 	}
@@ -501,7 +501,7 @@ func handleTUI(logger *slog.Logger, dataDir string) int {
 	}
 
 	// Determine auth file
-	authFile := filepath.Join(dataDir, "rpc_auth.token")
+	authFile := filepath.Join(dataDir, "rpc.auth")
 	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
 		authFile = envAuth
 	}
@@ -538,7 +538,7 @@ func handleWeb(logger *slog.Logger, dataDir string) int {
 	}
 
 	// Determine auth file
-	authFile := filepath.Join(dataDir, "rpc_auth.token")
+	authFile := filepath.Join(dataDir, "rpc.auth")
 	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
 		authFile = envAuth
 	}
