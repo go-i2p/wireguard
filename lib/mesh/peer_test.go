@@ -384,3 +384,51 @@ func TestPeerManager_RunHeartbeat(t *testing.T) {
 		t.Errorf("PeerCount() after heartbeat = %d, want 0", pm.PeerCount())
 	}
 }
+
+func TestPeerManager_AddValidToken_RejectsEmpty(t *testing.T) {
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "test-node",
+		I2PDest:     "test.b32.i2p",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+
+	// Add empty token - should be silently ignored
+	pm.AddValidToken([]byte{})
+
+	// Add nil token - should also be ignored
+	pm.AddValidToken(nil)
+
+	// Add a valid token
+	pm.AddValidToken([]byte("valid-token"))
+
+	// Create a peer that tries to connect with empty auth token
+	peerKey, _ := wgtypes.GeneratePrivateKey()
+	peerIP := AllocateTunnelIP(peerKey.PublicKey())
+
+	init := &HandshakeInit{
+		I2PDest:     "peer.b32.i2p",
+		WGPublicKey: peerKey.PublicKey().String(),
+		TunnelIP:    peerIP.String(),
+		NetworkID:   "test-network",
+		AuthToken:   []byte{}, // Empty token
+		NodeID:      "peer-node",
+	}
+
+	resp, err := pm.HandleHandshakeInit(init)
+	if err != nil {
+		t.Fatalf("HandleHandshakeInit() error = %v", err)
+	}
+
+	// Should be rejected because empty token doesn't match any valid token
+	if resp.Accepted {
+		t.Error("Handshake with empty token should be rejected")
+	}
+	if resp.RejectReason != "invalid auth token" {
+		t.Errorf("RejectReason = %q, want %q", resp.RejectReason, "invalid auth token")
+	}
+}

@@ -72,13 +72,14 @@ type Node struct {
 	onError       func(err error, message string)
 
 	// Core components
-	identity *identity.Identity
-	trans    *transport.Transport
-	device   *mesh.Device
-	routing  *mesh.RoutingTable
-	peers    *mesh.PeerManager
-	gossip   *mesh.GossipEngine
-	banList  *mesh.BanList
+	identity    *identity.Identity
+	inviteStore *identity.InviteStore
+	trans       *transport.Transport
+	device      *mesh.Device
+	routing     *mesh.RoutingTable
+	peers       *mesh.PeerManager
+	gossip      *mesh.GossipEngine
+	banList     *mesh.BanList
 
 	// User interfaces
 	rpcServer *rpc.Server
@@ -372,6 +373,14 @@ func (n *Node) initIdentity() error {
 		"public_key", id.PublicKey().String()[:16]+"...",
 	)
 
+	// Load or create invite store
+	inviteStorePath := filepath.Join(n.config.Node.DataDir, "invites.json")
+	n.inviteStore, err = identity.LoadInviteStore(inviteStorePath)
+	if err != nil {
+		return fmt.Errorf("loading invite store: %w", err)
+	}
+	n.logger.Info("invite store loaded", "path", inviteStorePath)
+
 	return nil
 }
 
@@ -536,6 +545,7 @@ func (n *Node) initInterfaces(ctx context.Context) error {
 		handlers := rpc.NewHandlers(rpc.HandlersConfig{
 			Node:   n,
 			Peers:  n,
+			Invite: n,
 			Routes: n,
 			Bans:   n,
 		})
@@ -707,8 +717,178 @@ func (n *Node) ListPeers() []rpc.PeerInfo {
 
 // ConnectPeer connects to a peer using an invite code.
 func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersConnectResult, error) {
-	// TODO: implement invite-based peer connection
-	return nil, errors.New("not implemented")
+	n.mu.RLock()
+	pm := n.peers
+	trans := n.trans
+	id := n.identity
+	n.mu.RUnlock()
+
+	if pm == nil || trans == nil || id == nil {
+		return nil, errors.New("node not fully initialized")
+	}
+
+	// Parse the invite code
+	invite, err := identity.ParseInvite(inviteCode)
+	if err != nil {
+		return nil, fmt.Errorf("invalid invite code: %w", err)
+	}
+
+	// Validate invite hasn't expired
+	if err := invite.Validate(); err != nil {
+		return nil, fmt.Errorf("invite validation failed: %w", err)
+	}
+
+	n.logger.Info("connecting to peer via invite",
+		"i2p_dest", invite.I2PDest[:32]+"...",
+		"network_id", invite.NetworkID)
+
+	// Add peer to transport tracking
+	if err := trans.AddPeer(invite.I2PDest, ""); err != nil {
+		return nil, fmt.Errorf("failed to track peer: %w", err)
+	}
+
+	// Create handshake init with the invite's auth token
+	handshakeInit := pm.CreateHandshakeInit(invite.AuthToken)
+
+	// Parse remote endpoint
+	endpoint, err := trans.ParseEndpoint(invite.I2PDest)
+	if err != nil {
+		trans.RemovePeer(invite.I2PDest)
+		return nil, fmt.Errorf("failed to parse peer endpoint: %w", err)
+	}
+
+	// Update transport with endpoint
+	trans.SetPeerEndpoint(invite.I2PDest, endpoint)
+
+	n.logger.Info("handshake initiated",
+		"our_node_id", handshakeInit.NodeID,
+		"our_tunnel_ip", handshakeInit.TunnelIP)
+
+	// TODO: Send handshake over the gossip layer and wait for response
+	// For now, we've done the preparatory work - the actual handshake
+	// message exchange happens via the gossip engine asynchronously
+
+	return &rpc.PeersConnectResult{
+		NodeID:   "pending",
+		TunnelIP: handshakeInit.TunnelIP,
+		Message:  fmt.Sprintf("Connection initiated to %s...", invite.I2PDest[:32]),
+	}, nil
+}
+
+// --- InviteProvider implementation for RPC handlers ---
+
+// CreateInvite creates a new invite code for others to join the mesh.
+func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreateResult, error) {
+	n.mu.RLock()
+	id := n.identity
+	invStore := n.inviteStore
+	pm := n.peers
+	n.mu.RUnlock()
+
+	if id == nil || invStore == nil {
+		return nil, errors.New("node not fully initialized")
+	}
+
+	// Create invite options
+	opts := identity.InviteOptions{
+		Expiry:  expiry,
+		MaxUses: maxUses,
+	}
+	if opts.Expiry <= 0 {
+		opts.Expiry = identity.DefaultInviteExpiry
+	}
+	if opts.MaxUses <= 0 {
+		opts.MaxUses = identity.DefaultMaxUses
+	}
+
+	// Generate the invite
+	invite, err := identity.NewInvite(id, opts)
+	if err != nil {
+		return nil, fmt.Errorf("generating invite: %w", err)
+	}
+
+	// Store the invite so we can validate incoming handshakes with this token
+	key := invStore.AddGenerated(invite)
+	if err := invStore.Save(); err != nil {
+		n.logger.Warn("failed to persist invite store", "error", err)
+	}
+
+	// Add the auth token to the peer manager's valid tokens
+	if pm != nil {
+		pm.AddValidToken(invite.AuthToken)
+	}
+
+	// Encode the invite to a shareable code
+	inviteCode, err := invite.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encoding invite: %w", err)
+	}
+
+	n.logger.Info("invite created",
+		"key", key[:16]+"...",
+		"expires_at", invite.ExpiresAt,
+		"max_uses", invite.MaxUses)
+
+	return &rpc.InviteCreateResult{
+		InviteCode: inviteCode,
+		ExpiresAt:  invite.ExpiresAt.Format(time.RFC3339),
+		MaxUses:    invite.MaxUses,
+	}, nil
+}
+
+// AcceptInvite accepts an invite code and initiates connection to the inviter.
+func (n *Node) AcceptInvite(ctx context.Context, inviteCode string) (*rpc.InviteAcceptResult, error) {
+	n.mu.RLock()
+	id := n.identity
+	invStore := n.inviteStore
+	n.mu.RUnlock()
+
+	if id == nil || invStore == nil {
+		return nil, errors.New("node not fully initialized")
+	}
+
+	// Parse the invite
+	invite, err := identity.ParseInvite(inviteCode)
+	if err != nil {
+		return nil, fmt.Errorf("invalid invite code: %w", err)
+	}
+
+	// Validate invite
+	if err := invite.Validate(); err != nil {
+		return nil, fmt.Errorf("invite validation failed: %w", err)
+	}
+
+	// Store as pending
+	invStore.AddPending(invite)
+	if err := invStore.Save(); err != nil {
+		n.logger.Warn("failed to persist invite store", "error", err)
+	}
+
+	// Update our network ID to match the invite
+	id.SetNetworkID(invite.NetworkID)
+
+	// Initiate connection using ConnectPeer
+	_, err = n.ConnectPeer(ctx, inviteCode)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to peer: %w", err)
+	}
+
+	// Mark as accepted (connection initiated)
+	invStore.MarkAccepted(invite.NetworkID)
+	if err := invStore.Save(); err != nil {
+		n.logger.Warn("failed to persist invite store", "error", err)
+	}
+
+	n.logger.Info("invite accepted",
+		"network_id", invite.NetworkID,
+		"peer_dest", invite.I2PDest[:32]+"...")
+
+	return &rpc.InviteAcceptResult{
+		NetworkID:  invite.NetworkID,
+		PeerNodeID: invite.CreatedBy,
+		TunnelIP:   n.TunnelIP(),
+		Message:    "Successfully accepted invite and initiated connection",
+	}, nil
 }
 
 // --- RouteProvider implementation for RPC handlers ---

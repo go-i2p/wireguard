@@ -140,7 +140,12 @@ func (pm *PeerManager) SetBanList(bl *BanList) {
 }
 
 // AddValidToken adds an invite token that can authorize new peers.
+// Empty tokens are silently ignored to prevent security issues where
+// empty auth tokens could be accepted during handshakes.
 func (pm *PeerManager) AddValidToken(token []byte) {
+	if len(token) == 0 {
+		return // Ignore empty tokens - they would match empty auth tokens
+	}
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.validTokens = append(pm.validTokens, token)
