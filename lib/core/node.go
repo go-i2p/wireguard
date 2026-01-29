@@ -642,11 +642,18 @@ func (n *Node) cleanup() {
 			n.device.Close()
 			close(done)
 		}()
+		// Use two-phase timeout: warn early, then error if still blocked
 		select {
 		case <-done:
-			// Device closed successfully
-		case <-time.After(3 * time.Second):
-			n.logger.Warn("device close timed out")
+			n.logger.Debug("device closed successfully")
+		case <-time.After(2 * time.Second):
+			n.logger.Warn("device close taking longer than expected, continuing wait")
+			select {
+			case <-done:
+				n.logger.Debug("device closed after extended wait")
+			case <-time.After(3 * time.Second):
+				n.logger.Error("device close timed out after 5s, continuing cleanup (resources may leak)")
+			}
 		}
 		n.device = nil
 	}

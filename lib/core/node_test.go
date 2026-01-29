@@ -74,7 +74,7 @@ func TestNode_StartAndStop(t *testing.T) {
 	}
 
 	// Stop the node
-	stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if err := node.Stop(stopCtx); err != nil {
@@ -101,7 +101,7 @@ func TestNode_CannotStartTwice(t *testing.T) {
 		t.Fatalf("First Start failed: %v", err)
 	}
 	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		node.Stop(stopCtx)
 	}()
@@ -146,7 +146,7 @@ func TestNode_RestartAfterStop(t *testing.T) {
 		t.Fatalf("First Start failed: %v", err)
 	}
 
-	stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	if err := node.Stop(stopCtx); err != nil {
 		cancel()
 		t.Fatalf("First Stop failed: %v", err)
@@ -158,7 +158,7 @@ func TestNode_RestartAfterStop(t *testing.T) {
 		t.Fatalf("Second Start failed: %v", err)
 	}
 
-	stopCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+	stopCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := node.Stop(stopCtx); err != nil {
 		t.Fatalf("Second Stop failed: %v", err)

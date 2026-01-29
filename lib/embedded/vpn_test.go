@@ -156,7 +156,7 @@ func TestVPN_StateTransitions(t *testing.T) {
 	}
 
 	// Stop the VPN
-	stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	err = vpn.Stop(stopCtx)
@@ -294,7 +294,7 @@ func TestVPN_Done(t *testing.T) {
 	}
 
 	// Stop the VPN
-	stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	vpn.Stop(stopCtx)
 
@@ -323,7 +323,7 @@ func TestVPN_RestartAfterStop(t *testing.T) {
 		t.Fatalf("First Start failed: %v", err)
 	}
 
-	stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	if err := vpn.Stop(stopCtx); err != nil {
 		t.Fatalf("First Stop failed: %v", err)
 	}

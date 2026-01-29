@@ -46,9 +46,9 @@ type Config struct {
 }
 
 // New creates a new web server.
-// The caller is responsible for calling Stop() to clean up resources if Start() fails
-// or when the server is no longer needed. The server owns the RPC client connection
-// and will close it when Stop() is called.
+// If Start() fails, this function cleans up the RPC client automatically.
+// When the server is no longer needed, call Stop() to release resources.
+// The server owns the RPC client connection and will close it when Stop() is called.
 func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -134,6 +134,13 @@ func (s *Server) Start() error {
 
 	ln, err := net.Listen("tcp", s.httpServer.Addr)
 	if err != nil {
+		// Reset running state and close RPC client on failure
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+		if closeErr := s.rpcClient.Close(); closeErr != nil {
+			s.logger.Error("failed to close RPC client after start failure", "error", closeErr)
+		}
 		return fmt.Errorf("listen: %w", err)
 	}
 
