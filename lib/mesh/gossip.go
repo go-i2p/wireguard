@@ -110,12 +110,20 @@ func NewGossipEngine(cfg GossipEngineConfig) *GossipEngine {
 }
 
 // Start begins the gossip protocol loops.
+// Note: If no MessageSender was provided, gossip will run in local-only mode
+// where no messages are sent to other peers. This can be useful for testing.
 func (g *GossipEngine) Start(ctx context.Context) error {
 	g.mu.Lock()
 	if g.running {
 		g.mu.Unlock()
 		return nil
 	}
+
+	// Warn if no sender is configured - gossip will be local-only
+	if g.sender == nil {
+		g.logger.Warn("gossip engine starting without message sender - running in local-only mode")
+	}
+
 	g.running = true
 
 	ctx, cancel := context.WithCancel(ctx)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-i2p/wireguard/lib/core"
+	"github.com/go-i2p/wireguard/version"
 )
 
 // State represents the VPN lifecycle state.
@@ -224,7 +225,7 @@ func (v *VPN) Status() Status {
 	status := Status{
 		State:    v.state,
 		NodeName: v.config.NodeName,
-		Version:  "dev", // TODO: inject version at build time
+		Version:  version.Version,
 	}
 
 	if !v.startedAt.IsZero() {

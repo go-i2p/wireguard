@@ -15,6 +15,7 @@ import (
 	"github.com/go-i2p/wireguard/lib/rpc"
 	"github.com/go-i2p/wireguard/lib/transport"
 	"github.com/go-i2p/wireguard/lib/web"
+	"github.com/go-i2p/wireguard/version"
 )
 
 // NodeState represents the current state of the node.
@@ -681,7 +682,7 @@ func (n *Node) StartTime() time.Time {
 
 // Version returns the software version.
 func (n *Node) Version() string {
-	return "0.1.0" // TODO: inject from build
+	return version.Version
 }
 
 // --- PeerProvider implementation for RPC handlers ---
