@@ -147,7 +147,10 @@ For higher-level mesh VPN functionality, use the `lib/` packages:
 package main
 
 import (
+    "context"
     "log"
+    "time"
+
     "github.com/go-i2p/wireguard/lib/embedded"
 )
 
@@ -165,18 +168,21 @@ func main() {
         log.Fatal(err)
     }
 
-    // Subscribe to events
-    vpn.OnEvent(func(e embedded.Event) {
-        log.Printf("Event: %s", e.Type)
-    })
+    // Subscribe to events via channel
+    go func() {
+        for e := range vpn.Events() {
+            log.Printf("Event: %s", e.Type)
+        }
+    }()
 
-    if err := vpn.Start(); err != nil {
+    ctx := context.Background()
+    if err := vpn.Start(ctx); err != nil {
         log.Fatal(err)
     }
-    defer vpn.Stop()
+    defer vpn.Stop(ctx)
 
-    // Create an invite for a peer
-    invite, _ := vpn.CreateInvite(0) // 0 = default expiry
+    // Create an invite for a peer (24h expiry, single use)
+    invite, _ := vpn.CreateInvite(24*time.Hour, 1)
     log.Printf("Invite: %s", invite)
 
     // Get status
@@ -200,12 +206,14 @@ When you create the first invite on a fresh node, a new mesh network is automati
 ```go
 // Create an invite (inviter side)
 // If this is a new node, a Network ID is automatically generated
-invite, err := node.CreateInvite()
+result, err := node.CreateInvite(24*time.Hour, 1) // 24h expiry, single use
+inviteCode := result.InviteCode
 // Returns: i2plan://eyJpMnBfZGVzdCI6Ii4uLiIsImF1dGhfdG9rZW4iOiIuLi4ifQ==
 
 // Accept an invite (joiner side)
 // The node inherits the Network ID from the invite
-err := node.AcceptInvite("i2plan://...")
+ctx := context.Background()
+_, err := node.AcceptInvite(ctx, "i2plan://...")
 ```
 
 ### CLI Commands
