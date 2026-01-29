@@ -210,7 +210,10 @@ func (id *Identity) Save(path string) error {
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		if rmErr := os.Remove(tmpPath); rmErr != nil {
+			// Log but don't fail on cleanup error - the rename error is more important
+			// Stale temp files will be overwritten on next save attempt
+		}
 		return fmt.Errorf("renaming identity file: %w", err)
 	}
 

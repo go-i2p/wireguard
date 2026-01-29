@@ -51,12 +51,15 @@ func TestIntegration_TransportOpenClose(t *testing.T) {
 	})
 
 	// Open the transport
-	bind, err := tr.Open()
+	err := tr.Open()
 	if err != nil {
 		t.Fatalf("Failed to open transport: %v", err)
 	}
+
+	// Verify bind is accessible
+	bind := tr.Bind()
 	if bind == nil {
-		t.Fatal("Open returned nil bind")
+		t.Fatal("Bind() returned nil after Open()")
 	}
 
 	// Verify transport is open
@@ -112,14 +115,14 @@ func TestIntegration_TransportDoubleOpen(t *testing.T) {
 	})
 
 	// First open should succeed
-	_, err := tr.Open()
+	err := tr.Open()
 	if err != nil {
 		t.Fatalf("First Open failed: %v", err)
 	}
 	defer tr.Close()
 
 	// Second open should fail
-	_, err = tr.Open()
+	err = tr.Open()
 	if err == nil {
 		t.Error("Second Open should return error")
 	}
@@ -277,7 +280,7 @@ func TestIntegration_TransportPeerTracking(t *testing.T) {
 	})
 
 	// Open the transport
-	_, err := tr.Open()
+	err := tr.Open()
 	if err != nil {
 		t.Fatalf("Failed to open transport: %v", err)
 	}
@@ -378,7 +381,7 @@ func TestIntegration_MultipleSessions(t *testing.T) {
 	tr2 := NewTransport("integration-multi-2", samAddress, opts)
 
 	// Open first transport
-	_, err := tr1.Open()
+	err := tr1.Open()
 	if err != nil {
 		t.Fatalf("Failed to open transport 1: %v", err)
 	}
@@ -388,7 +391,7 @@ func TestIntegration_MultipleSessions(t *testing.T) {
 	t.Logf("Transport 1 address: %s", addr1)
 
 	// Open second transport
-	_, err = tr2.Open()
+	err = tr2.Open()
 	if err != nil {
 		t.Fatalf("Failed to open transport 2: %v", err)
 	}
@@ -425,7 +428,7 @@ func TestIntegration_TransportWithCustomOptions(t *testing.T) {
 
 	tr := NewTransport("integration-custom-opts", samAddress, opts)
 
-	_, err := tr.Open()
+	err := tr.Open()
 	if err != nil {
 		t.Fatalf("Failed to open transport with custom options: %v", err)
 	}

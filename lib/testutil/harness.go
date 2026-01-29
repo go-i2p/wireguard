@@ -107,7 +107,7 @@ func (n *TestNode) Start(ctx context.Context) error {
 	n.Transport = transport.NewTransport(n.Name, n.samAddr, n.options)
 
 	// Open transport (this creates the I2P session)
-	_, err := n.Transport.Open()
+	err := n.Transport.Open()
 	if err != nil {
 		return fmt.Errorf("failed to open transport: %w", err)
 	}

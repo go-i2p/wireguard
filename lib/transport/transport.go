@@ -92,13 +92,14 @@ func NewTransport(name, samAddr string, options []string) *Transport {
 }
 
 // Open initializes the I2P transport layer.
-// Returns the WireGuard Bind interface and the local I2P address.
-func (t *Transport) Open() (conn.Bind, error) {
+// The Transport owns the bind - use Bind() to access it for WireGuard device creation.
+// Call Close() on the Transport to clean up; do not close the bind directly.
+func (t *Transport) Open() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.isOpen {
-		return nil, errors.New("transport already open")
+		return errors.New("transport already open")
 	}
 
 	// Create the underlying I2P bind
@@ -107,20 +108,29 @@ func (t *Transport) Open() (conn.Bind, error) {
 	// Open the bind to start the I2P session
 	_, _, err := t.bind.Open(0)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Get our local I2P address
 	localAddr, err := t.bind.LocalAddress()
 	if err != nil {
 		t.bind.Close()
-		return nil, err
+		return err
 	}
 
 	t.localI2PDest = localAddr
 	t.isOpen = true
 
-	return t.bind, nil
+	return nil
+}
+
+// Bind returns the underlying WireGuard Bind interface.
+// The Transport retains ownership - do not close the bind directly.
+// Returns nil if the transport is not open.
+func (t *Transport) Bind() conn.Bind {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.bind
 }
 
 // Close shuts down the I2P transport.
@@ -171,14 +181,6 @@ func (t *Transport) IsOpen() bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.isOpen
-}
-
-// Bind returns the underlying WireGuard Bind interface.
-// Returns nil if the transport is not open.
-func (t *Transport) Bind() conn.Bind {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.bind
 }
 
 // AddPeer registers a new peer with the transport.
