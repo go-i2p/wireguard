@@ -187,8 +187,10 @@ func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 			return 0, net.ErrClosed
 		}
 
-		// Read one datagram (I2P doesn't support batch reading like UDP GSO)
-		if len(packets) == 0 {
+		// Validate all slices have at least one element.
+		// WireGuard's internal code always passes correctly-sized slices,
+		// but we validate defensively to prevent panics from misuse.
+		if len(packets) == 0 || len(sizes) == 0 || len(eps) == 0 {
 			return 0, nil
 		}
 
