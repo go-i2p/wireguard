@@ -139,7 +139,7 @@ For higher-level mesh VPN functionality, use the `lib/` packages:
 | `lib/web` | Browser-based management UI |
 | `lib/tui` | Terminal UI using BubbleTea |
 | `lib/metrics` | Prometheus exposition format metrics (lightweight, no external deps) |
-| `lib/ratelimit` | Per-peer rate limiting |
+| `lib/ratelimit` | Introducer rate limiting |
 
 ### Using the Embedded VPN
 
