@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Protocol version for compatibility checking.
@@ -292,4 +293,32 @@ type ConfigSetResult struct {
 	NewValue any `json:"new_value"`
 	// Message is a status message
 	Message string `json:"message"`
+}
+
+// LogsListParams is the request for "logs.list" method.
+type LogsListParams struct {
+	// Level filters logs by minimum level (debug, info, warn, error)
+	Level string `json:"level,omitempty"`
+	// Limit is the maximum number of logs to return
+	Limit int `json:"limit,omitempty"`
+	// Since returns logs after this timestamp
+	Since *time.Time `json:"since,omitempty"`
+}
+
+// LogsListResult is the response for "logs.list" method.
+type LogsListResult struct {
+	Logs  []LogEntry `json:"logs"`
+	Total int        `json:"total"`
+}
+
+// LogEntry represents a single log entry.
+type LogEntry struct {
+	// Timestamp is when the log was recorded
+	Timestamp time.Time `json:"timestamp"`
+	// Level is the log level (debug, info, warn, error)
+	Level string `json:"level"`
+	// Message is the log message
+	Message string `json:"message"`
+	// Component is the component that generated the log
+	Component string `json:"component,omitempty"`
 }
