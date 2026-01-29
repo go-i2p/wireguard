@@ -677,6 +677,12 @@ func (n *Node) cleanup() {
 		n.gossip = nil
 	}
 
+	// Stop ban list cleanup loop
+	if n.banList != nil {
+		n.banList.Stop()
+		// Note: banList is not set to nil as it may still be queried
+	}
+
 	// Close device (may block, use timeout)
 	if n.device != nil {
 		done := make(chan struct{})
