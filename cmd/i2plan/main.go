@@ -36,9 +36,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/go-i2p/wireguard/lib/core"
 	"github.com/go-i2p/wireguard/lib/rpc"
+	"github.com/go-i2p/wireguard/lib/tui"
 )
 
 // Version is set at build time via ldflags.
@@ -68,7 +71,8 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "i2plan - Decentralized WireGuard-over-I2P Mesh VPN\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  i2plan [flags]            Start the node\n")
-		fmt.Fprintf(os.Stderr, "  i2plan rpc <method>       Execute RPC method\n\n")
+		fmt.Fprintf(os.Stderr, "  i2plan rpc <method>       Execute RPC method\n")
+		fmt.Fprintf(os.Stderr, "  i2plan tui                Launch interactive TUI\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -99,6 +103,16 @@ func run() int {
 			rpcDataDir = filepath.Join(homeDir, ".i2plan")
 		}
 		return handleRPC(args[1:], logger, rpcDataDir)
+	}
+
+	// Check for TUI subcommand
+	if len(args) > 0 && args[0] == "tui" {
+		// Determine data directory for RPC socket
+		tuiDataDir := *dataDir
+		if tuiDataDir == "" {
+			tuiDataDir = filepath.Join(homeDir, ".i2plan")
+		}
+		return handleTUI(logger, tuiDataDir)
 	}
 
 	// Load configuration
@@ -444,5 +458,42 @@ func rpcConfigSet(ctx context.Context, client *rpc.Client, args []string) int {
 	}
 
 	fmt.Printf("Set %s: %v -> %v\n", result.Key, result.OldValue, result.NewValue)
+	return 0
+}
+
+// handleTUI launches the interactive terminal user interface.
+func handleTUI(logger *slog.Logger, dataDir string) int {
+	// Determine socket path
+	socketPath := filepath.Join(dataDir, core.DefaultRPCSocket)
+	if envSocket := os.Getenv("I2PLAN_RPC_SOCKET"); envSocket != "" {
+		socketPath = envSocket
+	}
+
+	// Determine auth file
+	authFile := filepath.Join(dataDir, "rpc_auth.token")
+	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
+		authFile = envAuth
+	}
+
+	// Create TUI
+	tuiApp, err := tui.New(tui.Config{
+		RPCSocketPath:   socketPath,
+		RPCAuthFile:     authFile,
+		RefreshInterval: 5 * time.Second,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Is the i2plan daemon running?\n")
+		return 1
+	}
+	defer tuiApp.Close()
+
+	// Run the TUI
+	p := tea.NewProgram(tuiApp, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		return 1
+	}
+
 	return 0
 }
