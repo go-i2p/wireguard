@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/wireguard/lib/metrics"
 	"github.com/go-i2p/wireguard/lib/rpc"
 )
 
@@ -96,6 +97,15 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/routes", s.handleAPIRoutes)
 	mux.HandleFunc("POST /api/invite/create", s.handleAPIInviteCreate)
 	mux.HandleFunc("POST /api/invite/accept", s.handleAPIInviteAccept)
+
+	// Health check endpoints
+	mux.HandleFunc("GET /api/health", s.handleAPIHealth)
+	mux.HandleFunc("GET /health", s.handleAPIHealth)
+	mux.HandleFunc("GET /healthz", s.handleAPILiveness)
+	mux.HandleFunc("GET /readyz", s.handleAPIReadiness)
+
+	// Metrics endpoint (Prometheus format)
+	mux.Handle("GET /metrics", metrics.Handler())
 
 	s.httpServer = &http.Server{
 		Addr:              cfg.ListenAddr,

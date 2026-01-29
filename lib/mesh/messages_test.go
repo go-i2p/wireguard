@@ -1,6 +1,9 @@
 package mesh
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
 	"net/netip"
 	"testing"
 
@@ -164,4 +167,83 @@ func TestIPCollision(t *testing.T) {
 	// Different keys should (almost always) not collide
 	collision := IPCollision(key1.PublicKey(), key2.PublicKey(), TunnelSubnet)
 	t.Logf("IPCollision between different keys: %v", collision)
+}
+
+// mockSigner implements MessageSigner for testing
+type mockSigner struct {
+	nodeID       string
+	verifyingKey string
+	signFunc     func([]byte) []byte
+}
+
+func (m *mockSigner) NodeID() string          { return m.nodeID }
+func (m *mockSigner) VerifyingKeyHex() string { return m.verifyingKey }
+func (m *mockSigner) Sign(data []byte) []byte { return m.signFunc(data) }
+
+func TestEncodeSignedMessage(t *testing.T) {
+	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+
+	signer := &mockSigner{
+		nodeID:       "test-node-123",
+		verifyingKey: hex.EncodeToString(pubKey),
+		signFunc:     func(data []byte) []byte { return ed25519.Sign(privKey, data) },
+	}
+
+	payload := &PeerAnnounce{
+		NodeID:    "test-node-123",
+		NetworkID: "test-network",
+		PeerCount: 5,
+	}
+
+	// Encode with signature
+	data, err := EncodeSignedMessage(MsgPeerAnnounce, payload, signer)
+	if err != nil {
+		t.Fatalf("EncodeSignedMessage() error = %v", err)
+	}
+
+	// Decode and verify
+	msg, err := DecodeAndVerifyMessage(data)
+	if err != nil {
+		t.Fatalf("DecodeAndVerifyMessage() error = %v", err)
+	}
+
+	if !msg.IsSigned() {
+		t.Error("message should be signed")
+	}
+
+	if msg.SenderID != "test-node-123" {
+		t.Errorf("SenderID = %v, want test-node-123", msg.SenderID)
+	}
+}
+
+func TestMessage_VerifySignature_Invalid(t *testing.T) {
+	msg := &Message{
+		Type:         MsgPeerAnnounce,
+		Payload:      []byte(`{}`),
+		VerifyingKey: "abcd1234", // Invalid - too short
+		Signature:    "invalid-signature",
+	}
+
+	if msg.VerifySignature() {
+		t.Error("invalid signature should not verify")
+	}
+}
+
+func TestMessage_VerifySignature_Unsigned(t *testing.T) {
+	msg := &Message{
+		Type:    MsgPeerAnnounce,
+		Payload: []byte(`{}`),
+	}
+
+	// Unsigned messages should verify (backward compatibility)
+	if !msg.VerifySignature() {
+		t.Error("unsigned message should verify for backward compatibility")
+	}
+
+	if msg.IsSigned() {
+		t.Error("unsigned message should return false for IsSigned()")
+	}
 }

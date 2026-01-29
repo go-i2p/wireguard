@@ -158,6 +158,7 @@ func (g *GossipEngine) Start(ctx context.Context) error {
 }
 
 // Stop halts all gossip protocol operations.
+// It sends a leave announcement to notify peers before stopping.
 func (g *GossipEngine) Stop() {
 	g.mu.Lock()
 	if !g.running {
@@ -170,8 +171,70 @@ func (g *GossipEngine) Stop() {
 	}
 	g.mu.Unlock()
 
+	// Send leave announcement to notify peers
+	g.sendLeaveAnnouncement()
+
 	g.wg.Wait()
 	g.logger.Info("gossip engine stopped")
+}
+
+// GracefulShutdown performs a graceful shutdown with a timeout.
+// It notifies peers of departure and waits for acknowledgments.
+func (g *GossipEngine) GracefulShutdown(ctx context.Context) error {
+	g.mu.Lock()
+	if !g.running {
+		g.mu.Unlock()
+		return nil
+	}
+	g.running = false
+	if g.cancel != nil {
+		g.cancel()
+	}
+	g.mu.Unlock()
+
+	// Send leave announcement
+	g.sendLeaveAnnouncement()
+
+	// Wait for goroutines with context timeout
+	done := make(chan struct{})
+	go func() {
+		g.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		g.logger.Info("graceful shutdown complete")
+		return nil
+	case <-ctx.Done():
+		g.logger.Warn("graceful shutdown timed out")
+		return ctx.Err()
+	}
+}
+
+// sendLeaveAnnouncement broadcasts a leave message to all peers.
+func (g *GossipEngine) sendLeaveAnnouncement() {
+	if g.sender == nil {
+		return
+	}
+
+	leave := &PeerLeavePayload{
+		NodeID:    g.nodeID,
+		NetworkID: g.networkID,
+		Reason:    "shutdown",
+	}
+
+	data, err := EncodeMessage(MsgPeerLeave, leave)
+	if err != nil {
+		g.logger.Error("failed to encode leave message", "error", err)
+		return
+	}
+
+	if err := g.sender.Broadcast(data); err != nil {
+		g.logger.Debug("failed to broadcast leave", "error", err)
+	} else {
+		g.logger.Info("sent leave announcement to peers")
+	}
 }
 
 // IsRunning returns whether the gossip engine is active.

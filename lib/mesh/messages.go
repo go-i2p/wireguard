@@ -4,8 +4,10 @@
 package mesh
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +63,12 @@ type Message struct {
 	Type      MessageType     `json:"type"`
 	Timestamp time.Time       `json:"timestamp"`
 	Payload   json.RawMessage `json:"payload"`
+	// SenderID is the node ID of the message sender
+	SenderID string `json:"sender_id,omitempty"`
+	// VerifyingKey is the sender's Ed25519 public key (hex-encoded)
+	VerifyingKey string `json:"verifying_key,omitempty"`
+	// Signature is the Ed25519 signature of the message (hex-encoded)
+	Signature string `json:"signature,omitempty"`
 }
 
 // HandshakeInit is sent by the joining node to initiate connection.
@@ -121,6 +129,16 @@ type PeerAnnounce struct {
 	PeerCount int `json:"peer_count"`
 }
 
+// MessageSigner provides signing capability for messages.
+type MessageSigner interface {
+	// NodeID returns the signer's node ID.
+	NodeID() string
+	// VerifyingKeyHex returns the Ed25519 public key as hex.
+	VerifyingKeyHex() string
+	// Sign signs data with the Ed25519 private key.
+	Sign(data []byte) []byte
+}
+
 // EncodeMessage creates a Message envelope with the given payload.
 func EncodeMessage(msgType MessageType, payload interface{}) ([]byte, error) {
 	payloadBytes, err := json.Marshal(payload)
@@ -137,6 +155,71 @@ func EncodeMessage(msgType MessageType, payload interface{}) ([]byte, error) {
 	return json.Marshal(msg)
 }
 
+// EncodeSignedMessage creates a signed Message envelope.
+// The signature covers type, timestamp, and payload.
+func EncodeSignedMessage(msgType MessageType, payload interface{}, signer MessageSigner) ([]byte, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling payload: %w", err)
+	}
+
+	msg := Message{
+		Type:         msgType,
+		Timestamp:    time.Now(),
+		Payload:      payloadBytes,
+		SenderID:     signer.NodeID(),
+		VerifyingKey: signer.VerifyingKeyHex(),
+	}
+
+	// Sign the message content (type + timestamp + payload)
+	signableData := msg.signableBytes()
+	signature := signer.Sign(signableData)
+	msg.Signature = hex.EncodeToString(signature)
+
+	return json.Marshal(msg)
+}
+
+// signableBytes returns the bytes that should be signed.
+func (m *Message) signableBytes() []byte {
+	// Create a deterministic byte representation for signing
+	h := sha256.New()
+	binary.Write(h, binary.BigEndian, uint8(m.Type))
+	binary.Write(h, binary.BigEndian, m.Timestamp.UnixNano())
+	h.Write(m.Payload)
+	return h.Sum(nil)
+}
+
+// VerifySignature checks if the message signature is valid.
+// Returns true if the signature is valid, false otherwise.
+// Returns true for unsigned messages (backward compatibility).
+func (m *Message) VerifySignature() bool {
+	// If no signature, treat as valid (backward compatibility)
+	if m.Signature == "" || m.VerifyingKey == "" {
+		return true
+	}
+
+	// Decode signature
+	signature, err := hex.DecodeString(m.Signature)
+	if err != nil {
+		return false
+	}
+
+	// Decode verifying key
+	verifyingKey, err := hex.DecodeString(m.VerifyingKey)
+	if err != nil || len(verifyingKey) != 32 {
+		return false
+	}
+
+	// Verify the signature
+	signableData := m.signableBytes()
+	return ed25519.Verify(verifyingKey, signableData, signature)
+}
+
+// IsSigned returns true if the message has a signature.
+func (m *Message) IsSigned() bool {
+	return m.Signature != "" && m.VerifyingKey != ""
+}
+
 // DecodeMessage parses a Message envelope.
 func DecodeMessage(data []byte) (*Message, error) {
 	var msg Message
@@ -144,6 +227,22 @@ func DecodeMessage(data []byte) (*Message, error) {
 		return nil, fmt.Errorf("unmarshaling message: %w", err)
 	}
 	return &msg, nil
+}
+
+// DecodeAndVerifyMessage parses and verifies a signed message.
+// Returns an error if the signature is present but invalid.
+func DecodeAndVerifyMessage(data []byte) (*Message, error) {
+	msg, err := DecodeMessage(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// If signed, verify the signature
+	if msg.IsSigned() && !msg.VerifySignature() {
+		return nil, errors.New("invalid message signature")
+	}
+
+	return msg, nil
 }
 
 // DecodePayload extracts and parses the payload into the given type.

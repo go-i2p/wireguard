@@ -142,3 +142,56 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, "127.0.0.1:8080")
 	}
 }
+
+func TestHealthResponse(t *testing.T) {
+	resp := HealthResponse{
+		Status:    "healthy",
+		Timestamp: "2026-01-29T12:00:00Z",
+		Checks: map[string]string{
+			"rpc":   "healthy",
+			"node":  "healthy",
+			"peers": "connected",
+		},
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var parsed HealthResponse
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if parsed.Status != "healthy" {
+		t.Errorf("Status = %q, want %q", parsed.Status, "healthy")
+	}
+	if parsed.Checks["rpc"] != "healthy" {
+		t.Errorf("Checks[rpc] = %q, want %q", parsed.Checks["rpc"], "healthy")
+	}
+	if len(parsed.Checks) != 3 {
+		t.Errorf("len(Checks) = %d, want 3", len(parsed.Checks))
+	}
+}
+
+func TestLivenessHandler(t *testing.T) {
+	s := &Server{}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/healthz", nil)
+
+	s.handleAPILiveness(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result["status"] != "alive" {
+		t.Errorf("status = %q, want %q", result["status"], "alive")
+	}
+}

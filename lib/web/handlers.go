@@ -210,3 +210,98 @@ func (s *Server) handleAPIInviteAccept(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, result)
 }
+
+// HealthResponse contains the health check response.
+type HealthResponse struct {
+	Status    string            `json:"status"`
+	Timestamp string            `json:"timestamp"`
+	Version   string            `json:"version,omitempty"`
+	Checks    map[string]string `json:"checks"`
+}
+
+// handleAPIHealth returns the health status of the node.
+func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	checks := make(map[string]string)
+	overallStatus := "healthy"
+
+	// Check RPC connection
+	status, err := s.rpcClient.Status(ctx)
+	if err != nil {
+		checks["rpc"] = "unhealthy: " + err.Error()
+		overallStatus = "unhealthy"
+	} else {
+		checks["rpc"] = "healthy"
+		if status != nil {
+			checks["node"] = "healthy"
+			if status.NodeID != "" {
+				checks["identity"] = "configured"
+			}
+		}
+	}
+
+	// Check peer connectivity
+	peers, err := s.rpcClient.PeersList(ctx)
+	if err != nil {
+		checks["peers"] = "unknown"
+	} else if peers.Total == 0 {
+		checks["peers"] = "no_peers"
+	} else {
+		connectedCount := 0
+		for _, p := range peers.Peers {
+			if p.State == "Connected" {
+				connectedCount++
+			}
+		}
+		if connectedCount > 0 {
+			checks["peers"] = "connected"
+		} else {
+			checks["peers"] = "disconnected"
+			// Don't mark as unhealthy - having no connected peers is not a failure
+		}
+	}
+
+	resp := HealthResponse{
+		Status:    overallStatus,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Checks:    checks,
+	}
+
+	httpStatus := http.StatusOK
+	if overallStatus != "healthy" {
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	s.writeJSON(w, httpStatus, resp)
+}
+
+// handleAPILiveness returns a simple liveness probe response.
+// This is a lightweight check that the server is responding.
+func (s *Server) handleAPILiveness(w http.ResponseWriter, r *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"status": "alive",
+	})
+}
+
+// handleAPIReadiness returns a readiness probe response.
+// This checks if the service is ready to handle requests.
+func (s *Server) handleAPIReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	// Check if RPC is responding
+	_, err := s.rpcClient.Status(ctx)
+	if err != nil {
+		s.writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "not_ready",
+			"reason": "rpc_unavailable",
+		})
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ready",
+	})
+}
