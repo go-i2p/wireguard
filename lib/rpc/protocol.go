@@ -266,6 +266,12 @@ type RouteInfo struct {
 	ViaNodeID string `json:"via_node_id,omitempty"`
 	// LastSeen is when this route was last confirmed
 	LastSeen string `json:"last_seen"`
+	// WGPublicKey is the WireGuard public key (base64)
+	WGPublicKey string `json:"wg_public_key,omitempty"`
+	// I2PDest is the I2P destination (truncated for display)
+	I2PDest string `json:"i2p_dest,omitempty"`
+	// CreatedAt is when this route was first learned
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // ConfigGetParams is the request for "config.get" method.

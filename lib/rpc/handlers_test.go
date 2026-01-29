@@ -346,8 +346,20 @@ func TestInviteAcceptHandler(t *testing.T) {
 func TestRoutesListHandler(t *testing.T) {
 	routes := &mockRouteProvider{
 		routes: []RouteInfo{
-			{TunnelIP: "10.42.1.2", NodeID: "node1", HopCount: 0},
-			{TunnelIP: "10.42.1.3", NodeID: "node2", HopCount: 1, ViaNodeID: "node1"},
+			{
+				TunnelIP:    "10.42.1.2",
+				NodeID:      "node1",
+				HopCount:    0,
+				WGPublicKey: "abc123pubkey",
+				I2PDest:     "test.i2p.dest",
+				CreatedAt:   "2024-01-01T00:00:00Z",
+			},
+			{
+				TunnelIP:  "10.42.1.3",
+				NodeID:    "node2",
+				HopCount:  1,
+				ViaNodeID: "node1",
+			},
 		},
 	}
 
@@ -365,6 +377,17 @@ func TestRoutesListHandler(t *testing.T) {
 
 	if routesList.Total != 2 {
 		t.Errorf("Total: %d != 2", routesList.Total)
+	}
+
+	// Verify new fields are populated
+	if routesList.Routes[0].WGPublicKey != "abc123pubkey" {
+		t.Errorf("WGPublicKey: got %q, want %q", routesList.Routes[0].WGPublicKey, "abc123pubkey")
+	}
+	if routesList.Routes[0].I2PDest != "test.i2p.dest" {
+		t.Errorf("I2PDest: got %q, want %q", routesList.Routes[0].I2PDest, "test.i2p.dest")
+	}
+	if routesList.Routes[0].CreatedAt != "2024-01-01T00:00:00Z" {
+		t.Errorf("CreatedAt: got %q, want %q", routesList.Routes[0].CreatedAt, "2024-01-01T00:00:00Z")
 	}
 }
 

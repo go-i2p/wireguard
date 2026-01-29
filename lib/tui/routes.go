@@ -143,3 +143,68 @@ func (m RoutesModel) renderEmptyState() string {
 		box.Render(content),
 	)
 }
+
+// SelectedRoute returns the currently selected route.
+func (m RoutesModel) SelectedRoute() *rpc.RouteInfo {
+	if m.routes == nil || len(m.routes.Routes) == 0 {
+		return nil
+	}
+	if m.cursor >= 0 && m.cursor < len(m.routes.Routes) {
+		return &m.routes.Routes[m.cursor]
+	}
+	return nil
+}
+
+// RenderRouteDetail renders detailed information about the selected route.
+func (m RoutesModel) RenderRouteDetail() string {
+	route := m.SelectedRoute()
+	if route == nil {
+		return styles.Muted.Render("No route selected")
+	}
+
+	var b strings.Builder
+
+	// Title
+	b.WriteString(styles.Bold.Render("Route Details"))
+	b.WriteString("\n\n")
+
+	// Route type indicator
+	routeType := "Direct"
+	if route.HopCount > 0 {
+		routeType = fmt.Sprintf("Relayed (%d hops)", route.HopCount)
+	}
+	typeStyle := styles.Success
+	if route.HopCount > 0 {
+		typeStyle = styles.Warning
+	}
+	b.WriteString(fmt.Sprintf("  Type:        %s\n", typeStyle.Render(routeType)))
+
+	// Core info
+	b.WriteString(fmt.Sprintf("  Tunnel IP:   %s\n", route.TunnelIP))
+	b.WriteString(fmt.Sprintf("  Node ID:     %s\n", route.NodeID))
+
+	// Relay info
+	if route.ViaNodeID != "" {
+		b.WriteString(fmt.Sprintf("  Via Node:    %s\n", route.ViaNodeID))
+	}
+
+	// WireGuard key
+	if route.WGPublicKey != "" {
+		b.WriteString(fmt.Sprintf("  WG PubKey:   %s\n", truncate(route.WGPublicKey, 44)))
+	}
+
+	// I2P destination
+	if route.I2PDest != "" {
+		b.WriteString(fmt.Sprintf("  I2P Dest:    %s\n", route.I2PDest))
+	}
+
+	// Timestamps
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  Timestamps:\n"))
+	if route.CreatedAt != "" {
+		b.WriteString(fmt.Sprintf("    Created:   %s\n", route.CreatedAt))
+	}
+	b.WriteString(fmt.Sprintf("    Last Seen: %s\n", route.LastSeen))
+
+	return b.String()
+}

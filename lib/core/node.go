@@ -1207,12 +1207,21 @@ func (n *Node) ListRoutes() []rpc.RouteInfo {
 	routes := rt.ListRoutes()
 	result := make([]rpc.RouteInfo, len(routes))
 	for i, r := range routes {
+		// Truncate I2P destination for display (full dest is very long)
+		i2pDest := r.I2PDest
+		if len(i2pDest) > 52 {
+			i2pDest = i2pDest[:52] + "..."
+		}
+
 		result[i] = rpc.RouteInfo{
-			NodeID:    r.NodeID,
-			TunnelIP:  r.TunnelIP.String(),
-			HopCount:  r.HopCount,
-			ViaNodeID: r.ViaNodeID,
-			LastSeen:  r.LastSeen.Format(time.RFC3339),
+			NodeID:      r.NodeID,
+			TunnelIP:    r.TunnelIP.String(),
+			HopCount:    r.HopCount,
+			ViaNodeID:   r.ViaNodeID,
+			LastSeen:    r.LastSeen.Format(time.RFC3339),
+			WGPublicKey: r.WGPublicKey,
+			I2PDest:     i2pDest,
+			CreatedAt:   r.CreatedAt.Format(time.RFC3339),
 		}
 	}
 	return result

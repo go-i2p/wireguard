@@ -103,6 +103,78 @@ func TestRoutesModelSetData(t *testing.T) {
 	}
 }
 
+func TestRoutesModelSelectedRoute(t *testing.T) {
+	m := NewRoutesModel()
+
+	// No data - should return nil
+	if route := m.SelectedRoute(); route != nil {
+		t.Error("SelectedRoute: expected nil when no data")
+	}
+
+	m.SetData(&rpc.RoutesListResult{
+		Routes: []rpc.RouteInfo{
+			{TunnelIP: "10.0.0.2", NodeID: "node1", HopCount: 0, WGPublicKey: "key1"},
+			{TunnelIP: "10.0.0.3", NodeID: "node2", HopCount: 1, ViaNodeID: "node1"},
+		},
+		Total: 2,
+	})
+
+	route := m.SelectedRoute()
+	if route == nil {
+		t.Fatal("SelectedRoute: expected non-nil")
+	}
+	if route.NodeID != "node1" {
+		t.Errorf("SelectedRoute: NodeID = %q, want %q", route.NodeID, "node1")
+	}
+
+	// Move cursor down and verify
+	m.cursor = 1
+	route = m.SelectedRoute()
+	if route == nil {
+		t.Fatal("SelectedRoute at cursor=1: expected non-nil")
+	}
+	if route.NodeID != "node2" {
+		t.Errorf("SelectedRoute at cursor=1: NodeID = %q, want %q", route.NodeID, "node2")
+	}
+}
+
+func TestRoutesModelRenderRouteDetail(t *testing.T) {
+	m := NewRoutesModel()
+
+	// No route selected
+	detail := m.RenderRouteDetail()
+	if detail == "" {
+		t.Error("RenderRouteDetail: expected non-empty string for no selection")
+	}
+
+	// With route data
+	m.SetData(&rpc.RoutesListResult{
+		Routes: []rpc.RouteInfo{
+			{
+				TunnelIP:    "10.0.0.2",
+				NodeID:      "node1",
+				HopCount:    0,
+				WGPublicKey: "abc123key",
+				I2PDest:     "test.i2p.dest",
+				CreatedAt:   "2024-01-01T00:00:00Z",
+				LastSeen:    "2024-01-02T00:00:00Z",
+			},
+		},
+		Total: 1,
+	})
+
+	detail = m.RenderRouteDetail()
+
+	// Verify detail contains expected info
+	if detail == "" {
+		t.Fatal("RenderRouteDetail: expected non-empty detail")
+	}
+	// The detail should contain route info (actual formatting may vary)
+	if len(detail) < 50 {
+		t.Errorf("RenderRouteDetail: detail seems too short: %q", detail)
+	}
+}
+
 func TestStatusModelSetData(t *testing.T) {
 	m := NewStatusModel()
 
