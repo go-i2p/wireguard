@@ -375,12 +375,12 @@ func TestVPN_PeersWhenNotRunning(t *testing.T) {
 
 	// Should return empty, not panic
 	peers := vpn.Peers()
-	if peers != nil && len(peers) > 0 {
+	if len(peers) > 0 {
 		t.Error("expected empty peers when not running")
 	}
 
 	routes := vpn.Routes()
-	if routes != nil && len(routes) > 0 {
+	if len(routes) > 0 {
 		t.Error("expected empty routes when not running")
 	}
 }

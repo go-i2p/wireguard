@@ -504,6 +504,24 @@ func (n *Node) initMesh(ctx context.Context) error {
 		BanList:     n.banList,
 	})
 
+	// Wire up peer connection callbacks to register/unregister peers with the sender.
+	// This is essential for gossip messaging - the sender needs to know the I2P
+	// destination for each peer's nodeID before it can send messages to them.
+	n.peers.SetCallbacks(
+		func(peer *mesh.Peer) {
+			// Peer connected - register with sender so gossip can reach them
+			n.sender.RegisterPeer(peer.NodeID, peer.I2PDest)
+			n.logger.Debug("registered peer with sender",
+				"node_id", peer.NodeID,
+				"i2p_dest", peer.I2PDest[:32]+"...")
+		},
+		func(peer *mesh.Peer) {
+			// Peer disconnected - unregister from sender
+			n.sender.UnregisterPeer(peer.NodeID)
+			n.logger.Debug("unregistered peer from sender", "node_id", peer.NodeID)
+		},
+	)
+
 	// Create gossip engine with defaults, then override from config
 	gossipConfig := mesh.DefaultGossipConfig()
 	gossipConfig.HeartbeatInterval = n.config.Mesh.HeartbeatInterval
@@ -1054,6 +1072,13 @@ func (n *Node) PeerManager() *mesh.PeerManager {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.peers
+}
+
+// InviteStore returns the invite store.
+func (n *Node) InviteStore() *identity.InviteStore {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.inviteStore
 }
 
 // TunnelIPAddr returns the tunnel IP as netip.Addr.

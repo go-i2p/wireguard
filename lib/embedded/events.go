@@ -22,6 +22,10 @@ const (
 	EventInviteAccepted
 	// EventInviteUsed is emitted when someone uses our invite to join.
 	EventInviteUsed
+	// EventInviteCreated is emitted when we create a new invite code.
+	EventInviteCreated
+	// EventInviteRevoked is emitted when we revoke an invite code.
+	EventInviteRevoked
 	// EventRouteAdded is emitted when a new route is learned.
 	EventRouteAdded
 	// EventRouteRemoved is emitted when a route expires or is removed.
@@ -49,6 +53,10 @@ func (t EventType) String() string {
 		return "invite_accepted"
 	case EventInviteUsed:
 		return "invite_used"
+	case EventInviteCreated:
+		return "invite_created"
+	case EventInviteRevoked:
+		return "invite_revoked"
 	case EventRouteAdded:
 		return "route_added"
 	case EventRouteRemoved:
