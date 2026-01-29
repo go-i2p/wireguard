@@ -75,6 +75,9 @@ type GossipEngine struct {
 	// Callback for peer discovery
 	onPeerDiscovered func(info PeerInfo)
 
+	// Local random source to avoid global rand mutex contention
+	rng *rand.Rand
+
 	// State
 	running bool
 	cancel  context.CancelFunc
@@ -106,6 +109,10 @@ func NewGossipEngine(cfg GossipEngineConfig) *GossipEngine {
 		logger = slog.Default()
 	}
 
+	// Create a local random source seeded with current time to avoid
+	// global rand mutex contention during peer selection
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	return &GossipEngine{
 		config:       config,
 		logger:       logger,
@@ -117,6 +124,7 @@ func NewGossipEngine(cfg GossipEngineConfig) *GossipEngine {
 		wgPublicKey:  cfg.WGPublicKey,
 		tunnelIP:     cfg.TunnelIP,
 		networkID:    cfg.NetworkID,
+		rng:          rng,
 	}
 }
 
@@ -470,6 +478,7 @@ func (g *GossipEngine) pruneStale() {
 
 // selectRandomPeers returns up to n random connected peer IDs.
 // Uses partial Fisher-Yates shuffle for efficiency - only shuffles the first n elements.
+// Uses a local random source to avoid global rand mutex contention.
 func (g *GossipEngine) selectRandomPeers(n int) []string {
 	if g.peerManager == nil {
 		return nil
@@ -493,8 +502,8 @@ func (g *GossipEngine) selectRandomPeers(n int) []string {
 	}
 
 	for i := 0; i < n; i++ {
-		// Pick a random element from i to end
-		j := i + rand.Intn(len(peerIDs)-i)
+		// Pick a random element from i to end using local RNG
+		j := i + g.rng.Intn(len(peerIDs)-i)
 		peerIDs[i], peerIDs[j] = peerIDs[j], peerIDs[i]
 	}
 
