@@ -347,3 +347,33 @@ func TestVerifyWithPublicKeyHex_WrongLength(t *testing.T) {
 		t.Error("should fail for wrong key length")
 	}
 }
+
+func TestDeriveDiscoveryToken(t *testing.T) {
+	// Same network ID should produce same token
+	token1 := DeriveDiscoveryToken("test-network-123")
+	token2 := DeriveDiscoveryToken("test-network-123")
+
+	if len(token1) != 32 { // SHA-256 produces 32 bytes
+		t.Errorf("expected 32 byte token, got %d", len(token1))
+	}
+
+	for i := range token1 {
+		if token1[i] != token2[i] {
+			t.Error("same network ID should produce identical tokens")
+			break
+		}
+	}
+
+	// Different network IDs should produce different tokens
+	token3 := DeriveDiscoveryToken("different-network")
+	same := true
+	for i := range token1 {
+		if token1[i] != token3[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Error("different network IDs should produce different tokens")
+	}
+}

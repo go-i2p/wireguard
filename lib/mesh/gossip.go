@@ -72,6 +72,9 @@ type GossipEngine struct {
 	onHandshakeResponse func(*HandshakeResponse) error
 	onHandshakeComplete func(*HandshakeComplete) error
 
+	// Callback for peer discovery
+	onPeerDiscovered func(info PeerInfo)
+
 	// State
 	running bool
 	cancel  context.CancelFunc
@@ -564,11 +567,38 @@ func (g *GossipEngine) handlePeerList(msg *Message) error {
 		"from", peerList.NodeID,
 		"peers", len(peerList.Peers))
 
-	// We could trigger connection attempts to new peers here
-	// For now, just log the discovery
+	// Get discovery callback under lock
+	g.mu.RLock()
+	discoveryCallback := g.onPeerDiscovered
+	g.mu.RUnlock()
+
+	// Process discovered peers
 	for _, p := range peerList.Peers {
-		if p.NodeID != g.nodeID {
-			g.logger.Debug("discovered peer via gossip", "node_id", p.NodeID)
+		// Skip ourselves
+		if p.NodeID == g.nodeID {
+			continue
+		}
+
+		// Check if we already know this peer
+		isKnown := false
+		if g.peerManager != nil {
+			if _, ok := g.peerManager.GetPeer(p.NodeID); ok {
+				isKnown = true
+			}
+		}
+
+		if isKnown {
+			g.logger.Debug("peer already known", "node_id", p.NodeID)
+			continue
+		}
+
+		g.logger.Info("discovered new peer via gossip",
+			"node_id", p.NodeID,
+			"i2p_dest", truncateString(p.I2PDest, 32))
+
+		// Trigger connection attempt if callback is set
+		if discoveryCallback != nil {
+			discoveryCallback(p)
 		}
 	}
 
@@ -807,6 +837,15 @@ func (g *GossipEngine) SetHandshakeCallbacks(
 	g.onHandshakeInit = onInit
 	g.onHandshakeResponse = onResponse
 	g.onHandshakeComplete = onComplete
+}
+
+// SetDiscoveryCallback sets a callback for when new peers are discovered via gossip.
+// The callback is invoked for each peer learned from PeerList messages that is not
+// already connected. This enables auto-connect to expand the mesh.
+func (g *GossipEngine) SetDiscoveryCallback(cb func(info PeerInfo)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.onPeerDiscovered = cb
 }
 
 // truncateString truncates a string to maxLen with ellipsis.

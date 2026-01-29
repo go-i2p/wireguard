@@ -540,6 +540,20 @@ func (n *Node) initMesh(ctx context.Context) error {
 		NetworkID:    n.identity.NetworkID(),
 	})
 
+	// Set up discovery callback for auto-connecting to gossip-discovered peers
+	n.gossip.SetDiscoveryCallback(func(peerInfo mesh.PeerInfo) {
+		// Run connection attempt in background to avoid blocking gossip processing
+		go n.connectToDiscoveredPeer(peerInfo)
+	})
+
+	// Add network discovery token to valid tokens for accepting connections
+	// from peers discovered via gossip
+	if networkID := n.identity.NetworkID(); networkID != "" {
+		discoveryToken := identity.DeriveDiscoveryToken(networkID)
+		n.peers.AddValidToken(discoveryToken)
+		n.logger.Debug("added network discovery token for auto-connect")
+	}
+
 	// Start gossip engine
 	if err := n.gossip.Start(ctx); err != nil {
 		return fmt.Errorf("starting gossip engine: %w", err)
@@ -847,6 +861,76 @@ func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersCo
 	}, nil
 }
 
+// connectToDiscoveredPeer attempts to connect to a peer discovered via gossip.
+// Uses the network's discovery token for authentication.
+func (n *Node) connectToDiscoveredPeer(peerInfo mesh.PeerInfo) {
+	n.mu.RLock()
+	pm := n.peers
+	trans := n.trans
+	sender := n.sender
+	id := n.identity
+	n.mu.RUnlock()
+
+	if pm == nil || trans == nil || id == nil || sender == nil {
+		n.logger.Warn("cannot connect to discovered peer: node not fully initialized")
+		return
+	}
+
+	// Check if already connected or pending
+	if peer, ok := pm.GetPeer(peerInfo.NodeID); ok {
+		if peer.State == mesh.PeerStateConnected || peer.State == mesh.PeerStatePending {
+			n.logger.Debug("peer already connected or pending",
+				"node_id", peerInfo.NodeID,
+				"state", peer.State)
+			return
+		}
+	}
+
+	n.logger.Info("auto-connecting to discovered peer",
+		"node_id", peerInfo.NodeID,
+		"i2p_dest", truncateDest(peerInfo.I2PDest))
+
+	// Add peer to transport tracking
+	if err := trans.AddPeer(peerInfo.I2PDest, peerInfo.NodeID); err != nil {
+		n.logger.Warn("failed to track discovered peer", "error", err)
+		return
+	}
+
+	// Use the network discovery token for authentication
+	discoveryToken := identity.DeriveDiscoveryToken(id.NetworkID())
+	handshakeInit := pm.CreateHandshakeInit(discoveryToken)
+
+	// Parse remote endpoint
+	endpoint, err := trans.ParseEndpoint(peerInfo.I2PDest)
+	if err != nil {
+		trans.RemovePeer(peerInfo.I2PDest)
+		n.logger.Warn("failed to parse discovered peer endpoint", "error", err)
+		return
+	}
+
+	// Update transport with endpoint
+	trans.SetPeerEndpoint(peerInfo.I2PDest, endpoint)
+
+	// Encode and send the handshake init message
+	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
+	if err != nil {
+		trans.RemovePeer(peerInfo.I2PDest)
+		n.logger.Warn("failed to encode handshake for discovered peer", "error", err)
+		return
+	}
+
+	// Send directly to the peer's I2P destination
+	if err := sender.SendToDest(peerInfo.I2PDest, handshakeData); err != nil {
+		n.logger.Warn("failed to send handshake to discovered peer",
+			"error", err,
+			"node_id", peerInfo.NodeID)
+		// Don't remove peer - retry may succeed later
+	} else {
+		n.logger.Info("handshake sent to discovered peer",
+			"node_id", peerInfo.NodeID)
+	}
+}
+
 // --- InviteProvider implementation for RPC handlers ---
 
 // CreateInvite creates a new invite code for others to join the mesh.
@@ -871,6 +955,13 @@ func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreat
 			return nil, fmt.Errorf("generating network ID: %w", err)
 		}
 		id.SetNetworkID(networkID)
+
+		// Add the network discovery token for auto-connect
+		if pm != nil {
+			discoveryToken := identity.DeriveDiscoveryToken(networkID)
+			pm.AddValidToken(discoveryToken)
+			n.logger.Debug("added network discovery token for new network")
+		}
 
 		// Persist the identity with the new NetworkID
 		identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
@@ -958,6 +1049,16 @@ func (n *Node) AcceptInvite(ctx context.Context, inviteCode string) (*rpc.Invite
 
 	// Update our network ID to match the invite
 	id.SetNetworkID(invite.NetworkID)
+
+	// Add the network discovery token for auto-connect to other peers
+	n.mu.RLock()
+	pm := n.peers
+	n.mu.RUnlock()
+	if pm != nil {
+		discoveryToken := identity.DeriveDiscoveryToken(invite.NetworkID)
+		pm.AddValidToken(discoveryToken)
+		n.logger.Debug("added network discovery token for joined network")
+	}
 
 	// Initiate connection using ConnectPeer
 	_, err = n.ConnectPeer(ctx, inviteCode)
@@ -1239,4 +1340,12 @@ func (n *Node) SetConfig(key string, value any) (any, error) {
 
 	n.logger.Info("configuration updated", "key", key, "old_value", oldValue, "new_value", value)
 	return oldValue, nil
+}
+
+// truncateDest shortens an I2P destination for logging.
+func truncateDest(dest string) string {
+	if len(dest) > 32 {
+		return dest[:32] + "..."
+	}
+	return dest
 }

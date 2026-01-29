@@ -357,3 +357,14 @@ func ExtractSignedMessage(signedMsg []byte) (signature, data []byte, ok bool) {
 	}
 	return signedMsg[:SignatureLength], signedMsg[SignatureLength:], true
 }
+
+// DeriveDiscoveryToken generates a deterministic discovery token from a NetworkID.
+// All nodes in the same network can derive this token, allowing peers discovered
+// via gossip to authenticate without explicit invites.
+func DeriveDiscoveryToken(networkID string) []byte {
+	// Use SHA-256 hash of networkID + magic string to derive token
+	h := sha256.New()
+	h.Write([]byte("i2plan-discovery-v1:"))
+	h.Write([]byte(networkID))
+	return h.Sum(nil)
+}

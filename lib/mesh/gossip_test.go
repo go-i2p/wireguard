@@ -333,6 +333,73 @@ func TestGossipEngine_HandlePeerList(t *testing.T) {
 	}
 }
 
+func TestGossipEngine_HandlePeerList_DiscoveryCallback(t *testing.T) {
+	// Create peer manager to track known peers
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "my-node",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+
+	ge := NewGossipEngine(GossipEngineConfig{
+		NodeID:      "my-node",
+		NetworkID:   "test-network",
+		PeerManager: pm,
+	})
+
+	// Track discovered peers
+	var discoveredPeers []PeerInfo
+	var mu sync.Mutex
+	ge.SetDiscoveryCallback(func(info PeerInfo) {
+		mu.Lock()
+		discoveredPeers = append(discoveredPeers, info)
+		mu.Unlock()
+	})
+
+	// Send a peer list with unknown peers
+	peerList := &PeerListPayload{
+		NetworkID: "test-network",
+		NodeID:    "other-node",
+		Peers: []PeerInfo{
+			{NodeID: "new-peer-1", I2PDest: "dest1.b32.i2p", TunnelIP: "10.42.1.1"},
+			{NodeID: "new-peer-2", I2PDest: "dest2.b32.i2p", TunnelIP: "10.42.1.2"},
+			{NodeID: "my-node", TunnelIP: "10.42.0.1"}, // Should be skipped (ourselves)
+		},
+	}
+	data, _ := EncodeMessage(MsgPeerList, peerList)
+	msg, _ := DecodeMessage(data)
+
+	err := ge.HandleMessage(msg)
+	if err != nil {
+		t.Errorf("HandleMessage() error = %v", err)
+	}
+
+	// Check that callback was invoked for the two new peers (not ourselves)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(discoveredPeers) != 2 {
+		t.Errorf("Expected 2 discovered peers, got %d", len(discoveredPeers))
+	}
+
+	// Verify the discovered peers
+	foundPeer1 := false
+	foundPeer2 := false
+	for _, p := range discoveredPeers {
+		if p.NodeID == "new-peer-1" {
+			foundPeer1 = true
+		}
+		if p.NodeID == "new-peer-2" {
+			foundPeer2 = true
+		}
+	}
+	if !foundPeer1 || !foundPeer2 {
+		t.Errorf("Expected to find new-peer-1 and new-peer-2, got %+v", discoveredPeers)
+	}
+}
+
 func TestGossipEngine_HandlePeerLeave(t *testing.T) {
 	key, _ := wgtypes.GeneratePrivateKey()
 	ip := AllocateTunnelIP(key.PublicKey())
