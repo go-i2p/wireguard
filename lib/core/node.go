@@ -504,9 +504,9 @@ func (n *Node) initMesh(ctx context.Context) error {
 		BanList:     n.banList,
 	})
 
-	// Wire up peer connection callbacks to register/unregister peers with the sender.
-	// This is essential for gossip messaging - the sender needs to know the I2P
-	// destination for each peer's nodeID before it can send messages to them.
+	// Wire up peer connection callbacks to register/unregister peers with the sender
+	// and to configure the WireGuard device with peer information.
+	// This is essential for both gossip messaging and actual VPN traffic routing.
 	n.peers.SetCallbacks(
 		func(peer *mesh.Peer) {
 			// Peer connected - register with sender so gossip can reach them
@@ -514,11 +514,34 @@ func (n *Node) initMesh(ctx context.Context) error {
 			n.logger.Debug("registered peer with sender",
 				"node_id", peer.NodeID,
 				"i2p_dest", peer.I2PDest[:32]+"...")
+
+			// Configure WireGuard device with the peer's information
+			// This enables actual VPN traffic to flow between peers
+			allowedIP := netip.PrefixFrom(peer.TunnelIP, 32)
+			if err := n.device.AddPeer(peer.WGPublicKey, []netip.Prefix{allowedIP}, peer.I2PDest); err != nil {
+				n.logger.Error("failed to add WireGuard peer",
+					"node_id", peer.NodeID,
+					"error", err)
+			} else {
+				n.logger.Info("added WireGuard peer",
+					"node_id", peer.NodeID,
+					"tunnel_ip", peer.TunnelIP,
+					"wg_pubkey", peer.WGPublicKey.String()[:8]+"...")
+			}
 		},
 		func(peer *mesh.Peer) {
 			// Peer disconnected - unregister from sender
 			n.sender.UnregisterPeer(peer.NodeID)
 			n.logger.Debug("unregistered peer from sender", "node_id", peer.NodeID)
+
+			// Remove peer from WireGuard device
+			if err := n.device.RemovePeer(peer.WGPublicKey); err != nil {
+				n.logger.Error("failed to remove WireGuard peer",
+					"node_id", peer.NodeID,
+					"error", err)
+			} else {
+				n.logger.Debug("removed WireGuard peer", "node_id", peer.NodeID)
+			}
 		},
 	)
 
