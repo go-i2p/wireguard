@@ -76,7 +76,7 @@ func New(cfg Config) (*VPN, error) {
 	cfg.applyDefaults()
 
 	if err := cfg.Validate(); err != nil {
-		log.WithError(err).Error("invalid VPN configuration")
+		log.WithError(err).Debug("VPN configuration validation failed")
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
