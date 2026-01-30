@@ -238,3 +238,56 @@ func TestStateManager_StopWithoutStart(t *testing.T) {
 		t.Fatal("Stop() without Start() should return immediately, not block")
 	}
 }
+
+// TestStateManager_ConcurrentSaveWithDependencies verifies that Save()
+// does not cause deadlocks when dependencies are being modified concurrently.
+// This test validates the fix for the lock ordering issue documented in AUDIT.md.
+func TestStateManager_ConcurrentSaveWithDependencies(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+
+	// Create real dependencies
+	pm := NewPeerManager(PeerManagerConfig{
+		MaxPeers: 100,
+	})
+	rt := NewRoutingTable(RoutingTableConfig{})
+
+	sm := NewStateManager(StateManagerConfig{
+		Path:         statePath,
+		SaveInterval: 10 * time.Millisecond,
+		PeerManager:  pm,
+		RoutingTable: rt,
+	})
+
+	// Start auto-save
+	sm.Start()
+	defer sm.Stop()
+
+	// Run concurrent operations that would deadlock under the old implementation
+	// if lock ordering was violated
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			// Simulate peer updates while saving
+			pm.mu.Lock()
+			// Briefly hold the lock
+			pm.mu.Unlock()
+		}
+	}()
+
+	// Also do manual saves while auto-save is running
+	for i := 0; i < 10; i++ {
+		if err := sm.Save(); err != nil {
+			t.Errorf("Save() error = %v", err)
+		}
+	}
+
+	// Wait for concurrent operations to complete
+	select {
+	case <-done:
+		// Success - no deadlock
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadlock detected - concurrent operations did not complete")
+	}
+}

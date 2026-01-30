@@ -117,18 +117,76 @@ func (sm *StateManager) Load() error {
 }
 
 // Save saves state to disk.
+// This method gathers state from dependencies without holding the StateManager lock,
+// then acquires the lock only for updating internal state and writing to disk.
+// This design prevents potential deadlocks from nested lock acquisition.
 func (sm *StateManager) Save() error {
+	// Gather state from dependencies BEFORE acquiring our lock.
+	// This eliminates nested lock acquisition (holding sm.mu while calling
+	// dependency methods that acquire their own locks), preventing any
+	// potential for deadlock if dependencies ever need to call back to us.
+	peers, routes := sm.gatherState()
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	return sm.saveLocked()
+	return sm.saveLocked(peers, routes)
+}
+
+// gatherState collects state from dependencies without holding sm.mu.
+// This is called before acquiring the StateManager lock to prevent nested
+// lock acquisition patterns that could lead to deadlock.
+// Returns nil slices if no dependencies are configured (preserves existing state).
+func (sm *StateManager) gatherState() ([]PersistedPeer, []PersistedRoute) {
+	var persistedPeers []PersistedPeer
+	var persistedRoutes []PersistedRoute
+
+	// Gather peers - PeerManager.ListPeers() acquires its own RLock
+	if sm.peerManager != nil {
+		peers := sm.peerManager.ListPeers()
+		persistedPeers = make([]PersistedPeer, 0, len(peers))
+		for _, p := range peers {
+			if p.State == PeerStateConnected {
+				persistedPeers = append(persistedPeers, PersistedPeer{
+					NodeID:      p.NodeID,
+					I2PDest:     p.I2PDest,
+					WGPublicKey: p.WGPublicKey.String(),
+					TunnelIP:    p.TunnelIP.String(),
+					LastSeen:    p.LastSeen,
+				})
+			}
+		}
+	}
+
+	// Gather routes - RoutingTable.ListRoutes() acquires its own RLock
+	if sm.routingTable != nil {
+		routes := sm.routingTable.ListRoutes()
+		persistedRoutes = make([]PersistedRoute, 0, len(routes))
+		for _, r := range routes {
+			persistedRoutes = append(persistedRoutes, PersistedRoute{
+				Destination: r.TunnelIP.String(),
+				NextHop:     r.ViaNodeID,
+				Metric:      r.HopCount,
+				LastUpdated: r.LastSeen,
+			})
+		}
+	}
+
+	return persistedPeers, persistedRoutes
 }
 
 // saveLocked saves state to disk. Must be called with lock held.
-func (sm *StateManager) saveLocked() error {
-	// Gather current state from dependencies
-	sm.gatherStateLocked()
-
+// The peers and routes are pre-gathered to avoid nested lock acquisition.
+// If peers or routes are nil, the existing state is preserved (for testing
+// or when dependencies are not configured).
+func (sm *StateManager) saveLocked(peers []PersistedPeer, routes []PersistedRoute) error {
+	// Only update state if dependencies provided data
+	if peers != nil {
+		sm.state.Peers = peers
+	}
+	if routes != nil {
+		sm.state.Routes = routes
+	}
 	sm.state.LastSaved = time.Now()
 	sm.state.Version = StateVersion
 
@@ -156,46 +214,6 @@ func (sm *StateManager) saveLocked() error {
 
 	sm.dirty = false
 	return nil
-}
-
-// gatherStateLocked collects state from dependencies.
-// Note on lock ordering: This method calls PeerManager.ListPeers() and
-// RoutingTable.ListRoutes() while holding sm.mu. Those methods acquire their
-// own RLocks internally. This is safe because:
-// 1. We never hold dependency locks while acquiring sm.mu (no circular wait)
-// 2. Dependencies use RLock (multiple readers allowed)
-// 3. Load() only reads files, never acquires dependency locks
-func (sm *StateManager) gatherStateLocked() {
-	// Gather peers
-	if sm.peerManager != nil {
-		peers := sm.peerManager.ListPeers()
-		sm.state.Peers = make([]PersistedPeer, 0, len(peers))
-		for _, p := range peers {
-			if p.State == PeerStateConnected {
-				sm.state.Peers = append(sm.state.Peers, PersistedPeer{
-					NodeID:      p.NodeID,
-					I2PDest:     p.I2PDest,
-					WGPublicKey: p.WGPublicKey.String(),
-					TunnelIP:    p.TunnelIP.String(),
-					LastSeen:    p.LastSeen,
-				})
-			}
-		}
-	}
-
-	// Gather routes
-	if sm.routingTable != nil {
-		routes := sm.routingTable.ListRoutes()
-		sm.state.Routes = make([]PersistedRoute, 0, len(routes))
-		for _, r := range routes {
-			sm.state.Routes = append(sm.state.Routes, PersistedRoute{
-				Destination: r.TunnelIP.String(),
-				NextHop:     r.ViaNodeID,
-				Metric:      r.HopCount,
-				LastUpdated: r.LastSeen,
-			})
-		}
-	}
 }
 
 // Start begins automatic state saving.
