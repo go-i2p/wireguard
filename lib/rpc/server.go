@@ -328,7 +328,9 @@ func (s *Server) isContextCancelled(ctx context.Context) bool {
 
 // readRequest reads and parses a JSON-RPC request from the connection.
 func (s *Server) readRequest(conn net.Conn, reader *bufio.Reader, remoteAddr string) (*Request, error) {
-	conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+	if err := conn.SetReadDeadline(time.Now().Add(ReadTimeout)); err != nil {
+		s.logger.Warn("failed to set read deadline", "remote", remoteAddr, "error", err)
+	}
 
 	line, err := reader.ReadBytes('\n')
 	if err != nil {
@@ -403,7 +405,9 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 
 // sendResponse sends a response to the client.
 func (s *Server) sendResponse(conn net.Conn, resp *Response) {
-	conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
+	if err := conn.SetWriteDeadline(time.Now().Add(WriteTimeout)); err != nil {
+		s.logger.Warn("failed to set write deadline", "error", err)
+	}
 
 	data, err := json.Marshal(resp)
 	if err != nil {

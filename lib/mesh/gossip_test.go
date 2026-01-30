@@ -527,7 +527,10 @@ func TestGossipEngine_AnnouncePresence(t *testing.T) {
 	}
 
 	// Verify the message content
+	sender.mu.Lock()
 	data := sender.broadcasts[0]
+	sender.mu.Unlock()
+
 	msg, err := DecodeMessage(data)
 	if err != nil {
 		t.Fatalf("DecodeMessage() error = %v", err)

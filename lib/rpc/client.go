@@ -180,7 +180,9 @@ func (c *Client) sendRequest(req *Request) error {
 	}
 	reqData = append(reqData, '\n')
 
-	c.conn.SetWriteDeadline(time.Now().Add(c.timeout))
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.timeout)); err != nil {
+		return fmt.Errorf("set write deadline: %w", err)
+	}
 	if _, err := c.conn.Write(reqData); err != nil {
 		return fmt.Errorf("write request: %w", err)
 	}
@@ -190,7 +192,9 @@ func (c *Client) sendRequest(req *Request) error {
 
 // readResponse reads and parses a JSON-RPC response from the server.
 func (c *Client) readResponse() (*Response, error) {
-	c.conn.SetReadDeadline(time.Now().Add(c.timeout))
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.timeout)); err != nil {
+		return nil, fmt.Errorf("set read deadline: %w", err)
+	}
 	respData, err := c.reader.ReadBytes('\n')
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)

@@ -1031,11 +1031,14 @@ func (n *Node) cleanupDevice() {
 		return
 	}
 
+	// Capture device reference before starting goroutine to avoid race condition.
+	// The goroutine may still be running when we set n.device = nil below.
+	dev := n.device
 	shutdownTimeout := n.getShutdownTimeout()
 
 	done := make(chan struct{})
 	go func() {
-		n.device.Close()
+		dev.Close()
 		close(done)
 	}()
 

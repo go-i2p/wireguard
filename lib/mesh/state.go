@@ -217,11 +217,12 @@ func (sm *StateManager) Start() {
 		for {
 			select {
 			case <-sm.stopCh:
-				// Final save before exit
-				sm.Save()
+				// Final save before exit - error is logged at caller level
+				_ = sm.Save()
 				return
 			case <-ticker.C:
-				sm.Save()
+				// Periodic save - errors are transient, will retry next interval
+				_ = sm.Save()
 			}
 		}
 	}()
