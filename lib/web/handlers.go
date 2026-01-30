@@ -106,6 +106,24 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 // API Handlers
 
+// handleAPICSRFToken generates and returns a new CSRF token.
+// This token should be included in the X-CSRF-Token header for POST/PUT/DELETE requests.
+func (s *Server) handleAPICSRFToken(w http.ResponseWriter, r *http.Request) {
+	token, err := s.csrfManager.GenerateToken()
+	if err != nil {
+		log.Error("failed to generate CSRF token", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	// Set the cookie for the token
+	SetCSRFCookie(w, token)
+
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"token": token,
+	})
+}
+
 // handleAPIStatus returns node status as JSON.
 func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

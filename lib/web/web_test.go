@@ -195,3 +195,47 @@ func TestLivenessHandler(t *testing.T) {
 		t.Errorf("status = %q, want %q", result["status"], "alive")
 	}
 }
+
+func TestHandleAPICSRFToken(t *testing.T) {
+	s := &Server{
+		csrfManager: NewCSRFManager(),
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/csrf-token", nil)
+
+	s.handleAPICSRFToken(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if result["token"] == "" {
+		t.Error("expected non-empty token")
+	}
+
+	// Verify cookie is set
+	cookies := w.Result().Cookies()
+	found := false
+	for _, c := range cookies {
+		if c.Name == CSRFCookieName {
+			found = true
+			if c.Value != result["token"] {
+				t.Errorf("cookie value = %q, response token = %q", c.Value, result["token"])
+			}
+		}
+	}
+	if !found {
+		t.Error("expected CSRF cookie to be set")
+	}
+
+	// Verify the token is valid
+	if err := s.csrfManager.ValidateToken(result["token"]); err != nil {
+		t.Errorf("generated token should be valid: %v", err)
+	}
+}

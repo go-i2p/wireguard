@@ -24,11 +24,13 @@ var content embed.FS
 
 // Server is the web UI HTTP server.
 type Server struct {
-	httpServer *http.Server
-	rpcClient  *rpc.Client
-	templates  *template.Template
-	mu         sync.RWMutex
-	running    bool
+	httpServer  *http.Server
+	rpcClient   *rpc.Client
+	templates   *template.Template
+	csrfManager *CSRFManager
+	csrfStop    chan struct{}
+	mu          sync.RWMutex
+	running     bool
 }
 
 // Config holds web server configuration.
@@ -62,9 +64,13 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("parsing templates: %w", err)
 	}
 
+	// Create CSRF manager
+	csrfManager := NewCSRFManager()
+
 	s := &Server{
-		rpcClient: client,
-		templates: tmpl,
+		rpcClient:   client,
+		templates:   tmpl,
+		csrfManager: csrfManager,
 	}
 
 	// Create HTTP mux
@@ -89,6 +95,7 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/status", s.handleAPIStatus)
 	mux.HandleFunc("GET /api/peers", s.handleAPIPeers)
 	mux.HandleFunc("GET /api/routes", s.handleAPIRoutes)
+	mux.HandleFunc("GET /api/csrf-token", s.handleAPICSRFToken)
 	mux.HandleFunc("POST /api/invite/create", s.handleAPIInviteCreate)
 	mux.HandleFunc("POST /api/invite/accept", s.handleAPIInviteAccept)
 
@@ -135,6 +142,9 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
+	// Start CSRF token cleanup (every hour)
+	s.csrfStop = s.csrfManager.StartCleanup(time.Hour)
+
 	log.Info("web server started", "addr", s.httpServer.Addr)
 
 	go func() {
@@ -156,6 +166,11 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.running = false
 	s.mu.Unlock()
 
+	// Stop CSRF cleanup goroutine
+	if s.csrfStop != nil {
+		close(s.csrfStop)
+	}
+
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
@@ -170,6 +185,9 @@ func (s *Server) Stop(ctx context.Context) error {
 
 // withMiddleware wraps the handler with common middleware.
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
+	// Apply CSRF protection for state-changing methods
+	csrfProtected := s.csrfManager.CSRFMiddleware(next)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -180,11 +198,12 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 			"remote", r.RemoteAddr,
 		)
 
-		// Set common headers
+		// Set common security headers
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
 
-		next.ServeHTTP(w, r)
+		csrfProtected.ServeHTTP(w, r)
 
 		log.Debug("response",
 			"method", r.Method,
