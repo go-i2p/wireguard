@@ -230,6 +230,16 @@ var (
 	GossipRoundsTotal = NewCounter("i2plan_gossip_rounds_total", "Total gossip rounds completed")
 	AntiEntropyRounds = NewCounter("i2plan_antientropy_rounds_total", "Total anti-entropy rounds")
 
+	// Gossip operation metrics (enhanced)
+	GossipHeartbeatsSent   = NewCounter("i2plan_gossip_heartbeats_sent_total", "Total heartbeat announcements sent")
+	GossipPeerListsSent    = NewCounter("i2plan_gossip_peer_lists_sent_total", "Total peer lists gossiped")
+	GossipRouteUpdatesSent = NewCounter("i2plan_gossip_route_updates_sent_total", "Total route updates sent")
+	GossipMessagesReceived = NewCounter("i2plan_gossip_messages_received_total", "Total gossip messages received")
+	GossipPeersPruned      = NewCounter("i2plan_gossip_peers_pruned_total", "Total stale peers pruned")
+	GossipLeavesSent       = NewCounter("i2plan_gossip_leaves_sent_total", "Total leave announcements sent")
+	GossipLeavesReceived   = NewCounter("i2plan_gossip_leaves_received_total", "Total leave announcements received")
+	GossipPeersDiscovered  = NewCounter("i2plan_gossip_peers_discovered_total", "Total new peers discovered via gossip")
+
 	// Handshake metrics
 	HandshakesInitiated = NewCounter("i2plan_handshakes_initiated_total", "Total handshakes initiated")
 	HandshakesReceived  = NewCounter("i2plan_handshakes_received_total", "Total handshakes received")
@@ -256,7 +266,100 @@ var (
 	ReconnectionSuccesses = NewCounter("i2plan_reconnection_successes_total", "Total successful reconnections")
 )
 
+// Latency histogram buckets (in seconds) - Prometheus convention
+var (
+	// DefaultLatencyBuckets are suitable for most operation latencies.
+	// Values: 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
+	DefaultLatencyBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+
+	// I2PLatencyBuckets are tuned for I2P operations which are slower.
+	// Values: 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 60s, 120s
+	I2PLatencyBuckets = []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120}
+)
+
+// Latency histograms for operation timing
+var (
+	// RPC operation latencies
+	RPCRequestLatency = NewHistogram(
+		"i2plan_rpc_request_duration_seconds",
+		"RPC request latency in seconds",
+		DefaultLatencyBuckets,
+	)
+
+	// Handshake latencies (slower due to I2P)
+	HandshakeLatency = NewHistogram(
+		"i2plan_handshake_duration_seconds",
+		"Handshake operation latency in seconds",
+		I2PLatencyBuckets,
+	)
+
+	// Message send latencies
+	MessageSendLatency = NewHistogram(
+		"i2plan_message_send_duration_seconds",
+		"Message send latency in seconds",
+		I2PLatencyBuckets,
+	)
+
+	// Gossip round latencies
+	GossipRoundLatency = NewHistogram(
+		"i2plan_gossip_round_duration_seconds",
+		"Gossip round latency in seconds",
+		DefaultLatencyBuckets,
+	)
+
+	// Anti-entropy sync latencies
+	AntiEntropyLatency = NewHistogram(
+		"i2plan_antientropy_duration_seconds",
+		"Anti-entropy sync latency in seconds",
+		I2PLatencyBuckets,
+	)
+)
+
 // RecordStartTime records the current time as the start time.
 func RecordStartTime() {
 	StartTime.Set(time.Now().Unix())
+}
+
+// Timer provides a convenient way to measure operation latency.
+// Usage:
+//
+//	timer := metrics.NewTimer(metrics.RPCRequestLatency)
+//	defer timer.ObserveDuration()
+//	// ... operation ...
+type Timer struct {
+	histogram *Histogram
+	start     time.Time
+}
+
+// NewTimer creates a new timer that will record to the given histogram.
+func NewTimer(h *Histogram) *Timer {
+	return &Timer{
+		histogram: h,
+		start:     time.Now(),
+	}
+}
+
+// ObserveDuration records the elapsed time since the timer was created.
+// Returns the duration for convenience.
+func (t *Timer) ObserveDuration() time.Duration {
+	d := time.Since(t.start)
+	t.histogram.Observe(d.Seconds())
+	return d
+}
+
+// TimeOperation is a helper that times the execution of a function
+// and records the duration to the provided histogram.
+func TimeOperation(h *Histogram, fn func()) {
+	start := time.Now()
+	fn()
+	h.Observe(time.Since(start).Seconds())
+}
+
+// TimeOperationWithError is like TimeOperation but for functions that return an error.
+// The duration is recorded regardless of whether an error occurred.
+func TimeOperationWithError(h *Histogram, fn func() error) error {
+	start := time.Now()
+	err := fn()
+	h.Observe(time.Since(start).Seconds())
+	return err
 }

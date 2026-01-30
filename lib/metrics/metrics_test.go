@@ -1,10 +1,12 @@
 package metrics
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCounter(t *testing.T) {
@@ -198,5 +200,160 @@ func TestRecordStartTime(t *testing.T) {
 
 	if StartTime.Value() == 0 {
 		t.Error("StartTime should be non-zero after RecordStartTime()")
+	}
+}
+
+func TestTimer(t *testing.T) {
+	// Create a histogram outside the registry for testing
+	h := &Histogram{
+		name:    "test_timer_histogram",
+		help:    "Test histogram for timer",
+		buckets: DefaultLatencyBuckets,
+		counts:  make([]uint64, len(DefaultLatencyBuckets)),
+	}
+
+	timer := NewTimer(h)
+	// Sleep a tiny bit to ensure measurable duration
+	time.Sleep(1 * time.Millisecond)
+	duration := timer.ObserveDuration()
+
+	if duration < 1*time.Millisecond {
+		t.Errorf("duration = %v, want >= 1ms", duration)
+	}
+
+	h.mu.Lock()
+	if h.count != 1 {
+		t.Errorf("histogram count = %d, want 1", h.count)
+	}
+	if h.sum <= 0 {
+		t.Errorf("histogram sum = %f, want > 0", h.sum)
+	}
+	h.mu.Unlock()
+}
+
+func TestTimeOperation(t *testing.T) {
+	h := &Histogram{
+		name:    "test_time_operation",
+		help:    "Test histogram",
+		buckets: DefaultLatencyBuckets,
+		counts:  make([]uint64, len(DefaultLatencyBuckets)),
+	}
+
+	executed := false
+	TimeOperation(h, func() {
+		executed = true
+		time.Sleep(1 * time.Millisecond)
+	})
+
+	if !executed {
+		t.Error("function was not executed")
+	}
+
+	h.mu.Lock()
+	if h.count != 1 {
+		t.Errorf("histogram count = %d, want 1", h.count)
+	}
+	h.mu.Unlock()
+}
+
+func TestTimeOperationWithError(t *testing.T) {
+	h := &Histogram{
+		name:    "test_time_operation_error",
+		help:    "Test histogram",
+		buckets: DefaultLatencyBuckets,
+		counts:  make([]uint64, len(DefaultLatencyBuckets)),
+	}
+
+	// Test with no error
+	err := TimeOperationWithError(h, func() error {
+		time.Sleep(1 * time.Millisecond)
+		return nil
+	})
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	// Test with error
+	testErr := errors.New("test error")
+	err = TimeOperationWithError(h, func() error {
+		return testErr
+	})
+
+	if !errors.Is(err, testErr) {
+		t.Errorf("expected test error, got %v", err)
+	}
+
+	h.mu.Lock()
+	if h.count != 2 {
+		t.Errorf("histogram count = %d, want 2", h.count)
+	}
+	h.mu.Unlock()
+}
+
+func TestGossipMetricsExist(t *testing.T) {
+	// Verify that all new gossip metrics are properly initialized
+	GossipHeartbeatsSent.Inc()
+	GossipPeerListsSent.Inc()
+	GossipRouteUpdatesSent.Inc()
+	GossipMessagesReceived.Inc()
+	GossipPeersPruned.Inc()
+	GossipLeavesSent.Inc()
+	GossipLeavesReceived.Inc()
+	GossipPeersDiscovered.Inc()
+
+	if GossipHeartbeatsSent.Value() != 1 {
+		t.Error("GossipHeartbeatsSent not working")
+	}
+	if GossipPeersDiscovered.Value() != 1 {
+		t.Error("GossipPeersDiscovered not working")
+	}
+}
+
+func TestLatencyHistogramsExist(t *testing.T) {
+	// Verify histogram metrics are properly initialized
+	RPCRequestLatency.Observe(0.001)
+	HandshakeLatency.Observe(1.0)
+	MessageSendLatency.Observe(0.5)
+	GossipRoundLatency.Observe(0.01)
+	AntiEntropyLatency.Observe(5.0)
+
+	// Check they're exposed in prometheus format
+	output := defaultRegistry.Expose()
+
+	expectedMetrics := []string{
+		"i2plan_rpc_request_duration_seconds",
+		"i2plan_handshake_duration_seconds",
+		"i2plan_message_send_duration_seconds",
+		"i2plan_gossip_round_duration_seconds",
+		"i2plan_antientropy_duration_seconds",
+	}
+
+	for _, metric := range expectedMetrics {
+		if !strings.Contains(output, metric) {
+			t.Errorf("expected metric %s not found in output", metric)
+		}
+	}
+}
+
+func TestLatencyBuckets(t *testing.T) {
+	// Verify default buckets are reasonable
+	if len(DefaultLatencyBuckets) == 0 {
+		t.Error("DefaultLatencyBuckets is empty")
+	}
+	if len(I2PLatencyBuckets) == 0 {
+		t.Error("I2PLatencyBuckets is empty")
+	}
+
+	// Verify buckets are in ascending order
+	for i := 1; i < len(DefaultLatencyBuckets); i++ {
+		if DefaultLatencyBuckets[i] <= DefaultLatencyBuckets[i-1] {
+			t.Error("DefaultLatencyBuckets not in ascending order")
+		}
+	}
+	for i := 1; i < len(I2PLatencyBuckets); i++ {
+		if I2PLatencyBuckets[i] <= I2PLatencyBuckets[i-1] {
+			t.Error("I2PLatencyBuckets not in ascending order")
+		}
 	}
 }
