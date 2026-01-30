@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-i2p/wireguard/lib/metrics"
 	"github.com/go-i2p/wireguard/lib/ratelimit"
+	"github.com/go-i2p/wireguard/lib/validation"
 )
 
 // NodeProvider provides access to node state for RPC handlers.
@@ -191,9 +192,11 @@ func (h *Handlers) PeersConnect(ctx context.Context, params json.RawMessage) (an
 		log.WithError(err).Debug("peers.connect request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
-	if p.InviteCode == "" {
-		log.Debug("peers.connect request failed: invite_code is required")
-		return nil, ErrInvalidParams("invite_code is required")
+
+	// Validate invite code format
+	if err := validation.ValidatePeersConnectParams(p.InviteCode); err != nil {
+		log.WithError(err).Debug("peers.connect request failed: validation error")
+		return nil, ErrInvalidParams(err.Error())
 	}
 
 	log.Debug("connecting to peer via invite code")
@@ -241,18 +244,20 @@ func (h *Handlers) parseInviteCreateParams(params json.RawMessage) (time.Duratio
 		}
 	}
 
-	expiry := 24 * time.Hour
-	if p.Expiry != "" {
-		d, err := time.ParseDuration(p.Expiry)
-		if err != nil {
-			return 0, 0, ErrInvalidParams("invalid expiry duration: " + err.Error())
-		}
-		expiry = d
+	// Validate using the validation package
+	expiry, err := validation.ValidateInviteCreateParams(p.Expiry, p.MaxUses)
+	if err != nil {
+		return 0, 0, ErrInvalidParams(err.Error())
 	}
 
-	maxUses := 1
-	if p.MaxUses > 0 {
-		maxUses = p.MaxUses
+	// Apply defaults if not specified
+	if expiry == 0 {
+		expiry = 24 * time.Hour
+	}
+
+	maxUses := p.MaxUses
+	if maxUses == 0 {
+		maxUses = 1
 	}
 
 	return expiry, maxUses, nil
@@ -278,9 +283,11 @@ func (h *Handlers) InviteAccept(ctx context.Context, params json.RawMessage) (an
 		log.WithError(err).Debug("invite.accept request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
-	if p.InviteCode == "" {
-		log.Debug("invite.accept request failed: invite_code is required")
-		return nil, ErrInvalidParams("invite_code is required")
+
+	// Validate invite code format
+	if err := validation.ValidateInviteAcceptParams(p.InviteCode); err != nil {
+		log.WithError(err).Debug("invite.accept request failed: validation error")
+		return nil, ErrInvalidParams(err.Error())
 	}
 
 	log.Debug("accepting invite code")
@@ -326,6 +333,12 @@ func (h *Handlers) ConfigGet(ctx context.Context, params json.RawMessage) (any, 
 		}
 	}
 
+	// Validate config key format
+	if err := validation.ValidateConfigGetParams(p.Key); err != nil {
+		log.WithError(err).Debug("config.get request failed: validation error")
+		return nil, ErrInvalidParams(err.Error())
+	}
+
 	log.WithField("key", p.Key).Debug("getting config value")
 	value, err := h.config.GetConfig(p.Key)
 	if err != nil {
@@ -353,9 +366,11 @@ func (h *Handlers) ConfigSet(ctx context.Context, params json.RawMessage) (any, 
 		log.WithError(err).Debug("config.set request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
-	if p.Key == "" {
-		log.Debug("config.set request failed: key is required")
-		return nil, ErrInvalidParams("key is required")
+
+	// Validate config key
+	if err := validation.ValidateConfigSetParams(p.Key, p.Value); err != nil {
+		log.WithError(err).Debug("config.set request failed: validation error")
+		return nil, ErrInvalidParams(err.Error())
 	}
 
 	log.WithField("key", p.Key).Debug("setting config value")
@@ -489,20 +504,17 @@ func (h *Handlers) BansAdd(ctx context.Context, params json.RawMessage) (any, *E
 		log.WithError(err).Debug("bans.add request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
-	if p.NodeID == "" {
-		log.Debug("bans.add request failed: node_id is required")
-		return nil, ErrInvalidParams("node_id is required")
+
+	// Validate all parameters
+	duration, err := validation.ValidateBanAddParams(p.NodeID, p.Reason, p.Description, p.Duration)
+	if err != nil {
+		log.WithError(err).Debug("bans.add request failed: validation error")
+		return nil, ErrInvalidParams(err.Error())
 	}
 
 	reason := p.Reason
 	if reason == "" {
 		reason = "manual"
-	}
-
-	duration, err := parseBanDuration(p.Duration)
-	if err != nil {
-		log.WithError(err).Debug("bans.add request failed: invalid duration")
-		return nil, ErrInvalidParams("invalid duration: " + err.Error())
 	}
 
 	log.WithField("nodeID", p.NodeID).WithField("reason", reason).WithField("duration", duration).Debug("adding ban")
@@ -531,9 +543,11 @@ func (h *Handlers) BansRemove(ctx context.Context, params json.RawMessage) (any,
 		log.WithError(err).Debug("bans.remove request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
-	if p.NodeID == "" {
-		log.Debug("bans.remove request failed: node_id is required")
-		return nil, ErrInvalidParams("node_id is required")
+
+	// Validate node_id
+	if err := validation.ValidateBanRemoveParams(p.NodeID); err != nil {
+		log.WithError(err).Debug("bans.remove request failed: validation error")
+		return nil, ErrInvalidParams(err.Error())
 	}
 
 	log.WithField("nodeID", p.NodeID).Debug("removing ban")
