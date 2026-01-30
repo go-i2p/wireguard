@@ -711,8 +711,16 @@ func (n *Node) cleanup() {
 		// Note: banList is not set to nil as it may still be queried
 	}
 
-	// Close device (may block, use timeout)
+	// Close device (may block, use configurable timeout)
 	if n.device != nil {
+		shutdownTimeout := n.config.Mesh.ShutdownTimeout
+		if shutdownTimeout < time.Second {
+			shutdownTimeout = DefaultShutdownTimeout
+		}
+		// First phase timeout is 40% of total, second phase is 60%
+		warnTimeout := shutdownTimeout * 2 / 5
+		remainingTimeout := shutdownTimeout - warnTimeout
+
 		done := make(chan struct{})
 		go func() {
 			n.device.Close()
@@ -722,13 +730,14 @@ func (n *Node) cleanup() {
 		select {
 		case <-done:
 			n.logger.Debug("device closed successfully")
-		case <-time.After(2 * time.Second):
+		case <-time.After(warnTimeout):
 			n.logger.Warn("device close taking longer than expected, continuing wait")
 			select {
 			case <-done:
 				n.logger.Debug("device closed after extended wait")
-			case <-time.After(3 * time.Second):
-				n.logger.Error("device close timed out after 5s, continuing cleanup (resources may leak)")
+			case <-time.After(remainingTimeout):
+				n.logger.Error("device close timed out after configured timeout, continuing cleanup (resources may leak)",
+					"timeout", shutdownTimeout.String())
 			}
 		}
 		n.device = nil

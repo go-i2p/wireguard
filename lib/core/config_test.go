@@ -22,6 +22,10 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Mesh.TunnelSubnet == "" {
 		t.Error("default config should have a tunnel subnet")
 	}
+	if cfg.Mesh.ShutdownTimeout != DefaultShutdownTimeout {
+		t.Errorf("default config should have ShutdownTimeout=%v, got %v",
+			DefaultShutdownTimeout, cfg.Mesh.ShutdownTimeout)
+	}
 }
 
 func TestConfig_Validate(t *testing.T) {
@@ -70,6 +74,26 @@ func TestConfig_Validate(t *testing.T) {
 			modify:  func(c *Config) { c.Mesh.MaxPeers = 0 },
 			wantErr: true,
 		},
+		{
+			name:    "shutdown timeout too short",
+			modify:  func(c *Config) { c.Mesh.ShutdownTimeout = 500 * time.Millisecond },
+			wantErr: true,
+		},
+		{
+			name:    "shutdown timeout zero",
+			modify:  func(c *Config) { c.Mesh.ShutdownTimeout = 0 },
+			wantErr: true,
+		},
+		{
+			name:    "shutdown timeout exactly 1 second",
+			modify:  func(c *Config) { c.Mesh.ShutdownTimeout = time.Second },
+			wantErr: false,
+		},
+		{
+			name:    "shutdown timeout extended for slow I2P",
+			modify:  func(c *Config) { c.Mesh.ShutdownTimeout = 30 * time.Second },
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -109,6 +133,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	original.Node.Name = "test-node"
 	original.I2P.TunnelLength = 3
 	original.Mesh.HeartbeatInterval = 60 * time.Second
+	original.Mesh.ShutdownTimeout = 15 * time.Second // Custom timeout for slow I2P
 
 	// Save it
 	if err := SaveConfig(original, configPath); err != nil {
@@ -130,6 +155,9 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	}
 	if loaded.Mesh.HeartbeatInterval != original.Mesh.HeartbeatInterval {
 		t.Errorf("heartbeat interval mismatch: got %v, want %v", loaded.Mesh.HeartbeatInterval, original.Mesh.HeartbeatInterval)
+	}
+	if loaded.Mesh.ShutdownTimeout != original.Mesh.ShutdownTimeout {
+		t.Errorf("shutdown timeout mismatch: got %v, want %v", loaded.Mesh.ShutdownTimeout, original.Mesh.ShutdownTimeout)
 	}
 }
 

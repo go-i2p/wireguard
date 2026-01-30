@@ -21,6 +21,7 @@ const (
 	DefaultHeartbeatInterval = 30 * time.Second
 	DefaultPeerTimeout       = 5 * time.Minute
 	DefaultMaxPeers          = 50
+	DefaultShutdownTimeout   = 5 * time.Second
 	DefaultRPCSocket         = "rpc.sock"
 	DefaultWebListen         = "127.0.0.1:8080"
 )
@@ -60,6 +61,9 @@ type MeshConfig struct {
 	PeerTimeout time.Duration `toml:"peer_timeout"`
 	// MaxPeers is the maximum number of peers to maintain connections with
 	MaxPeers int `toml:"max_peers"`
+	// ShutdownTimeout is the maximum time to wait for graceful device shutdown.
+	// In production environments with slow I2P sessions, you may need to increase this.
+	ShutdownTimeout time.Duration `toml:"shutdown_timeout"`
 }
 
 // RPCConfig contains RPC server settings.
@@ -102,6 +106,7 @@ func DefaultConfig() *Config {
 			HeartbeatInterval: DefaultHeartbeatInterval,
 			PeerTimeout:       DefaultPeerTimeout,
 			MaxPeers:          DefaultMaxPeers,
+			ShutdownTimeout:   DefaultShutdownTimeout,
 		},
 		RPC: RPCConfig{
 			Enabled: true,
@@ -177,6 +182,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Mesh.MaxPeers < 1 {
 		return errors.New("mesh.max_peers must be at least 1")
+	}
+	if c.Mesh.ShutdownTimeout < time.Second {
+		return errors.New("mesh.shutdown_timeout must be at least 1 second")
 	}
 	return nil
 }

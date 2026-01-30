@@ -244,6 +244,7 @@ func (c *Config) toCoreConfig() *core.Config {
 			HeartbeatInterval: core.DefaultHeartbeatInterval,
 			PeerTimeout:       core.DefaultPeerTimeout,
 			MaxPeers:          c.MaxPeers,
+			ShutdownTimeout:   core.DefaultShutdownTimeout,
 		},
 		RPC: core.RPCConfig{
 			Enabled: c.EnableRPC,
