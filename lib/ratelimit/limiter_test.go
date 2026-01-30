@@ -110,3 +110,38 @@ func TestLimiterConcurrent(t *testing.T) {
 		t.Errorf("expected ~100 allowed, got %d", count)
 	}
 }
+
+func TestKeyedLimiterCleanupDepletedLimiter(t *testing.T) {
+	// Create a keyed limiter with very short cleanup interval
+	kl := NewKeyed(10, 5, 50*time.Millisecond)
+
+	// Deplete tokens for a key
+	for i := 0; i < 10; i++ {
+		kl.Allow("attacker")
+	}
+
+	// Verify key exists
+	kl.mu.Lock()
+	if _, exists := kl.limiters["attacker"]; !exists {
+		t.Fatal("key should exist after usage")
+	}
+	kl.mu.Unlock()
+
+	// Wait for cleanup (should clean even depleted limiters)
+	time.Sleep(100 * time.Millisecond)
+
+	// Trigger another Allow to give cleanup a chance to run
+	kl.Allow("other")
+	time.Sleep(60 * time.Millisecond)
+
+	// Key should be cleaned up despite being depleted
+	kl.mu.Lock()
+	_, exists := kl.limiters["attacker"]
+	kl.mu.Unlock()
+
+	if exists {
+		t.Error("depleted limiter should be cleaned up after idle timeout")
+	}
+
+	kl.Close()
+}

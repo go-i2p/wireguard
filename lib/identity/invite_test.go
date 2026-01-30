@@ -351,7 +351,7 @@ func TestNewInvite_UnlimitedUses(t *testing.T) {
 	}
 }
 
-func TestNewInvite_NegativeMaxUsesDefaultsToOne(t *testing.T) {
+func TestNewInvite_NegativeMaxUsesMeansUnlimited(t *testing.T) {
 	id, err := NewIdentity()
 	if err != nil {
 		t.Fatalf("NewIdentity failed: %v", err)
@@ -360,7 +360,7 @@ func TestNewInvite_NegativeMaxUsesDefaultsToOne(t *testing.T) {
 	id.SetI2PDest("test.b32.i2p")
 	id.SetNetworkID("test-network")
 
-	// Negative MaxUses should default to 1
+	// Any negative MaxUses means unlimited (same as UnlimitedUses = -1)
 	opts := InviteOptions{
 		Expiry:  24 * time.Hour,
 		MaxUses: -5,
@@ -371,8 +371,13 @@ func TestNewInvite_NegativeMaxUsesDefaultsToOne(t *testing.T) {
 		t.Fatalf("NewInvite failed: %v", err)
 	}
 
-	// Should default to 1, not stay negative
-	if inv.MaxUses != DefaultMaxUses {
-		t.Errorf("MaxUses should default to %d for negative input, got %d", DefaultMaxUses, inv.MaxUses)
+	// Negative values are kept as-is (treated as unlimited)
+	if inv.MaxUses != -5 {
+		t.Errorf("MaxUses should be -5 (unlimited), got %d", inv.MaxUses)
+	}
+
+	// Should be treated as unlimited
+	if inv.RemainingUses() != -1 {
+		t.Errorf("RemainingUses should be -1 (unlimited), got %d", inv.RemainingUses())
 	}
 }

@@ -433,6 +433,83 @@ func TestPeerManager_AddValidToken_RejectsEmpty(t *testing.T) {
 	}
 }
 
+func TestPeerManager_RemoveToken(t *testing.T) {
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "test-node",
+		I2PDest:     "test.b32.i2p",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+
+	// Add tokens
+	token1 := []byte("token-1")
+	token2 := []byte("token-2")
+	pm.AddValidToken(token1)
+	pm.AddValidToken(token2)
+
+	// Verify token1 works
+	peerKey, _ := wgtypes.GeneratePrivateKey()
+	peerIP := AllocateTunnelIP(peerKey.PublicKey())
+	init := &HandshakeInit{
+		I2PDest:     "peer.b32.i2p",
+		WGPublicKey: peerKey.PublicKey().String(),
+		TunnelIP:    peerIP.String(),
+		NetworkID:   "test-network",
+		AuthToken:   token1,
+		NodeID:      "peer-1",
+	}
+	resp, _ := pm.HandleHandshakeInit(init)
+	if !resp.Accepted {
+		t.Fatal("token1 should be accepted initially")
+	}
+
+	// Remove token1
+	pm.RemoveToken(token1)
+
+	// Try to use token1 again with a new peer
+	peerKey2, _ := wgtypes.GeneratePrivateKey()
+	peerIP2 := AllocateTunnelIP(peerKey2.PublicKey())
+	init2 := &HandshakeInit{
+		I2PDest:     "peer2.b32.i2p",
+		WGPublicKey: peerKey2.PublicKey().String(),
+		TunnelIP:    peerIP2.String(),
+		NetworkID:   "test-network",
+		AuthToken:   token1, // Removed token
+		NodeID:      "peer-2",
+	}
+	resp2, _ := pm.HandleHandshakeInit(init2)
+	if resp2.Accepted {
+		t.Error("token1 should be rejected after removal")
+	}
+
+	// token2 should still work
+	peerKey3, _ := wgtypes.GeneratePrivateKey()
+	peerIP3 := AllocateTunnelIP(peerKey3.PublicKey())
+	init3 := &HandshakeInit{
+		I2PDest:     "peer3.b32.i2p",
+		WGPublicKey: peerKey3.PublicKey().String(),
+		TunnelIP:    peerIP3.String(),
+		NetworkID:   "test-network",
+		AuthToken:   token2,
+		NodeID:      "peer-3",
+	}
+	resp3, _ := pm.HandleHandshakeInit(init3)
+	if !resp3.Accepted {
+		t.Error("token2 should still be accepted")
+	}
+
+	// Removing empty/nil token should be no-op
+	pm.RemoveToken(nil)
+	pm.RemoveToken([]byte{})
+
+	// Removing non-existent token should be no-op
+	pm.RemoveToken([]byte("nonexistent"))
+}
+
 func TestPeerManager_TokenUsedCallback(t *testing.T) {
 	// Test that the token used callback is fired when a peer connects using a token
 	key1, _ := wgtypes.GeneratePrivateKey()
