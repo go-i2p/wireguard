@@ -26,6 +26,10 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("default config should have ShutdownTimeout=%v, got %v",
 			DefaultShutdownTimeout, cfg.Mesh.ShutdownTimeout)
 	}
+	if cfg.Mesh.DrainTimeout != DefaultDrainTimeout {
+		t.Errorf("default config should have DrainTimeout=%v, got %v",
+			DefaultDrainTimeout, cfg.Mesh.DrainTimeout)
+	}
 }
 
 func TestConfig_Validate(t *testing.T) {

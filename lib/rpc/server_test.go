@@ -190,6 +190,47 @@ func TestServerStartTCP(t *testing.T) {
 	}
 }
 
+func TestServerStopWithContext(t *testing.T) {
+	t.Run("graceful shutdown", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		socketPath := filepath.Join(tmpDir, "test.sock")
+
+		s, err := NewServer(ServerConfig{})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+
+		ctx := context.Background()
+		if err := s.Start(ctx, ServerConfig{UnixSocketPath: socketPath}); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+
+		// Stop with generous timeout
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := s.StopWithContext(stopCtx); err != nil {
+			t.Errorf("StopWithContext: %v", err)
+		}
+
+		if s.IsRunning() {
+			t.Error("server should not be running after StopWithContext")
+		}
+	})
+
+	t.Run("stop already stopped", func(t *testing.T) {
+		s, err := NewServer(ServerConfig{})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+
+		// Stopping a server that was never started should be a no-op
+		if err := s.StopWithContext(context.Background()); err != nil {
+			t.Errorf("StopWithContext on stopped server: %v", err)
+		}
+	})
+}
+
 func TestServerStartNoListeners(t *testing.T) {
 	s, err := NewServer(ServerConfig{})
 	if err != nil {
