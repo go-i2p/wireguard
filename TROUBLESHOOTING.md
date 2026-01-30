@@ -247,7 +247,7 @@ netstat -an | findstr 7656
 **Diagnosis:**
 Check I2P router console → Tunnels:
 - Need at least 1-2 participating tunnels
-- Tunnel build success rate should be >70%
+- Tunnel build success rate should be >40%
 
 **Solutions:**
 
