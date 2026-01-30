@@ -26,11 +26,18 @@ func NewPeersModel() PeersModel {
 
 // SetData updates the peers data.
 func (m *PeersModel) SetData(peers *rpc.PeersListResult) {
+	oldPeers := m.peers
 	m.peers = peers
-	// Reset cursor if out of bounds
-	if m.peers != nil && m.cursor >= len(m.peers.Peers) {
-		m.cursor = max(0, len(m.peers.Peers)-1)
+
+	// Smart cursor management (Issue #9)
+	if m.peers == nil || len(m.peers.Peers) == 0 {
+		m.cursor = 0
+	} else if m.cursor >= len(m.peers.Peers) {
+		// Only reset if out of bounds, preserve position otherwise
+		m.cursor = len(m.peers.Peers) - 1
 	}
+	// If list size is same or similar, preserve cursor position
+	_ = oldPeers // Avoid unused variable warning
 }
 
 // SetDimensions sets the view dimensions.

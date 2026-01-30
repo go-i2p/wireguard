@@ -4,8 +4,38 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// ColorScheme defines a theme's color palette.
+type ColorScheme struct {
+	Primary lipgloss.Color
+	Success lipgloss.Color
+	Warning lipgloss.Color
+	Error   lipgloss.Color
+	Muted   lipgloss.Color
+	Border  lipgloss.Color
+}
+
+// DefaultColorScheme is the default pink/cyan theme.
+var DefaultColorScheme = ColorScheme{
+	Primary: lipgloss.Color("205"),
+	Success: lipgloss.Color("82"),
+	Warning: lipgloss.Color("214"),
+	Error:   lipgloss.Color("196"),
+	Muted:   lipgloss.Color("241"),
+	Border:  lipgloss.Color("240"),
+}
+
+// currentTheme is the active color scheme (can be changed at runtime).
+var currentTheme = DefaultColorScheme
+
+// SetColorScheme changes the active color scheme.
+func SetColorScheme(scheme ColorScheme) {
+	currentTheme = scheme
+	// Rebuild styles with new colors
+	initStyles()
+}
+
 // Styles holds all the styles for the TUI.
-var styles = struct {
+var styles struct {
 	Title       lipgloss.Style
 	TabActive   lipgloss.Style
 	TabInactive lipgloss.Style
@@ -23,78 +53,85 @@ var styles = struct {
 	InputFocus  lipgloss.Style
 	Box         lipgloss.Style
 	BoxTitle    lipgloss.Style
-}{
-	Title: lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("205")).
-		Padding(0, 1),
+}
 
-	TabActive: lipgloss.NewStyle().
+func init() {
+	initStyles()
+}
+
+// initStyles initializes or updates all styles based on currentTheme.
+func initStyles() {
+	styles.Title = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("205")).
+		Foreground(currentTheme.Primary).
+		Padding(0, 1)
+
+	styles.TabActive = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(currentTheme.Primary).
 		Background(lipgloss.Color("236")).
-		Padding(0, 2),
+		Padding(0, 2)
 
-	TabInactive: lipgloss.NewStyle().
+	styles.TabInactive = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("250")).
-		Padding(0, 2),
+		Padding(0, 2)
 
-	HelpText: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")),
+	styles.HelpText = lipgloss.NewStyle().
+		Foreground(currentTheme.Muted)
 
-	StatusText: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")),
+	styles.StatusText = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244"))
 
-	Error: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196")).
-		Bold(true),
+	styles.Error = lipgloss.NewStyle().
+		Foreground(currentTheme.Error).
+		Bold(true)
 
-	Success: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("82")).
-		Bold(true),
+	styles.Success = lipgloss.NewStyle().
+		Foreground(currentTheme.Success).
+		Bold(true)
 
-	Warning: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("214")),
+	styles.Warning = lipgloss.NewStyle().
+		Foreground(currentTheme.Warning)
 
-	TableHeader: lipgloss.NewStyle().
+	styles.TableHeader = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
 		BorderBottom(true).
 		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")),
+		BorderForeground(currentTheme.Border)
 
-	TableRow: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")),
+	styles.TableRow = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
 
-	Selected: lipgloss.NewStyle().
+	styles.Selected = lipgloss.NewStyle().
 		Background(lipgloss.Color("236")).
 		Foreground(lipgloss.Color("255")).
-		Bold(true),
+		Bold(true)
 
-	Muted: lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")),
+	styles.Muted = lipgloss.NewStyle().
+		Foreground(currentTheme.Muted)
 
-	Bold: lipgloss.NewStyle().
-		Bold(true),
+	styles.Bold = lipgloss.NewStyle().
+		Bold(true)
 
-	Input: lipgloss.NewStyle().
+	styles.Input = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(0, 1),
+		BorderForeground(currentTheme.Border).
+		Padding(0, 1)
 
-	InputFocus: lipgloss.NewStyle().
+	styles.InputFocus = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
-		Padding(0, 1),
+		BorderForeground(currentTheme.Primary).
+		Padding(0, 1)
 
-	Box: lipgloss.NewStyle().
+	styles.Box = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(1, 2),
+		BorderForeground(currentTheme.Border).
+		Padding(1, 2)
 
-	BoxTitle: lipgloss.NewStyle().
+	styles.BoxTitle = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("205")),
+		Foreground(currentTheme.Primary)
 }
 
 // PeerStateStyle returns the style for a peer state.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -27,6 +28,7 @@ type InvitesModel struct {
 	width         int
 	height        int
 	textInput     textinput.Model
+	spinner       spinner.Model
 	createdInvite *rpc.InviteCreateResult
 	acceptResult  *rpc.InviteAcceptResult
 	error         string
@@ -42,8 +44,13 @@ func NewInvitesModel() InvitesModel {
 	ti.CharLimit = 2000
 	ti.Width = 60
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(currentTheme.Primary)
+
 	return InvitesModel{
 		textInput: ti,
+		spinner:   s,
 	}
 }
 
@@ -87,6 +94,13 @@ func (m InvitesModel) Update(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, 
 		return m.handleAcceptModeKey(msg, client)
 	}
 	return m, nil
+}
+
+// UpdateSpinner updates the spinner animation (called from app.go).
+func (m InvitesModel) UpdateSpinner(msg tea.Msg) (InvitesModel, tea.Cmd) {
+	var cmd tea.Cmd
+	m.spinner, cmd = m.spinner.Update(msg)
+	return m, cmd
 }
 
 // handleNormalModeKey processes key input in normal mode.
@@ -136,15 +150,30 @@ func (m InvitesModel) handleAcceptModeKey(msg tea.KeyMsg, client *rpc.Client) (I
 		m.pendingAccept = false
 	case key.Matches(msg, keys.Enter):
 		code := strings.TrimSpace(m.textInput.Value())
-		if code != "" {
-			// Ignore if already accepting an invite
-			if m.pendingAccept {
-				return m, nil
-			}
-			m.pendingAccept = true
-			m.textInput.Blur()
-			return m, m.acceptInvite(client, code)
+		if code == "" {
+			return m, nil
 		}
+
+		// Validate invite code format (Issue #10)
+		if !strings.HasPrefix(code, "i2plan://") {
+			m.error = "Invalid invite format (must start with i2plan://)"
+			return m, nil
+		}
+
+		if len(code) < 20 {
+			m.error = "Invite code too short"
+			return m, nil
+		}
+
+		// Ignore if already accepting an invite
+		if m.pendingAccept {
+			return m, nil
+		}
+
+		m.pendingAccept = true
+		m.textInput.Blur()
+		m.error = ""
+		return m, m.acceptInvite(client, code)
 	default:
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
@@ -310,7 +339,7 @@ func (m InvitesModel) buildInviteLoadingContent() string {
 	return lipgloss.JoinVertical(lipgloss.Center,
 		styles.BoxTitle.Render("Creating Invite..."),
 		"",
-		"Generating invite code...",
+		m.spinner.View()+" Generating invite code...",
 	)
 }
 
@@ -322,27 +351,36 @@ func (m InvitesModel) viewAccept() string {
 		Padding(2, 4).
 		Width(70)
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		styles.BoxTitle.Render("Accept Invite"),
-		"",
-		"Paste the invite code you received:",
-		"",
-		m.textInput.View(),
-		"",
-	)
-
-	if m.error != "" {
+	var content string
+	if m.pendingAccept {
+		content = lipgloss.JoinVertical(lipgloss.Center,
+			styles.BoxTitle.Render("Accepting Invite..."),
+			"",
+			m.spinner.View()+" Joining network...",
+		)
+	} else {
 		content = lipgloss.JoinVertical(lipgloss.Left,
-			content,
-			styles.Error.Render("Error: "+m.error),
+			styles.BoxTitle.Render("Accept Invite"),
+			"",
+			"Paste the invite code you received:",
+			"",
+			m.textInput.View(),
 			"",
 		)
-	}
 
-	content = lipgloss.JoinVertical(lipgloss.Left,
-		content,
-		styles.HelpText.Render("Enter to accept • Esc to cancel"),
-	)
+		if m.error != "" {
+			content = lipgloss.JoinVertical(lipgloss.Left,
+				content,
+				styles.Error.Render("Error: "+m.error),
+				"",
+			)
+		}
+
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			content,
+			styles.HelpText.Render("Enter to accept • Esc to cancel"),
+		)
+	}
 
 	return lipgloss.Place(
 		m.width,

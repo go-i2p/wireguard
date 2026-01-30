@@ -57,12 +57,15 @@ type Model struct {
 	rpcMaxRetries int
 
 	// Current state
-	activeTab   Tab
-	width       int
-	height      int
-	ready       bool
-	err         error
-	lastRefresh time.Time
+	activeTab      Tab
+	width          int
+	height         int
+	ready          bool
+	err            error
+	errTimestamp   time.Time
+	errDisplayTime time.Duration
+	lastRefresh    time.Time
+	showHelp       bool
 
 	// Data from RPC
 	status *rpc.StatusResult
@@ -152,6 +155,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
+		// Update invites spinner too
+		var inviteCmd tea.Cmd
+		m.invitesView, inviteCmd = m.invitesView.UpdateSpinner(msg)
+		cmds = append(cmds, inviteCmd)
 	case inviteCreatedMsg:
 		m.invitesView.SetCreatedInvite(msg.invite)
 	case inviteAcceptedMsg:
@@ -209,6 +216,9 @@ func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (handled bool, cmd tea.Cmd) {
 	case key.Matches(msg, keys.Status):
 		m.activeTab = TabStatus
 		return true, nil
+	case key.Matches(msg, keys.Help):
+		m.showHelp = !m.showHelp
+		return true, nil
 	}
 	return false, nil
 }
@@ -249,7 +259,12 @@ func (m *Model) handleRefreshMsg(msg refreshMsg, cmds []tea.Cmd) []tea.Cmd {
 	m.status = msg.status
 	m.peers = msg.peers
 	m.routes = msg.routes
-	m.err = msg.err
+	if msg.err != nil {
+		m.err = msg.err
+		m.errTimestamp = time.Now()
+	} else {
+		m.err = nil // Clear error on success
+	}
 	m.lastRefresh = time.Now()
 	m.peersView.SetData(msg.peers)
 	m.routesView.SetData(msg.routes)
@@ -263,6 +278,11 @@ func (m *Model) handleRefreshMsg(msg refreshMsg, cmds []tea.Cmd) []tea.Cmd {
 func (m Model) View() string {
 	if !m.ready {
 		return fmt.Sprintf("%s Loading...", m.spinner.View())
+	}
+
+	// Show help overlay if requested
+	if m.showHelp {
+		return m.renderHelpOverlay()
 	}
 
 	var b strings.Builder
@@ -331,8 +351,13 @@ func (m Model) renderFooter() string {
 	if m.status != nil {
 		statusInfo = fmt.Sprintf("Peers: %d | %s", m.status.PeerCount, m.status.Uptime)
 	}
+	// Display error with auto-clear after configured duration
 	if m.err != nil {
-		statusInfo = styles.Error.Render(m.err.Error())
+		if time.Since(m.errTimestamp) > m.errDisplayTime {
+			m.err = nil // Auto-clear old errors
+		} else {
+			statusInfo = styles.Error.Render(m.err.Error())
+		}
 	}
 
 	footer := lipgloss.JoinHorizontal(
@@ -343,6 +368,52 @@ func (m Model) renderFooter() string {
 	)
 
 	return footer
+}
+
+// renderHelpOverlay renders the help screen overlay.
+func (m Model) renderHelpOverlay() string {
+	helpBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(currentTheme.Primary).
+		Padding(2, 4).
+		Width(70)
+
+	help := lipgloss.JoinVertical(lipgloss.Left,
+		styles.BoxTitle.Render("Keyboard Shortcuts"),
+		"",
+		styles.Bold.Render("Global:"),
+		"  ?          Show/hide this help",
+		"  tab        Next tab",
+		"  shift+tab  Previous tab",
+		"  1-4        Jump to tab (Peers/Routes/Invites/Status)",
+		"  r          Refresh data",
+		"  q          Quit",
+		"",
+		styles.Bold.Render("Peers:"),
+		"  ↑/k        Move up",
+		"  ↓/j        Move down",
+		"  c          Connect to selected peer",
+		"",
+		styles.Bold.Render("Routes:"),
+		"  ↑/k        Move up",
+		"  ↓/j        Move down",
+		"",
+		styles.Bold.Render("Invites:"),
+		"  n          Create new invite",
+		"  a          Accept invite code",
+		"  enter      Confirm action",
+		"  esc        Cancel action",
+		"",
+		styles.HelpText.Render("Press ? or Esc to close"),
+	)
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		helpBox.Render(help),
+	)
 }
 
 // refreshData fetches fresh data from RPC with automatic reconnection on connection errors.

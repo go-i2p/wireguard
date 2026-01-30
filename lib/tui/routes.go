@@ -25,11 +25,18 @@ func NewRoutesModel() RoutesModel {
 
 // SetData updates the routes data.
 func (m *RoutesModel) SetData(routes *rpc.RoutesListResult) {
+	oldRoutes := m.routes
 	m.routes = routes
-	// Reset cursor if out of bounds
-	if m.routes != nil && m.cursor >= len(m.routes.Routes) {
-		m.cursor = max(0, len(m.routes.Routes)-1)
+
+	// Smart cursor management (Issue #9)
+	if m.routes == nil || len(m.routes.Routes) == 0 {
+		m.cursor = 0
+	} else if m.cursor >= len(m.routes.Routes) {
+		// Only reset if out of bounds, preserve position otherwise
+		m.cursor = len(m.routes.Routes) - 1
 	}
+	// If list size is same or similar, preserve cursor position
+	_ = oldRoutes // Avoid unused variable warning
 }
 
 // SetDimensions sets the view dimensions.
