@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-i2p/wireguard/lib/identity"
+	"github.com/go-i2p/wireguard/lib/rpc"
 )
 
 // PeerInfo contains information about a connected or known peer.
@@ -147,29 +148,39 @@ func (v *VPN) GetPeer(nodeID string) *PeerInfo {
 		return nil
 	}
 
+	return v.findPeerByNodeID(nodeID)
+}
+
+// findPeerByNodeID searches for a peer by node ID and returns its info.
+func (v *VPN) findPeerByNodeID(nodeID string) *PeerInfo {
 	rpcPeers := v.node.ListPeers()
 	for _, p := range rpcPeers {
 		if p.NodeID == nodeID {
-			var tunnelIP netip.Addr
-			if p.TunnelIP != "" {
-				tunnelIP, _ = netip.ParseAddr(p.TunnelIP)
-			}
-			lastSeen, connectedAt := parsePeerTimestamps(p.LastSeen, p.ConnectedAt)
-			var latency time.Duration
-			if p.Latency != "" {
-				latency, _ = time.ParseDuration(p.Latency)
-			}
-			return &PeerInfo{
-				NodeID:      p.NodeID,
-				TunnelIP:    tunnelIP,
-				State:       p.State,
-				LastSeen:    lastSeen,
-				ConnectedAt: connectedAt,
-				Latency:     latency,
-			}
+			return v.convertRPCPeerInfoToInfo(p)
 		}
 	}
 	return nil
+}
+
+// convertRPCPeerInfoToInfo converts an rpc.PeerInfo struct to a PeerInfo pointer.
+func (v *VPN) convertRPCPeerInfoToInfo(p rpc.PeerInfo) *PeerInfo {
+	var tunnelIP netip.Addr
+	if p.TunnelIP != "" {
+		tunnelIP, _ = netip.ParseAddr(p.TunnelIP)
+	}
+	lastSeen, connectedAt := parsePeerTimestamps(p.LastSeen, p.ConnectedAt)
+	var latency time.Duration
+	if p.Latency != "" {
+		latency, _ = time.ParseDuration(p.Latency)
+	}
+	return &PeerInfo{
+		NodeID:      p.NodeID,
+		TunnelIP:    tunnelIP,
+		State:       p.State,
+		LastSeen:    lastSeen,
+		ConnectedAt: connectedAt,
+		Latency:     latency,
+	}
 }
 
 // CreateInvite generates an invite code for a new peer to join the network.
@@ -288,7 +299,6 @@ func (v *VPN) ListInvites() []InviteInfo {
 		return nil
 	}
 
-	// Get the invite store from the node
 	store := v.node.InviteStore()
 	if store == nil {
 		return nil
@@ -299,29 +309,64 @@ func (v *VPN) ListInvites() []InviteInfo {
 		return nil
 	}
 
+	return v.filterAndConvertInvites(invites)
+}
+
+// filterAndConvertInvites filters out expired invites and converts valid ones to InviteInfo.
+func (v *VPN) filterAndConvertInvites(invites []*identity.Invite) []InviteInfo {
 	result := make([]InviteInfo, 0, len(invites))
 	for _, inv := range invites {
-		// Skip expired invites
 		if inv.IsExpired() {
 			continue
 		}
-		code, err := inv.Encode()
-		if err != nil {
-			continue
+		info := v.convertInviteToInfo(inv)
+		if info != nil {
+			result = append(result, *info)
 		}
-		result = append(result, InviteInfo{
-			Code:          code,
-			ExpiresAt:     inv.ExpiresAt,
-			MaxUses:       inv.MaxUses,
-			UsesRemaining: inv.MaxUses - inv.UsedCount,
-			NetworkID:     inv.NetworkID,
-		})
 	}
 	return result
 }
 
+// convertInviteToInfo converts an identity.Invite to an InviteInfo struct.
+func (v *VPN) convertInviteToInfo(inv *identity.Invite) *InviteInfo {
+	code, err := inv.Encode()
+	if err != nil {
+		return nil
+	}
+	return &InviteInfo{
+		Code:          code,
+		ExpiresAt:     inv.ExpiresAt,
+		MaxUses:       inv.MaxUses,
+		UsesRemaining: inv.MaxUses - inv.UsedCount,
+		NetworkID:     inv.NetworkID,
+	}
+}
+
 // RevokeInvite revokes an invite code so it can no longer be used.
 func (v *VPN) RevokeInvite(inviteCode string) error {
+	if err := v.validateVPNRunning(); err != nil {
+		return err
+	}
+
+	if inviteCode == "" {
+		return errors.New("invite code is required")
+	}
+
+	store := v.node.InviteStore()
+	if store == nil {
+		return errors.New("invite store not available")
+	}
+
+	if err := v.removeInviteFromStore(store, inviteCode); err != nil {
+		return err
+	}
+
+	v.emitter.emitSimple(EventInviteRevoked, "Invite revoked")
+	return nil
+}
+
+// validateVPNRunning checks if the VPN is running and returns an error if not.
+func (v *VPN) validateVPNRunning() error {
 	v.mu.RLock()
 	state := v.state
 	node := v.node
@@ -330,38 +375,27 @@ func (v *VPN) RevokeInvite(inviteCode string) error {
 	if state != StateRunning || node == nil {
 		return errors.New("VPN is not running")
 	}
+	return nil
+}
 
-	if inviteCode == "" {
-		return errors.New("invite code is required")
-	}
-
-	// Get the invite store
-	store := node.InviteStore()
-	if store == nil {
-		return errors.New("invite store not available")
-	}
-
-	// Parse the invite to get the auth token (used as key)
+// removeInviteFromStore parses the invite code and removes it from the store.
+func (v *VPN) removeInviteFromStore(store *identity.InviteStore, inviteCode string) error {
 	invite, err := parseInviteCode(inviteCode)
 	if err != nil {
 		return err
 	}
 
-	// The key is the hex-encoded auth token
 	key := fmt.Sprintf("%x", invite.AuthToken)
 
-	// Check if the invite exists
 	if _, exists := store.GetGenerated(key); !exists {
 		return errors.New("invite not found")
 	}
 
-	// Remove the invite
 	store.RemoveGenerated(key)
 	if err := store.Save(); err != nil {
 		return fmt.Errorf("saving invite store: %w", err)
 	}
 
-	v.emitter.emitSimple(EventInviteRevoked, "Invite revoked")
 	return nil
 }
 

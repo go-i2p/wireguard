@@ -68,46 +68,60 @@ func (m *InvitesModel) SetAcceptResult(result *rpc.InviteAcceptResult) {
 func (m InvitesModel) Update(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, tea.Cmd) {
 	switch m.mode {
 	case InvitesModeNormal:
-		switch {
-		case key.Matches(msg, keys.NewInvite):
-			m.mode = InvitesModeCreate
-			m.createdInvite = nil
-			m.error = ""
-			m.message = ""
-			return m, m.createInvite(client)
-		case key.Matches(msg, keys.Accept):
-			m.mode = InvitesModeAccept
-			m.textInput.Focus()
-			m.textInput.SetValue("")
-			m.error = ""
-			m.message = ""
-			return m, textinput.Blink
-		}
-
+		return m.handleNormalModeKey(msg, client)
 	case InvitesModeCreate:
-		switch {
-		case key.Matches(msg, keys.Escape), key.Matches(msg, keys.Enter):
-			m.mode = InvitesModeNormal
-		}
-
+		return m.handleCreateModeKey(msg)
 	case InvitesModeAccept:
-		switch {
-		case key.Matches(msg, keys.Escape):
-			m.mode = InvitesModeNormal
-			m.textInput.Blur()
-		case key.Matches(msg, keys.Enter):
-			code := strings.TrimSpace(m.textInput.Value())
-			if code != "" {
-				m.textInput.Blur()
-				return m, m.acceptInvite(client, code)
-			}
-		default:
-			var cmd tea.Cmd
-			m.textInput, cmd = m.textInput.Update(msg)
-			return m, cmd
-		}
+		return m.handleAcceptModeKey(msg, client)
 	}
+	return m, nil
+}
 
+// handleNormalModeKey processes key input in normal mode.
+func (m InvitesModel) handleNormalModeKey(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.NewInvite):
+		m.mode = InvitesModeCreate
+		m.createdInvite = nil
+		m.error = ""
+		m.message = ""
+		return m, m.createInvite(client)
+	case key.Matches(msg, keys.Accept):
+		m.mode = InvitesModeAccept
+		m.textInput.Focus()
+		m.textInput.SetValue("")
+		m.error = ""
+		m.message = ""
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+// handleCreateModeKey processes key input in create mode.
+func (m InvitesModel) handleCreateModeKey(msg tea.KeyMsg) (InvitesModel, tea.Cmd) {
+	if key.Matches(msg, keys.Escape) || key.Matches(msg, keys.Enter) {
+		m.mode = InvitesModeNormal
+	}
+	return m, nil
+}
+
+// handleAcceptModeKey processes key input in accept mode.
+func (m InvitesModel) handleAcceptModeKey(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.Escape):
+		m.mode = InvitesModeNormal
+		m.textInput.Blur()
+	case key.Matches(msg, keys.Enter):
+		code := strings.TrimSpace(m.textInput.Value())
+		if code != "" {
+			m.textInput.Blur()
+			return m, m.acceptInvite(client, code)
+		}
+	default:
+		var cmd tea.Cmd
+		m.textInput, cmd = m.textInput.Update(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 
@@ -127,7 +141,28 @@ func (m InvitesModel) View() string {
 func (m InvitesModel) viewNormal() string {
 	var b strings.Builder
 
-	// Instructions box
+	b.WriteString(m.renderInstructionsBox())
+	b.WriteString("\n\n")
+
+	if m.createdInvite != nil {
+		b.WriteString(m.renderCreatedInviteBox())
+		b.WriteString("\n\n")
+	}
+
+	if m.acceptResult != nil {
+		b.WriteString(m.renderAcceptResultBox())
+	}
+
+	if m.error != "" {
+		b.WriteString("\n")
+		b.WriteString(styles.Error.Render("Error: " + m.error))
+	}
+
+	return b.String()
+}
+
+// renderInstructionsBox creates the instructions box for the invites view.
+func (m InvitesModel) renderInstructionsBox() string {
 	instructionsBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
@@ -143,56 +178,46 @@ func (m InvitesModel) viewNormal() string {
 		styles.Bold.Render("a")+" - Accept an invite code from someone else",
 	)
 
-	b.WriteString(instructionsBox.Render(instructions))
-	b.WriteString("\n\n")
+	return instructionsBox.Render(instructions)
+}
 
-	// Show last created invite if any
-	if m.createdInvite != nil {
-		inviteBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("82")).
-			Padding(1, 2).
-			Width(m.width - 4)
+// renderCreatedInviteBox creates the box displaying a newly created invite.
+func (m InvitesModel) renderCreatedInviteBox() string {
+	inviteBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("82")).
+		Padding(1, 2).
+		Width(m.width - 4)
 
-		content := lipgloss.JoinVertical(lipgloss.Left,
-			styles.Success.Render("✓ Invite Created"),
-			"",
-			styles.Muted.Render("Code:"),
-			m.createdInvite.InviteCode,
-			"",
-			styles.Muted.Render("Expires: "+m.createdInvite.ExpiresAt),
-		)
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		styles.Success.Render("✓ Invite Created"),
+		"",
+		styles.Muted.Render("Code:"),
+		m.createdInvite.InviteCode,
+		"",
+		styles.Muted.Render("Expires: "+m.createdInvite.ExpiresAt),
+	)
 
-		b.WriteString(inviteBox.Render(content))
-		b.WriteString("\n\n")
-	}
+	return inviteBox.Render(content)
+}
 
-	// Show last accept result if any
-	if m.acceptResult != nil {
-		resultBox := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("82")).
-			Padding(1, 2).
-			Width(60)
+// renderAcceptResultBox creates the box displaying the result of accepting an invite.
+func (m InvitesModel) renderAcceptResultBox() string {
+	resultBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("82")).
+		Padding(1, 2).
+		Width(60)
 
-		content := lipgloss.JoinVertical(lipgloss.Left,
-			styles.Success.Render("✓ Joined Network"),
-			"",
-			"Network: "+m.acceptResult.NetworkID,
-			"Peer: "+truncate(m.acceptResult.PeerNodeID, 20),
-			"Your IP: "+m.acceptResult.TunnelIP,
-		)
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		styles.Success.Render("✓ Joined Network"),
+		"",
+		"Network: "+m.acceptResult.NetworkID,
+		"Peer: "+truncate(m.acceptResult.PeerNodeID, 20),
+		"Your IP: "+m.acceptResult.TunnelIP,
+	)
 
-		b.WriteString(resultBox.Render(content))
-	}
-
-	// Show error if any
-	if m.error != "" {
-		b.WriteString("\n")
-		b.WriteString(styles.Error.Render("Error: " + m.error))
-	}
-
-	return b.String()
+	return resultBox.Render(content)
 }
 
 // viewCreate renders the create invite view.
@@ -203,35 +228,7 @@ func (m InvitesModel) viewCreate() string {
 		Padding(2, 4).
 		Width(m.width - 10)
 
-	var content string
-	if m.createdInvite != nil {
-		content = lipgloss.JoinVertical(lipgloss.Left,
-			styles.BoxTitle.Render("Invite Code Generated"),
-			"",
-			"Share this code with the person you want to invite:",
-			"",
-			m.createdInvite.InviteCode,
-			"",
-			styles.Muted.Render("Expires: "+m.createdInvite.ExpiresAt),
-			styles.Muted.Render("Max uses: 1"),
-			"",
-			styles.HelpText.Render("Press Enter or Esc to close"),
-		)
-	} else if m.error != "" {
-		content = lipgloss.JoinVertical(lipgloss.Left,
-			styles.BoxTitle.Render("Create Invite"),
-			"",
-			styles.Error.Render("Error: "+m.error),
-			"",
-			styles.HelpText.Render("Press Esc to close"),
-		)
-	} else {
-		content = lipgloss.JoinVertical(lipgloss.Center,
-			styles.BoxTitle.Render("Creating Invite..."),
-			"",
-			"Generating invite code...",
-		)
-	}
+	content := m.buildCreateInviteContent()
 
 	return lipgloss.Place(
 		m.width,
@@ -239,6 +236,53 @@ func (m InvitesModel) viewCreate() string {
 		lipgloss.Center,
 		lipgloss.Center,
 		box.Render(content),
+	)
+}
+
+// buildCreateInviteContent builds the content for the create invite modal.
+func (m InvitesModel) buildCreateInviteContent() string {
+	if m.createdInvite != nil {
+		return m.buildInviteSuccessContent()
+	}
+	if m.error != "" {
+		return m.buildInviteErrorContent()
+	}
+	return m.buildInviteLoadingContent()
+}
+
+// buildInviteSuccessContent creates the content when invite is successfully created.
+func (m InvitesModel) buildInviteSuccessContent() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		styles.BoxTitle.Render("Invite Code Generated"),
+		"",
+		"Share this code with the person you want to invite:",
+		"",
+		m.createdInvite.InviteCode,
+		"",
+		styles.Muted.Render("Expires: "+m.createdInvite.ExpiresAt),
+		styles.Muted.Render("Max uses: 1"),
+		"",
+		styles.HelpText.Render("Press Enter or Esc to close"),
+	)
+}
+
+// buildInviteErrorContent creates the content when invite creation fails.
+func (m InvitesModel) buildInviteErrorContent() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		styles.BoxTitle.Render("Create Invite"),
+		"",
+		styles.Error.Render("Error: "+m.error),
+		"",
+		styles.HelpText.Render("Press Esc to close"),
+	)
+}
+
+// buildInviteLoadingContent creates the content while invite is being created.
+func (m InvitesModel) buildInviteLoadingContent() string {
+	return lipgloss.JoinVertical(lipgloss.Center,
+		styles.BoxTitle.Render("Creating Invite..."),
+		"",
+		"Generating invite code...",
 	)
 }
 

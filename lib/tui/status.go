@@ -38,8 +38,14 @@ func (m StatusModel) View() string {
 	}
 
 	var b strings.Builder
+	b.WriteString(m.renderNodeStatusBox())
+	b.WriteString("\n\n")
+	b.WriteString(m.renderNetworkBox())
+	return b.String()
+}
 
-	// Main status box
+// renderNodeStatusBox creates the main node status display box.
+func (m StatusModel) renderNodeStatusBox() string {
 	mainBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
@@ -61,10 +67,11 @@ func (m StatusModel) View() string {
 		m.statusRow("Uptime", m.status.Uptime),
 	)
 
-	b.WriteString(mainBox.Render(mainContent))
-	b.WriteString("\n\n")
+	return mainBox.Render(mainContent)
+}
 
-	// Network box
+// renderNetworkBox creates the network information display box.
+func (m StatusModel) renderNetworkBox() string {
 	networkBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
@@ -84,9 +91,7 @@ func (m StatusModel) View() string {
 		m.statusRow("Peers", peerCountStyle.Render(fmt.Sprintf("%d", m.status.PeerCount))),
 	)
 
-	b.WriteString(networkBox.Render(networkContent))
-
-	return b.String()
+	return networkBox.Render(networkContent)
 }
 
 // statusRow formats a status row with label and value.

@@ -277,6 +277,11 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn, network st
 	reader := bufio.NewReaderSize(conn, 64*1024)
 	authenticated := s.authToken == nil
 
+	s.processRequests(ctx, conn, reader, remoteAddr, network, &authenticated)
+}
+
+// processRequests continuously reads and handles requests from a connection.
+func (s *Server) processRequests(ctx context.Context, conn net.Conn, reader *bufio.Reader, remoteAddr, network string, authenticated *bool) {
 	for {
 		if s.isContextCancelled(ctx) {
 			return
@@ -290,20 +295,25 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn, network st
 			continue
 		}
 
-		if req.Method == "auth" {
-			resp := s.handleAuth(req, &authenticated)
-			s.sendResponse(conn, resp)
-			continue
-		}
-
-		if !authenticated && network == "tcp" {
-			s.sendResponse(conn, NewErrorResponse(req.ID, ErrAuthRequired()))
-			continue
-		}
-
-		resp := s.dispatch(ctx, req)
-		s.sendResponse(conn, resp)
+		s.handleRequest(ctx, conn, req, network, authenticated)
 	}
+}
+
+// handleRequest processes a single RPC request and sends the appropriate response.
+func (s *Server) handleRequest(ctx context.Context, conn net.Conn, req *Request, network string, authenticated *bool) {
+	if req.Method == "auth" {
+		resp := s.handleAuth(req, authenticated)
+		s.sendResponse(conn, resp)
+		return
+	}
+
+	if !*authenticated && network == "tcp" {
+		s.sendResponse(conn, NewErrorResponse(req.ID, ErrAuthRequired()))
+		return
+	}
+
+	resp := s.dispatch(ctx, req)
+	s.sendResponse(conn, resp)
 }
 
 // isContextCancelled checks if the context has been cancelled.

@@ -631,24 +631,9 @@ func rpcBansRemove(ctx context.Context, client *rpc.Client, args []string) int {
 
 // handleTUI launches the interactive terminal user interface.
 func handleTUI(logger *slog.Logger, dataDir string) int {
-	// Determine socket path
-	socketPath := filepath.Join(dataDir, core.DefaultRPCSocket)
-	if envSocket := os.Getenv("I2PLAN_RPC_SOCKET"); envSocket != "" {
-		socketPath = envSocket
-	}
+	socketPath, authFile := resolveRPCPaths(dataDir)
 
-	// Determine auth file
-	authFile := filepath.Join(dataDir, "rpc.auth")
-	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
-		authFile = envAuth
-	}
-
-	// Create TUI
-	tuiApp, err := tui.New(tui.Config{
-		RPCSocketPath:   socketPath,
-		RPCAuthFile:     authFile,
-		RefreshInterval: 5 * time.Second,
-	})
+	tuiApp, err := createTUIApp(socketPath, authFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Is the i2plan daemon running?\n")
@@ -656,50 +641,40 @@ func handleTUI(logger *slog.Logger, dataDir string) int {
 	}
 	defer tuiApp.Close()
 
-	// Run the TUI
+	return runTUIProgram(tuiApp)
+}
+
+// createTUIApp creates and configures a new TUI application instance.
+func createTUIApp(socketPath, authFile string) (*tui.Model, error) {
+	return tui.New(tui.Config{
+		RPCSocketPath:   socketPath,
+		RPCAuthFile:     authFile,
+		RefreshInterval: 5 * time.Second,
+	})
+}
+
+// runTUIProgram executes the TUI program and returns the exit code.
+func runTUIProgram(tuiApp *tui.Model) int {
 	p := tea.NewProgram(tuiApp, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		return 1
 	}
-
 	return 0
 }
 
 // handleWeb starts the web UI server.
 func handleWeb(logger *slog.Logger, dataDir string) int {
-	// Determine socket path
-	socketPath := filepath.Join(dataDir, core.DefaultRPCSocket)
-	if envSocket := os.Getenv("I2PLAN_RPC_SOCKET"); envSocket != "" {
-		socketPath = envSocket
-	}
+	socketPath, authFile := resolveRPCPaths(dataDir)
+	listenAddr := resolveWebListenAddr()
 
-	// Determine auth file
-	authFile := filepath.Join(dataDir, "rpc.auth")
-	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
-		authFile = envAuth
-	}
-
-	// Default listen address
-	listenAddr := "127.0.0.1:8080"
-	if envAddr := os.Getenv("I2PLAN_WEB_ADDR"); envAddr != "" {
-		listenAddr = envAddr
-	}
-
-	// Create web server
-	server, err := web.New(web.Config{
-		ListenAddr:    listenAddr,
-		RPCSocketPath: socketPath,
-		RPCAuthFile:   authFile,
-		Logger:        logger,
-	})
+	server, err := createWebServer(logger, listenAddr, socketPath, authFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Is the i2plan daemon running?\n")
 		return 1
 	}
 
-	// Start the server
 	if err := server.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting web server: %v\n", err)
 		return 1
@@ -708,12 +683,48 @@ func handleWeb(logger *slog.Logger, dataDir string) int {
 	fmt.Printf("Web UI running at http://%s\n", listenAddr)
 	fmt.Println("Press Ctrl+C to stop")
 
-	// Wait for shutdown signal
+	return waitForShutdownAndStop(server)
+}
+
+// resolveRPCPaths determines the socket path and auth file from environment or defaults.
+func resolveRPCPaths(dataDir string) (socketPath, authFile string) {
+	socketPath = filepath.Join(dataDir, core.DefaultRPCSocket)
+	if envSocket := os.Getenv("I2PLAN_RPC_SOCKET"); envSocket != "" {
+		socketPath = envSocket
+	}
+
+	authFile = filepath.Join(dataDir, "rpc.auth")
+	if envAuth := os.Getenv("I2PLAN_RPC_AUTH"); envAuth != "" {
+		authFile = envAuth
+	}
+	return
+}
+
+// resolveWebListenAddr determines the web server listen address from environment or defaults.
+func resolveWebListenAddr() string {
+	listenAddr := "127.0.0.1:8080"
+	if envAddr := os.Getenv("I2PLAN_WEB_ADDR"); envAddr != "" {
+		listenAddr = envAddr
+	}
+	return listenAddr
+}
+
+// createWebServer creates and configures a new web server instance.
+func createWebServer(logger *slog.Logger, listenAddr, socketPath, authFile string) (*web.Server, error) {
+	return web.New(web.Config{
+		ListenAddr:    listenAddr,
+		RPCSocketPath: socketPath,
+		RPCAuthFile:   authFile,
+		Logger:        logger,
+	})
+}
+
+// waitForShutdownAndStop waits for a shutdown signal and gracefully stops the server.
+func waitForShutdownAndStop(server *web.Server) int {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

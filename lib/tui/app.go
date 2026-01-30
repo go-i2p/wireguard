@@ -120,89 +120,118 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Global keys
-		switch {
-		case key.Matches(msg, keys.Quit):
-			return m, tea.Quit
-		case key.Matches(msg, keys.Tab):
-			m.activeTab = Tab((int(m.activeTab) + 1) % 5)
-		case key.Matches(msg, keys.ShiftTab):
-			m.activeTab = Tab((int(m.activeTab) + 4) % 5)
-		case key.Matches(msg, keys.Refresh):
-			cmds = append(cmds, m.refreshData)
-		case key.Matches(msg, keys.Peers):
-			m.activeTab = TabPeers
-		case key.Matches(msg, keys.Routes):
-			m.activeTab = TabRoutes
-		case key.Matches(msg, keys.Invites):
-			m.activeTab = TabInvites
-		case key.Matches(msg, keys.Status):
-			m.activeTab = TabStatus
-			// Note: logs tab disabled - no backend log collection exists
-		}
-
-		// Pass to active view
-		switch m.activeTab {
-		case TabPeers:
-			var cmd tea.Cmd
-			m.peersView, cmd = m.peersView.Update(msg, m.client)
-			cmds = append(cmds, cmd)
-		case TabRoutes:
-			var cmd tea.Cmd
-			m.routesView, cmd = m.routesView.Update(msg)
-			cmds = append(cmds, cmd)
-		case TabInvites:
-			var cmd tea.Cmd
-			m.invitesView, cmd = m.invitesView.Update(msg, m.client)
-			cmds = append(cmds, cmd)
-		}
-
+		return m.handleKeyMsg(msg, cmds)
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.ready = true
-		// Update view dimensions
-		contentHeight := m.height - 4 // Header + footer
-		m.peersView.SetDimensions(m.width, contentHeight)
-		m.routesView.SetDimensions(m.width, contentHeight)
-		m.invitesView.SetDimensions(m.width, contentHeight)
-		m.statusView.SetDimensions(m.width, contentHeight)
-
+		m.handleWindowSizeMsg(msg)
 	case refreshMsg:
-		m.status = msg.status
-		m.peers = msg.peers
-		m.routes = msg.routes
-		m.err = msg.err
-		m.lastRefresh = time.Now()
-		// Update views with new data
-		m.peersView.SetData(msg.peers)
-		m.routesView.SetData(msg.routes)
-		m.statusView.SetData(msg.status)
-		// Schedule next refresh
-		cmds = append(cmds, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
-			return tickMsg(t)
-		}))
-
+		cmds = m.handleRefreshMsg(msg, cmds)
 	case tickMsg:
 		cmds = append(cmds, m.refreshData)
-
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
-
 	case inviteCreatedMsg:
 		m.invitesView.SetCreatedInvite(msg.invite)
-
 	case inviteAcceptedMsg:
 		m.invitesView.SetAcceptResult(msg.result)
 		cmds = append(cmds, m.refreshData)
-
 	case errMsg:
 		m.err = msg.err
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// handleKeyMsg processes keyboard input messages and returns the updated model and commands.
+func (m Model) handleKeyMsg(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.handleGlobalKeys(msg); handled {
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	cmd := m.delegateToActiveView(msg)
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+// handleGlobalKeys processes global keyboard shortcuts and returns whether the key was handled.
+func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (handled bool, cmd tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.Quit):
+		return true, tea.Quit
+	case key.Matches(msg, keys.Tab):
+		m.activeTab = Tab((int(m.activeTab) + 1) % 5)
+		return true, nil
+	case key.Matches(msg, keys.ShiftTab):
+		m.activeTab = Tab((int(m.activeTab) + 4) % 5)
+		return true, nil
+	case key.Matches(msg, keys.Refresh):
+		return true, m.refreshData
+	case key.Matches(msg, keys.Peers):
+		m.activeTab = TabPeers
+		return true, nil
+	case key.Matches(msg, keys.Routes):
+		m.activeTab = TabRoutes
+		return true, nil
+	case key.Matches(msg, keys.Invites):
+		m.activeTab = TabInvites
+		return true, nil
+	case key.Matches(msg, keys.Status):
+		m.activeTab = TabStatus
+		return true, nil
+	}
+	return false, nil
+}
+
+// delegateToActiveView passes the key message to the currently active view.
+func (m *Model) delegateToActiveView(msg tea.KeyMsg) tea.Cmd {
+	switch m.activeTab {
+	case TabPeers:
+		var cmd tea.Cmd
+		m.peersView, cmd = m.peersView.Update(msg, m.client)
+		return cmd
+	case TabRoutes:
+		var cmd tea.Cmd
+		m.routesView, cmd = m.routesView.Update(msg)
+		return cmd
+	case TabInvites:
+		var cmd tea.Cmd
+		m.invitesView, cmd = m.invitesView.Update(msg, m.client)
+		return cmd
+	}
+	return nil
+}
+
+// handleWindowSizeMsg updates the model dimensions when the window is resized.
+func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
+	m.width = msg.Width
+	m.height = msg.Height
+	m.ready = true
+	contentHeight := m.height - 4 // Header + footer
+	m.peersView.SetDimensions(m.width, contentHeight)
+	m.routesView.SetDimensions(m.width, contentHeight)
+	m.invitesView.SetDimensions(m.width, contentHeight)
+	m.statusView.SetDimensions(m.width, contentHeight)
+}
+
+// handleRefreshMsg updates the model with fresh data from RPC.
+func (m *Model) handleRefreshMsg(msg refreshMsg, cmds []tea.Cmd) []tea.Cmd {
+	m.status = msg.status
+	m.peers = msg.peers
+	m.routes = msg.routes
+	m.err = msg.err
+	m.lastRefresh = time.Now()
+	m.peersView.SetData(msg.peers)
+	m.routesView.SetData(msg.routes)
+	m.statusView.SetData(msg.status)
+	return append(cmds, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	}))
 }
 
 // View renders the TUI.
