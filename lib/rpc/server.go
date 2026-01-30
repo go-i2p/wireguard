@@ -44,6 +44,7 @@ type Server struct {
 	unixListener net.Listener
 	tcpListener  net.Listener
 	authToken    []byte // shared secret for authentication
+	connLimiter  *ConnectionLimiter
 	running      bool
 	wg           sync.WaitGroup
 }
@@ -56,13 +57,25 @@ type ServerConfig struct {
 	TCPAddress string
 	// AuthFile is the path to the auth token file.
 	AuthFile string
+	// MaxConnections is the maximum concurrent connections (0 = default of 100).
+	MaxConnections int
 }
 
 // NewServer creates a new RPC server.
 func NewServer(cfg ServerConfig) (*Server, error) {
 	s := &Server{
-		handlers: make(map[string]Handler),
+		handlers:    make(map[string]Handler),
+		connLimiter: NewConnectionLimiter(cfg.MaxConnections),
 	}
+
+	// Set up connection limit rejection logging
+	s.connLimiter.SetOnReject(func(addr net.Addr) {
+		log.Warn("connection rejected: too many connections",
+			"remote", addr.String(),
+			"active", s.connLimiter.ActiveConnections(),
+			"max", s.connLimiter.MaxConnections(),
+		)
+	})
 
 	// Load or generate auth token
 	if cfg.AuthFile != "" {
@@ -251,10 +264,20 @@ func (s *Server) handleAcceptError(ctx context.Context, network string, err erro
 
 // spawnConnectionHandler starts a goroutine to handle a connection.
 func (s *Server) spawnConnectionHandler(ctx context.Context, conn net.Conn, network string) {
+	// Check connection limit
+	conn = s.connLimiter.TryAccept(conn)
+	if conn == nil {
+		// Connection was rejected due to limit
+		return
+	}
+
+	// Wrap connection to auto-release slot on close
+	limitedConn := s.connLimiter.WrapConn(conn)
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.handleConnection(ctx, conn, network)
+		s.handleConnection(ctx, limitedConn, network)
 	}()
 }
 
@@ -466,4 +489,19 @@ func (s *Server) TCPAddress() string {
 		return s.tcpListener.Addr().String()
 	}
 	return ""
+}
+
+// ActiveConnections returns the current number of active connections.
+func (s *Server) ActiveConnections() int {
+	return s.connLimiter.ActiveConnections()
+}
+
+// MaxConnections returns the maximum allowed connections.
+func (s *Server) MaxConnections() int {
+	return s.connLimiter.MaxConnections()
+}
+
+// SetMaxConnections updates the maximum connection limit at runtime.
+func (s *Server) SetMaxConnections(max int) {
+	s.connLimiter.SetMaxConnections(max)
 }

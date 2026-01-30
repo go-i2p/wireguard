@@ -29,6 +29,7 @@ type Server struct {
 	templates   *template.Template
 	csrfManager *CSRFManager
 	csrfStop    chan struct{}
+	rateLimiter *RateLimiter
 	mu          sync.RWMutex
 	running     bool
 }
@@ -41,6 +42,8 @@ type Config struct {
 	RPCSocketPath string
 	// RPCAuthFile is the path to the RPC auth token file
 	RPCAuthFile string
+	// RateLimit configures per-IP rate limiting (optional, uses defaults if nil)
+	RateLimit *RateLimitConfig
 }
 
 // New creates a new web server.
@@ -67,10 +70,21 @@ func New(cfg Config) (*Server, error) {
 	// Create CSRF manager
 	csrfManager := NewCSRFManager()
 
+	// Create rate limiter
+	rateLimitCfg := DefaultRateLimitConfig()
+	if cfg.RateLimit != nil {
+		rateLimitCfg = *cfg.RateLimit
+	}
+	rateLimiter := NewRateLimiter(rateLimitCfg)
+	rateLimiter.SetOnReject(func(ip, path string) {
+		log.Warn("rate limit exceeded", "ip", ip, "path", path)
+	})
+
 	s := &Server{
 		rpcClient:   client,
 		templates:   tmpl,
 		csrfManager: csrfManager,
+		rateLimiter: rateLimiter,
 	}
 
 	// Create HTTP mux
@@ -171,6 +185,11 @@ func (s *Server) Stop(ctx context.Context) error {
 		close(s.csrfStop)
 	}
 
+	// Stop rate limiter cleanup goroutine
+	if s.rateLimiter != nil {
+		s.rateLimiter.Close()
+	}
+
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
@@ -185,8 +204,11 @@ func (s *Server) Stop(ctx context.Context) error {
 
 // withMiddleware wraps the handler with common middleware.
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
+	// Apply rate limiting first (reject early)
+	rateLimited := s.rateLimiter.Middleware(next)
+
 	// Apply CSRF protection for state-changing methods
-	csrfProtected := s.csrfManager.CSRFMiddleware(next)
+	csrfProtected := s.csrfManager.CSRFMiddleware(rateLimited)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
