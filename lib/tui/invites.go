@@ -31,6 +31,8 @@ type InvitesModel struct {
 	acceptResult  *rpc.InviteAcceptResult
 	error         string
 	message       string
+	pendingCreate bool // Tracks if invite creation is in progress
+	pendingAccept bool // Tracks if invite acceptance is in progress
 }
 
 // NewInvitesModel creates a new invites view model.
@@ -53,12 +55,22 @@ func (m *InvitesModel) SetDimensions(width, height int) {
 
 // SetCreatedInvite sets the created invite result.
 func (m *InvitesModel) SetCreatedInvite(invite *rpc.InviteCreateResult) {
+	// Only update if we were actually waiting for this result
+	if !m.pendingCreate {
+		return
+	}
+	m.pendingCreate = false
 	m.createdInvite = invite
 	m.error = ""
 }
 
 // SetAcceptResult sets the accept result.
 func (m *InvitesModel) SetAcceptResult(result *rpc.InviteAcceptResult) {
+	// Only update if we were actually waiting for this result
+	if !m.pendingAccept {
+		return
+	}
+	m.pendingAccept = false
 	m.acceptResult = result
 	m.error = ""
 	m.mode = InvitesModeNormal
@@ -81,7 +93,12 @@ func (m InvitesModel) Update(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, 
 func (m InvitesModel) handleNormalModeKey(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.NewInvite):
+		// Ignore if already creating an invite
+		if m.pendingCreate {
+			return m, nil
+		}
 		m.mode = InvitesModeCreate
+		m.pendingCreate = true
 		m.createdInvite = nil
 		m.error = ""
 		m.message = ""
@@ -101,6 +118,10 @@ func (m InvitesModel) handleNormalModeKey(msg tea.KeyMsg, client *rpc.Client) (I
 func (m InvitesModel) handleCreateModeKey(msg tea.KeyMsg) (InvitesModel, tea.Cmd) {
 	if key.Matches(msg, keys.Escape) || key.Matches(msg, keys.Enter) {
 		m.mode = InvitesModeNormal
+		// Clear pending flag if user cancels
+		if key.Matches(msg, keys.Escape) {
+			m.pendingCreate = false
+		}
 	}
 	return m, nil
 }
@@ -111,9 +132,16 @@ func (m InvitesModel) handleAcceptModeKey(msg tea.KeyMsg, client *rpc.Client) (I
 	case key.Matches(msg, keys.Escape):
 		m.mode = InvitesModeNormal
 		m.textInput.Blur()
+		// Clear pending flag if user cancels
+		m.pendingAccept = false
 	case key.Matches(msg, keys.Enter):
 		code := strings.TrimSpace(m.textInput.Value())
 		if code != "" {
+			// Ignore if already accepting an invite
+			if m.pendingAccept {
+				return m, nil
+			}
+			m.pendingAccept = true
 			m.textInput.Blur()
 			return m, m.acceptInvite(client, code)
 		}

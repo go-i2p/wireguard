@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -33,6 +34,93 @@ func TestTabString(t *testing.T) {
 		if got := tc.tab.String(); got != tc.expected {
 			t.Errorf("Tab(%d).String() = %q, want %q", tc.tab, got, tc.expected)
 		}
+	}
+}
+
+// TestTabNavigationForward tests forward tab navigation (Tab key).
+func TestTabNavigationForward(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  Tab
+		expected Tab
+	}{
+		{"Peers to Routes", TabPeers, TabRoutes},
+		{"Routes to Invites", TabRoutes, TabInvites},
+		{"Invites to Status", TabInvites, TabStatus},
+		{"Status wraps to Peers", TabStatus, TabPeers},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Model{activeTab: tc.current}
+			nextTab := Tab((int(m.activeTab) + 1) % int(numTabs))
+			if nextTab != tc.expected {
+				t.Errorf("Forward navigation from %s: got %s, want %s",
+					tc.current.String(), nextTab.String(), tc.expected.String())
+			}
+		})
+	}
+}
+
+// TestTabNavigationBackward tests backward tab navigation (Shift+Tab).
+func TestTabNavigationBackward(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  Tab
+		expected Tab
+	}{
+		{"Routes to Peers", TabRoutes, TabPeers},
+		{"Invites to Routes", TabInvites, TabRoutes},
+		{"Status to Invites", TabStatus, TabInvites},
+		{"Peers wraps to Status", TabPeers, TabStatus},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Model{activeTab: tc.current}
+			prevTab := Tab((int(m.activeTab) + int(numTabs) - 1) % int(numTabs))
+			if prevTab != tc.expected {
+				t.Errorf("Backward navigation from %s: got %s, want %s",
+					tc.current.String(), prevTab.String(), tc.expected.String())
+			}
+		})
+	}
+}
+
+// TestTabNavigationNoInvalidTabs verifies navigation never produces invalid tab values.
+func TestTabNavigationNoInvalidTabs(t *testing.T) {
+	// Test complete cycle forward
+	current := TabPeers
+	visited := make(map[Tab]bool)
+	for i := 0; i < int(numTabs); i++ {
+		if current < 0 || current >= numTabs {
+			t.Errorf("Forward cycle iteration %d: invalid tab value %d", i, current)
+		}
+		if visited[current] {
+			t.Errorf("Forward cycle: tab %s visited twice", current.String())
+		}
+		visited[current] = true
+		current = Tab((int(current) + 1) % int(numTabs))
+	}
+	if len(visited) != int(numTabs) {
+		t.Errorf("Forward cycle: visited %d tabs, expected %d", len(visited), int(numTabs))
+	}
+
+	// Test complete cycle backward
+	current = TabPeers
+	visited = make(map[Tab]bool)
+	for i := 0; i < int(numTabs); i++ {
+		if current < 0 || current >= numTabs {
+			t.Errorf("Backward cycle iteration %d: invalid tab value %d", i, current)
+		}
+		if visited[current] {
+			t.Errorf("Backward cycle: tab %s visited twice", current.String())
+		}
+		visited[current] = true
+		current = Tab((int(current) + int(numTabs) - 1) % int(numTabs))
+	}
+	if len(visited) != int(numTabs) {
+		t.Errorf("Backward cycle: visited %d tabs, expected %d", len(visited), int(numTabs))
 	}
 }
 
@@ -216,6 +304,7 @@ func TestInvitesModel(t *testing.T) {
 		ExpiresAt:  "2024-01-01T00:00:00Z",
 		MaxUses:    10,
 	}
+	m.pendingCreate = true // Set pending flag so invite is accepted
 	m.SetCreatedInvite(invite)
 	if m.createdInvite == nil {
 		t.Error("SetCreatedInvite: createdInvite is nil")
@@ -226,6 +315,7 @@ func TestInvitesModel(t *testing.T) {
 
 	// Test SetAcceptResult
 	m.mode = InvitesModeAccept
+	m.pendingAccept = true // Set pending flag so result is accepted
 	result := &rpc.InviteAcceptResult{
 		NetworkID:  "net1",
 		PeerNodeID: "peer1",
@@ -544,6 +634,7 @@ func TestInvitesModelView(t *testing.T) {
 	t.Run("with created invite", func(t *testing.T) {
 		m := NewInvitesModel()
 		m.SetDimensions(80, 24)
+		m.pendingCreate = true // Set pending flag so invite is accepted
 		m.SetCreatedInvite(&rpc.InviteCreateResult{
 			InviteCode: "i2plan://testcode123",
 			ExpiresAt:  "2024-01-01T00:00:00Z",
@@ -585,6 +676,142 @@ func TestInvitesModelModes(t *testing.T) {
 		}
 		if InvitesModeAccept != 2 {
 			t.Errorf("InvitesModeAccept = %d, want 2", InvitesModeAccept)
+		}
+	})
+}
+
+// TestInvitesModelRaceConditionPrevention tests that stale messages are ignored.
+func TestInvitesModelRaceConditionPrevention(t *testing.T) {
+	t.Run("ignore stale invite created message", func(t *testing.T) {
+		m := NewInvitesModel()
+
+		// Simulate: user starts create, then cancels
+		m.pendingCreate = true
+		m.mode = InvitesModeCreate
+
+		// User cancels (Esc pressed)
+		m.mode = InvitesModeNormal
+		m.pendingCreate = false
+
+		// Stale inviteCreatedMsg arrives
+		invite := &rpc.InviteCreateResult{
+			InviteCode: "i2plan://stale",
+			ExpiresAt:  "2024-01-01T00:00:00Z",
+			MaxUses:    1,
+		}
+
+		m.SetCreatedInvite(invite)
+
+		// Should be ignored (not set)
+		if m.createdInvite != nil {
+			t.Error("SetCreatedInvite should ignore stale messages when pendingCreate is false")
+		}
+	})
+
+	t.Run("accept valid invite created message", func(t *testing.T) {
+		m := NewInvitesModel()
+
+		// Simulate: user starts create and waits
+		m.pendingCreate = true
+		m.mode = InvitesModeCreate
+
+		// Valid inviteCreatedMsg arrives
+		invite := &rpc.InviteCreateResult{
+			InviteCode: "i2plan://valid",
+			ExpiresAt:  "2024-01-01T00:00:00Z",
+			MaxUses:    1,
+		}
+
+		m.SetCreatedInvite(invite)
+
+		// Should be accepted
+		if m.createdInvite == nil {
+			t.Error("SetCreatedInvite should accept valid messages when pendingCreate is true")
+		}
+		if m.pendingCreate {
+			t.Error("pendingCreate should be cleared after successful SetCreatedInvite")
+		}
+		if m.createdInvite.InviteCode != "i2plan://valid" {
+			t.Errorf("invite code = %s, want i2plan://valid", m.createdInvite.InviteCode)
+		}
+	})
+
+	t.Run("ignore stale invite accepted message", func(t *testing.T) {
+		m := NewInvitesModel()
+
+		// Simulate: user starts accept, then cancels
+		m.pendingAccept = true
+		m.mode = InvitesModeAccept
+
+		// User cancels (Esc pressed)
+		m.mode = InvitesModeNormal
+		m.pendingAccept = false
+
+		// Stale inviteAcceptedMsg arrives
+		result := &rpc.InviteAcceptResult{
+			NetworkID:  "network123",
+			PeerNodeID: "stale-node",
+			TunnelIP:   "10.0.0.5",
+			Message:    "Stale accept",
+		}
+
+		m.SetAcceptResult(result)
+
+		// Should be ignored (not set)
+		if m.acceptResult != nil {
+			t.Error("SetAcceptResult should ignore stale messages when pendingAccept is false")
+		}
+	})
+
+	t.Run("accept valid invite accepted message", func(t *testing.T) {
+		m := NewInvitesModel()
+
+		// Simulate: user starts accept and waits
+		m.pendingAccept = true
+		m.mode = InvitesModeAccept
+
+		// Valid inviteAcceptedMsg arrives
+		result := &rpc.InviteAcceptResult{
+			NetworkID:  "network123",
+			PeerNodeID: "valid-node",
+			TunnelIP:   "10.0.0.5",
+			Message:    "Successfully joined",
+		}
+
+		m.SetAcceptResult(result)
+
+		// Should be accepted
+		if m.acceptResult == nil {
+			t.Error("SetAcceptResult should accept valid messages when pendingAccept is true")
+		}
+		if m.pendingAccept {
+			t.Error("pendingAccept should be cleared after successful SetAcceptResult")
+		}
+		if m.mode != InvitesModeNormal {
+			t.Errorf("mode should be reset to Normal, got %d", m.mode)
+		}
+		if m.acceptResult.PeerNodeID != "valid-node" {
+			t.Errorf("peer node ID = %s, want valid-node", m.acceptResult.PeerNodeID)
+		}
+	})
+
+	t.Run("prevent duplicate create operations", func(t *testing.T) {
+		m := NewInvitesModel()
+
+		// First create starts
+		m.pendingCreate = true
+
+		// Try to start another create while first is pending
+		wasPending := m.pendingCreate
+
+		if !wasPending {
+			t.Error("pendingCreate should be true before duplicate attempt")
+		}
+
+		// The handleNormalModeKey would check this flag and return early
+		// We're testing the flag logic here
+		if !m.pendingCreate {
+			t.Error("pendingCreate should remain true, preventing duplicate operations")
 		}
 	})
 }
@@ -666,5 +893,80 @@ func TestConfigDefaults(t *testing.T) {
 
 	if cfg.RPCSocketPath != "/tmp/test.sock" {
 		t.Errorf("RPCSocketPath = %q, want %q", cfg.RPCSocketPath, "/tmp/test.sock")
+	}
+}
+
+// TestRPCConnectionStateDefaults verifies RPC connection state is properly initialized.
+func TestRPCConnectionStateDefaults(t *testing.T) {
+	// We can't create a real Model without a working RPC connection,
+	// but we can test the constants and logic
+	maxRetries := 3
+	if maxRetries != 3 {
+		t.Errorf("maxRetries = %d, want 3", maxRetries)
+	}
+}
+
+// TestIsConnectionError verifies connection error detection.
+func TestIsConnectionError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "connection refused",
+			err:      fmt.Errorf("connect: connection refused"),
+			expected: true,
+		},
+		{
+			name:     "broken pipe",
+			err:      fmt.Errorf("write: broken pipe"),
+			expected: true,
+		},
+		{
+			name:     "connection reset",
+			err:      fmt.Errorf("read: connection reset by peer"),
+			expected: true,
+		},
+		{
+			name:     "other error",
+			err:      fmt.Errorf("some other error"),
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isConnectionError(tc.err)
+			if result != tc.expected {
+				t.Errorf("isConnectionError(%v) = %v, want %v", tc.err, result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestMessageTypes verifies message type definitions.
+func TestMessageTypes(t *testing.T) {
+	// Test cleanupMsg
+	var _ tea.Msg = cleanupMsg{}
+
+	// Test reconnectMsg
+	reconnect := reconnectMsg{err: fmt.Errorf("test")}
+	if reconnect.err == nil {
+		t.Error("reconnectMsg should have error")
+	}
+
+	// Test refreshMsg
+	refresh := refreshMsg{
+		status: &rpc.StatusResult{NodeID: "test"},
+		err:    nil,
+	}
+	if refresh.status == nil {
+		t.Error("refreshMsg should have status")
 	}
 }

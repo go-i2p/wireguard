@@ -5,8 +5,11 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -24,6 +27,7 @@ const (
 	TabRoutes
 	TabInvites
 	TabStatus
+	numTabs // Total number of tabs (must be last)
 )
 
 func (t Tab) String() string {
@@ -45,6 +49,12 @@ func (t Tab) String() string {
 type Model struct {
 	// RPC client
 	client *rpc.Client
+
+	// RPC connection state
+	rpcConfig     Config
+	rpcConnected  bool
+	rpcRetryCount int
+	rpcMaxRetries int
 
 	// Current state
 	activeTab   Tab
@@ -95,13 +105,16 @@ func New(cfg Config) (*Model, error) {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return &Model{
-		client:      client,
-		activeTab:   TabStatus,
-		spinner:     s,
-		peersView:   NewPeersModel(),
-		routesView:  NewRoutesModel(),
-		invitesView: NewInvitesModel(),
-		statusView:  NewStatusModel(),
+		client:        client,
+		rpcConfig:     cfg,
+		rpcConnected:  true,
+		rpcMaxRetries: 3,
+		activeTab:     TabStatus,
+		spinner:       s,
+		peersView:     NewPeersModel(),
+		routesView:    NewRoutesModel(),
+		invitesView:   NewInvitesModel(),
+		statusView:    NewStatusModel(),
 	}, nil
 }
 
@@ -127,6 +140,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = m.handleRefreshMsg(msg, cmds)
 	case tickMsg:
 		cmds = append(cmds, m.refreshData)
+	case cleanupMsg:
+		// Close RPC client before exit
+		if err := m.Close(); err != nil {
+			log.WithError(err).Warn("failed to close RPC client")
+		}
+		return m, nil
+	case reconnectMsg:
+		cmds = append(cmds, m.attemptReconnection())
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -163,12 +184,16 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd)
 func (m *Model) handleGlobalKeys(msg tea.KeyMsg) (handled bool, cmd tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Quit):
-		return true, tea.Quit
+		// Send cleanup command before quitting
+		return true, tea.Sequence(
+			func() tea.Msg { return cleanupMsg{} },
+			tea.Quit,
+		)
 	case key.Matches(msg, keys.Tab):
-		m.activeTab = Tab((int(m.activeTab) + 1) % 5)
+		m.activeTab = Tab((int(m.activeTab) + 1) % int(numTabs))
 		return true, nil
 	case key.Matches(msg, keys.ShiftTab):
-		m.activeTab = Tab((int(m.activeTab) + 4) % 5)
+		m.activeTab = Tab((int(m.activeTab) + int(numTabs) - 1) % int(numTabs))
 		return true, nil
 	case key.Matches(msg, keys.Refresh):
 		return true, m.refreshData
@@ -320,7 +345,7 @@ func (m Model) renderFooter() string {
 	return footer
 }
 
-// refreshData fetches fresh data from RPC.
+// refreshData fetches fresh data from RPC with automatic reconnection on connection errors.
 func (m Model) refreshData() tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -329,9 +354,23 @@ func (m Model) refreshData() tea.Msg {
 
 	status, err := m.client.Status(ctx)
 	if err != nil {
+		log.WithError(err).Debug("RPC call failed")
 		msg.err = err
+
+		// Attempt reconnection if this is a connection error
+		if isConnectionError(err) && m.rpcRetryCount < m.rpcMaxRetries {
+			m.rpcRetryCount++
+			log.WithField("retry", m.rpcRetryCount).Debug("triggering RPC reconnection")
+			return reconnectMsg{err: err}
+		}
+
+		m.rpcConnected = false
 		return msg
 	}
+
+	// Reset retry count on successful connection
+	m.rpcRetryCount = 0
+	m.rpcConnected = true
 	msg.status = status
 
 	peers, err := m.client.PeersList(ctx)
@@ -382,9 +421,63 @@ type errMsg struct {
 	err error
 }
 
+type cleanupMsg struct{}
+
+type reconnectMsg struct {
+	err error
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+// attemptReconnection tries to reconnect to the RPC server.
+func (m *Model) attemptReconnection() tea.Cmd {
+	return func() tea.Msg {
+		log.Info("attempting RPC reconnection")
+
+		// Close existing connection
+		if m.client != nil {
+			m.client.Close()
+		}
+
+		// Wait a bit before reconnecting
+		time.Sleep(time.Second)
+
+		// Attempt to create new connection
+		client, err := rpc.NewClient(rpc.ClientConfig{
+			UnixSocketPath: m.rpcConfig.RPCSocketPath,
+			AuthFile:       m.rpcConfig.RPCAuthFile,
+		})
+		if err != nil {
+			log.WithError(err).Warn("reconnection failed")
+			return reconnectMsg{err: err}
+		}
+
+		log.Info("reconnection successful")
+		m.client = client
+		m.rpcConnected = true
+		m.rpcRetryCount = 0
+
+		// Trigger immediate refresh with new connection
+		return tickMsg(time.Now())
+	}
+}
+
+// isConnectionError checks if an error is related to connection failure.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check for common connection error patterns
+	return errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "connection reset")
 }
