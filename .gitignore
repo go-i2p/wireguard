@@ -34,3 +34,4 @@ i2pkeys
 tlskeys
 onionkeys
 /i2plan
+*.backup

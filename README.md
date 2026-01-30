@@ -30,8 +30,16 @@ If you require anonymity between mesh peers, increase the `TunnelLength` configu
 
 ## Prerequisites
 
-- Go 1.24 or later
-- Running I2P router with SAM enabled (default port 7656)
+- **Go 1.24 or later** - For building from source
+- **Running I2P router** with SAM enabled (default port 7656)
+- **wireguard-go dependencies** - This project uses the Go userspace implementation, not kernel WireGuard
+- **Elevated privileges** - Required for creating TUN/TAP network interfaces:
+  - **Linux**: Use `sudo` or grant `CAP_NET_ADMIN` capability: `sudo setcap cap_net_admin=+ep ./i2plan`
+  - **macOS**: Requires `sudo`
+  - **Windows**: Run PowerShell as Administrator
+  - **BSD**: Use `sudo` (FreeBSD) or `doas` (OpenBSD)
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed platform-specific setup instructions.
 
 ## Installation
 
@@ -40,6 +48,8 @@ go get github.com/go-i2p/wireguard
 ```
 
 ## Quick Start
+
+**IMPORTANT:** WireGuard requires elevated privileges to create network interfaces. See [Prerequisites](#prerequisites) above.
 
 ### Minimal Example (Transport Layer Only)
 
@@ -121,10 +131,14 @@ For a full working example with peer configuration, signal handling, and command
 ```bash
 cd i2pbind/example
 go build -o wg-i2p
-./wg-i2p -help
 
-# Example: Start a node
+# Run with elevated privileges (see Prerequisites)
+# Linux (with capabilities):
+sudo setcap cap_net_admin=+ep ./wg-i2p
 ./wg-i2p -name peer1 -privkey $(wg genkey)
+
+# Or with sudo:
+sudo ./wg-i2p -name peer1 -privkey $(wg genkey)
 
 # Example: Connect to a peer
 ./wg-i2p -name peer2 -privkey $(wg genkey) \
@@ -230,19 +244,26 @@ err = vpn.AcceptInvite(ctx, "i2plan://...")
 The `i2plan` command provides subcommands for managing the mesh VPN:
 
 ```bash
+# Build i2plan
+go build -o i2plan cmd/i2plan/main.go
+
+# Grant capabilities (Linux only)
+sudo setcap cap_net_admin=+ep ./i2plan
+
 # Start the node daemon (runs in foreground)
-i2plan
+./i2plan
+# Or with sudo on macOS/Windows/BSD: sudo ./i2plan
 
 # Launch the interactive Terminal UI (connects to running node via RPC)
-i2plan tui
+./i2plan tui
 
 # Start the Web UI server (connects to running node via RPC)
-i2plan web
+./i2plan web
 
 # Execute RPC commands directly
-i2plan rpc status
-i2plan rpc peers.list
-i2plan rpc invite.create
+./i2plan rpc status
+./i2plan rpc peers.list
+./i2plan rpc invite.create
 ```
 
 **Architecture Note:** The TUI and Web interfaces are **clients** that connect to the running node via RPC. They don't start their own node - they control an existing one. Start the node daemon first, then connect with `i2plan tui` or `i2plan web` in a separate terminal.

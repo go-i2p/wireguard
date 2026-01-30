@@ -43,12 +43,13 @@ nc -zv 127.0.0.1 7656
 Test-NetConnection -ComputerName 127.0.0.1 -Port 7656
 ```
 
-### Check WireGuard
+### Check WireGuard Interface
+
+**Note:** i2plan uses wireguard-go (userspace implementation), creating a `wg0` TUN interface.
 
 ```bash
 # Linux/BSD
 ip link show wg0
-sudo wg show
 
 # macOS
 ifconfig wg0
@@ -294,58 +295,67 @@ Check I2P router console → Tunnels:
 
 ## WireGuard Issues
 
-### WireGuard Kernel Module Not Loaded (Linux)
+**Important:** i2plan uses **wireguard-go** (userspace implementation), not kernel WireGuard. Issues are related to TUN/TAP interfaces, not WireGuard modules.
+
+### TUN/TAP Support Missing (Linux)
 
 **Symptoms:**
-- Error: `module not found`
-- `lsmod | grep wireguard` returns nothing
+- Error: `failed to create TUN device`
+- Cannot create network interface
 
 **Solution:**
 ```bash
-# Load module
-sudo modprobe wireguard
+# Check if TUN is loaded
+lsmod | grep tun
 
-# Verify
-lsmod | grep wireguard
+# Load TUN module
+sudo modprobe tun
+
+# Verify TUN device exists
+ls -l /dev/net/tun
 
 # Load automatically on boot
-echo "wireguard" | sudo tee -a /etc/modules
-
-# If module doesn't exist, install WireGuard
-# Debian/Ubuntu
-sudo apt install wireguard wireguard-dkms linux-headers-$(uname -r)
-
-# Fedora/RHEL
-sudo dnf install wireguard-tools kernel-devel
-
-# Arch
-sudo pacman -S wireguard-tools wireguard-dkms
+echo "tun" | sudo tee -a /etc/modules
 ```
 
-### WireGuard Not Installed (macOS)
+### TUN/TAP Permissions (Linux)
 
 **Symptoms:**
-- Command not found: `wg`
-- Interface creation fails
+- Error: `permission denied` on `/dev/net/tun`
 
 **Solution:**
 ```bash
-brew install wireguard-tools
+# Check permissions
+ls -l /dev/net/tun
+# Should be: crw-rw-rw- 1 root root
+
+# Fix permissions if needed
+sudo chmod 666 /dev/net/tun
 ```
 
-### WireGuard Service Not Running (Windows)
+### TUN Interface Issues (macOS)
 
 **Symptoms:**
-- Cannot create tunnel
-- Service errors
+- Cannot create TUN interface
 
 **Solution:**
-1. Open Services (services.msc)
-2. Find "WireGuard Tunnel Service"
-3. Set to "Automatic" startup
-4. Start the service
+macOS includes TUN/TAP support. If issues persist, check:
+```bash
+# Verify running with sudo
+sudo ./i2plan start
+```
 
-Or reinstall WireGuard from https://www.wireguard.com/install/
+### TUN Interface Issues (Windows)
+
+**Symptoms:**
+- Cannot create TUN device
+- Adapter errors
+
+**Solution:**
+Windows TUN support is built-in, but requires admin privileges:
+1. Run PowerShell as Administrator
+2. Check Windows Update for latest network drivers
+3. Verify no antivirus blocking TUN creation
 
 ### WireGuard Interface Doesn't Come Up
 
@@ -371,12 +381,18 @@ ipconfig /all
 Check i2plan logs for errors:
 ```bash
 # Look for:
-# - "failed to create interface"
+# - "failed to create TUN device" (TUN/TAP issue)
+# - "failed to create interface" (permissions)
 # - "invalid configuration"
-# - Permission errors
+# - Permission errors (need sudo/capabilities)
 
 tail -n 50 ~/.i2plan/logs/i2plan.log | grep -i "error\|fail"
 ```
+
+**Common causes:**
+1. Missing TUN/TAP support (see above)
+2. Insufficient permissions (need sudo or CAP_NET_ADMIN)
+3. Port conflict on WireGuard listen port
 
 ---
 
@@ -862,21 +878,22 @@ cd C:\Users\YourName\wireguard
 $env:PATH += ";C:\Users\YourName\wireguard"
 ```
 
-### FreeBSD: "if_wg.ko not found"
+### FreeBSD: TUN Device Issues
 
 **Symptoms:**
-- WireGuard kernel module missing
+- Cannot create TUN device
+- TUN device not found
 
 **Solution:**
 ```bash
-# Install kernel module
-sudo pkg install wireguard-kmod
+# Check TUN support (built into FreeBSD)
+kldstat | grep if_tun
 
-# Load module
-sudo kldload if_wg
+# If needed, load TUN module
+sudo kldload if_tun
 
-# Add to boot loader
-echo 'if_wg_load="YES"' | sudo tee -a /boot/loader.conf
+# Verify device node exists
+ls -l /dev/tun*
 ```
 
 ### OpenBSD: "pledge: operation not permitted"
@@ -932,9 +949,10 @@ cat ~/.i2plan/config.toml
 curl -I http://127.0.0.1:7657
 nc -zv 127.0.0.1 7656
 
-# WireGuard status
-sudo wg show  # Linux/BSD/macOS
-# (Windows: as Administrator)
+# TUN/TAP support
+lsmod | grep tun  # Linux
+ls -l /dev/net/tun  # Linux
+kldstat | grep tun  # FreeBSD
 
 # Recent logs
 tail -n 200 ~/.i2plan/logs/i2plan.log

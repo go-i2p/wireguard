@@ -74,21 +74,19 @@ sudo systemctl enable i2p
 3. Enable "SAM application bridge" (port 7656)
 4. Click Save and restart I2P
 
-#### 3. Install WireGuard
+#### 3. TUN/TAP Support
+
+**Note:** i2plan uses **wireguard-go** (userspace implementation), not kernel WireGuard. You don't need the kernel module.
 
 ```bash
-# Debian/Ubuntu
-sudo apt install wireguard wireguard-tools
+# Verify TUN support (should already be present on modern Linux)
+lsmod | grep tun
 
-# Fedora/RHEL
-sudo dnf install wireguard-tools
+# If missing, load TUN module
+sudo modprobe tun
 
-# Arch
-sudo pacman -S wireguard-tools
-
-# Verify kernel module
-sudo modprobe wireguard
-lsmod | grep wireguard
+# Load automatically on boot (optional)
+echo "tun" | sudo tee -a /etc/modules
 ```
 
 #### 4. WireGuard Permissions
@@ -134,9 +132,11 @@ See [Running as a Service](#running-as-a-service) section.
 
 #### 2. Install Dependencies
 
+**Note:** i2plan uses **wireguard-go** (userspace implementation) which is included in the Go build. You don't need to install WireGuard separately.
+
 ```bash
-# Install Go, I2P, and WireGuard
-brew install go i2p wireguard-tools
+# Install Go and I2P
+brew install go i2p
 
 # Start I2P
 i2prouter start
@@ -186,13 +186,13 @@ See [Running as a Service](#running-as-a-service) section.
 6. Enable "SAM application bridge" (port 7656)
 7. Click Save and restart I2P
 
-#### 3. Install WireGuard
+#### 3. TUN/TAP Support
 
-1. Download from https://www.wireguard.com/install/
-2. Run the installer
-3. Ensure "WireGuard Tunnel Service" is running in Services
+**Note:** i2plan uses **wireguard-go** (userspace implementation) which is included in the Go build. You don't need to install WireGuard separately.
 
-#### 4. WireGuard Permissions
+Windows includes TUN/TAP support natively. No additional installation required.
+
+#### 4. Administrator Permissions
 
 **IMPORTANT**: WireGuard requires administrator privileges on Windows.
 
@@ -219,13 +219,14 @@ See [Running as a Service](#running-as-a-service) section.
 
 #### FreeBSD
 
+**Note:** i2plan uses **wireguard-go** (userspace implementation) which is included in the Go build.
+
 ```bash
 # Install packages
-pkg install go i2p wireguard-tools wireguard-kmod
+pkg install go i2p
 
-# Load WireGuard kernel module
-kldload if_wg
-echo 'if_wg_load="YES"' >> /boot/loader.conf
+# Verify TUN support (should be built-in)
+kldstat | grep if_tun
 
 # Start I2P
 service i2p start
@@ -245,9 +246,15 @@ sudo ./i2plan start
 
 #### OpenBSD
 
+**Note:** i2plan uses **wireguard-go** (userspace implementation) which is included in the Go build, not the kernel WireGuard.
+
 ```bash
-# Install packages (WireGuard built into kernel 7.0+)
+# Install packages
 pkg_add go i2p
+
+# Verify TUN support (built into OpenBSD)
+ifconfig tun0 create  # Test
+ifconfig tun0 destroy  # Cleanup
 
 # Start I2P
 rcctl enable i2pd
