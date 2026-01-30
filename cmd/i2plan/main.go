@@ -263,6 +263,12 @@ func handleRPC(args []string, _ *slog.Logger, dataDir string) int {
 		return rpcConfigGet(ctx, client, methodArgs)
 	case "config.set":
 		return rpcConfigSet(ctx, client, methodArgs)
+	case "bans.list":
+		return rpcBansList(ctx, client)
+	case "bans.add":
+		return rpcBansAdd(ctx, client, methodArgs)
+	case "bans.remove":
+		return rpcBansRemove(ctx, client, methodArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown method: %s\n\n", method)
 		printRPCUsage()
@@ -281,6 +287,9 @@ func printRPCUsage() {
 	fmt.Fprintln(os.Stderr, "  routes.list         Show routing table")
 	fmt.Fprintln(os.Stderr, "  config.get [KEY]    Get configuration")
 	fmt.Fprintln(os.Stderr, "  config.set KEY VAL  Set configuration")
+	fmt.Fprintln(os.Stderr, "  bans.list           List banned peers")
+	fmt.Fprintln(os.Stderr, "  bans.add ID REASON  Ban a peer")
+	fmt.Fprintln(os.Stderr, "  bans.remove ID      Unban a peer")
 }
 
 func rpcStatus(ctx context.Context, client *rpc.Client) int {
@@ -489,6 +498,87 @@ func rpcConfigSet(ctx context.Context, client *rpc.Client, args []string) int {
 	}
 
 	fmt.Printf("Set %s: %v -> %v\n", result.Key, result.OldValue, result.NewValue)
+	return 0
+}
+
+func rpcBansList(ctx context.Context, client *rpc.Client) int {
+	result, err := client.BansList(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+
+	if len(result.Bans) == 0 {
+		fmt.Println("No banned peers")
+		return 0
+	}
+
+	fmt.Printf("Banned Peers (%d):\n", len(result.Bans))
+	for _, ban := range result.Bans {
+		fmt.Printf("  %s\n", ban.NodeID)
+		fmt.Printf("    Reason: %s\n", ban.Reason)
+		if ban.Description != "" {
+			fmt.Printf("    Description: %s\n", ban.Description)
+		}
+		fmt.Printf("    Banned: %s\n", ban.BannedAt.Format(time.RFC3339))
+		if ban.ExpiresAt != nil && !ban.ExpiresAt.IsZero() {
+			fmt.Printf("    Expires: %s\n", ban.ExpiresAt.Format(time.RFC3339))
+		}
+	}
+	return 0
+}
+
+func rpcBansAdd(ctx context.Context, client *rpc.Client, args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: i2plan rpc bans.add <node_id> <reason> [description] [duration]")
+		return 1
+	}
+
+	nodeID := args[0]
+	reason := args[1]
+	description := ""
+	duration := "0" // permanent
+
+	if len(args) > 2 {
+		description = args[2]
+	}
+	if len(args) > 3 {
+		duration = args[3]
+	}
+
+	result, err := client.BansAdd(ctx, nodeID, reason, description, duration)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+
+	if result.Success {
+		fmt.Printf("Banned peer: %s\n", nodeID)
+	} else {
+		fmt.Printf("Failed: %s\n", result.Message)
+	}
+	return 0
+}
+
+func rpcBansRemove(ctx context.Context, client *rpc.Client, args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: i2plan rpc bans.remove <node_id>")
+		return 1
+	}
+
+	nodeID := args[0]
+
+	result, err := client.BansRemove(ctx, nodeID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+
+	if result.Success {
+		fmt.Printf("Unbanned peer: %s\n", nodeID)
+	} else {
+		fmt.Printf("Not found: %s\n", result.Message)
+	}
 	return 0
 }
 

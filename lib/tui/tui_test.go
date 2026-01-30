@@ -2,7 +2,6 @@ package tui
 
 import (
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/go-i2p/wireguard/lib/rpc"
@@ -22,7 +21,6 @@ func TestTabString(t *testing.T) {
 		{TabRoutes, "Routes"},
 		{TabInvites, "Invites"},
 		{TabStatus, "Status"},
-		{TabLogs, "Logs"},
 		{Tab(99), "Unknown"},
 	}
 
@@ -196,28 +194,6 @@ func TestStatusModelSetData(t *testing.T) {
 	}
 	if m.status.NodeName != "test-node" {
 		t.Errorf("SetData: NodeName = %q, want %q", m.status.NodeName, "test-node")
-	}
-}
-
-func TestLogsModel(t *testing.T) {
-	m := NewLogsModel()
-
-	logs := []rpc.LogEntry{
-		{Timestamp: time.Now(), Level: "INFO", Message: "Started"},
-		{Timestamp: time.Now(), Level: "DEBUG", Message: "Connecting"},
-		{Timestamp: time.Now(), Level: "ERROR", Message: "Failed"},
-	}
-
-	m.SetDimensions(80, 24)
-	m.SetData(logs)
-
-	if len(m.logs) != 3 {
-		t.Errorf("SetData: got %d logs, want 3", len(m.logs))
-	}
-
-	// Test follow mode
-	if !m.follow {
-		t.Error("Initial follow mode should be true")
 	}
 }
 

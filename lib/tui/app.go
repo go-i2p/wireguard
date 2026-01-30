@@ -24,7 +24,6 @@ const (
 	TabRoutes
 	TabInvites
 	TabStatus
-	TabLogs
 )
 
 func (t Tab) String() string {
@@ -37,8 +36,6 @@ func (t Tab) String() string {
 		return "Invites"
 	case TabStatus:
 		return "Status"
-	case TabLogs:
-		return "Logs"
 	default:
 		return "Unknown"
 	}
@@ -68,7 +65,6 @@ type Model struct {
 	routesView  RoutesModel
 	invitesView InvitesModel
 	statusView  StatusModel
-	logsView    LogsModel
 
 	// Input mode
 	inputMode bool
@@ -106,7 +102,6 @@ func New(cfg Config) (*Model, error) {
 		routesView:  NewRoutesModel(),
 		invitesView: NewInvitesModel(),
 		statusView:  NewStatusModel(),
-		logsView:    NewLogsModel(),
 	}, nil
 }
 
@@ -143,8 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = TabInvites
 		case key.Matches(msg, keys.Status):
 			m.activeTab = TabStatus
-		case key.Matches(msg, keys.Logs):
-			m.activeTab = TabLogs
+			// Note: logs tab disabled - no backend log collection exists
 		}
 
 		// Pass to active view
@@ -161,10 +155,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.invitesView, cmd = m.invitesView.Update(msg, m.client)
 			cmds = append(cmds, cmd)
-		case TabLogs:
-			var cmd tea.Cmd
-			m.logsView, cmd = m.logsView.Update(msg)
-			cmds = append(cmds, cmd)
 		}
 
 	case tea.WindowSizeMsg:
@@ -177,7 +167,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.routesView.SetDimensions(m.width, contentHeight)
 		m.invitesView.SetDimensions(m.width, contentHeight)
 		m.statusView.SetDimensions(m.width, contentHeight)
-		m.logsView.SetDimensions(m.width, contentHeight)
 
 	case refreshMsg:
 		m.status = msg.status
@@ -238,8 +227,6 @@ func (m Model) View() string {
 		b.WriteString(m.invitesView.View())
 	case TabStatus:
 		b.WriteString(m.statusView.View())
-	case TabLogs:
-		b.WriteString(m.logsView.View())
 	}
 
 	// Footer
@@ -251,7 +238,7 @@ func (m Model) View() string {
 
 // renderHeader renders the tab bar.
 func (m Model) renderHeader() string {
-	tabs := []Tab{TabPeers, TabRoutes, TabInvites, TabStatus, TabLogs}
+	tabs := []Tab{TabPeers, TabRoutes, TabInvites, TabStatus}
 
 	var renderedTabs []string
 	for _, tab := range tabs {
@@ -278,8 +265,6 @@ func (m Model) renderFooter() string {
 		helpItems = append(helpItems, "↑↓ navigate", "c connect")
 	case TabInvites:
 		helpItems = append(helpItems, "n new invite", "a accept invite")
-	case TabLogs:
-		helpItems = append(helpItems, "↑↓ scroll")
 	}
 
 	// Global help

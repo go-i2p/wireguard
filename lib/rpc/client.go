@@ -259,3 +259,37 @@ func (c *Client) ConfigSet(ctx context.Context, key string, value any) (*ConfigS
 	}
 	return &result, nil
 }
+
+// BansList calls the "bans.list" method.
+func (c *Client) BansList(ctx context.Context) (*BanListResult, error) {
+	var result BanListResult
+	if err := c.Call(ctx, "bans.list", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BansAdd calls the "bans.add" method.
+func (c *Client) BansAdd(ctx context.Context, nodeID, reason, description string, duration string) (*BanAddResult, error) {
+	params := BanAddParams{
+		NodeID:      nodeID,
+		Reason:      reason,
+		Description: description,
+		Duration:    duration,
+	}
+	var result BanAddResult
+	if err := c.Call(ctx, "bans.add", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BansRemove calls the "bans.remove" method.
+func (c *Client) BansRemove(ctx context.Context, nodeID string) (*BanRemoveResult, error) {
+	params := BanRemoveParams{NodeID: nodeID}
+	var result BanRemoveResult
+	if err := c.Call(ctx, "bans.remove", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
