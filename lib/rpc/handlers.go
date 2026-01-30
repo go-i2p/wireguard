@@ -404,6 +404,22 @@ func (h *Handlers) BansList(ctx context.Context, params json.RawMessage) (any, *
 }
 
 // BansAdd bans a peer.
+// parseBanDuration parses the duration string, returning zero duration if empty.
+func parseBanDuration(durationStr string) (time.Duration, error) {
+	if durationStr == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(durationStr)
+}
+
+// formatBanMessage creates the result message for a ban operation.
+func formatBanMessage(duration time.Duration) string {
+	if duration > 0 {
+		return "peer banned for " + duration.String()
+	}
+	return "peer banned permanently"
+}
+
 func (h *Handlers) BansAdd(ctx context.Context, params json.RawMessage) (any, *Error) {
 	if h.bans == nil {
 		return nil, ErrInternal("bans not available")
@@ -422,29 +438,18 @@ func (h *Handlers) BansAdd(ctx context.Context, params json.RawMessage) (any, *E
 		reason = "manual"
 	}
 
-	var duration time.Duration
-	if p.Duration != "" {
-		var err error
-		duration, err = time.ParseDuration(p.Duration)
-		if err != nil {
-			return nil, ErrInvalidParams("invalid duration: " + err.Error())
-		}
+	duration, err := parseBanDuration(p.Duration)
+	if err != nil {
+		return nil, ErrInvalidParams("invalid duration: " + err.Error())
 	}
 
 	if err := h.bans.AddBan(p.NodeID, reason, p.Description, duration); err != nil {
 		return nil, ErrInternal(err.Error())
 	}
 
-	msg := "peer banned"
-	if duration > 0 {
-		msg = "peer banned for " + duration.String()
-	} else {
-		msg = "peer banned permanently"
-	}
-
 	return &BanAddResult{
 		Success: true,
-		Message: msg,
+		Message: formatBanMessage(duration),
 	}, nil
 }
 

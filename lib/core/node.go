@@ -901,24 +901,19 @@ func (n *Node) cleanupPersistence() {
 }
 
 // cleanupDevice closes the WireGuard device with a two-phase timeout.
-func (n *Node) cleanupDevice() {
-	if n.device == nil {
-		return
+// getShutdownTimeout returns the configured shutdown timeout or default.
+func (n *Node) getShutdownTimeout() time.Duration {
+	timeout := n.config.Mesh.ShutdownTimeout
+	if timeout < time.Second {
+		return DefaultShutdownTimeout
 	}
+	return timeout
+}
 
-	shutdownTimeout := n.config.Mesh.ShutdownTimeout
-	if shutdownTimeout < time.Second {
-		shutdownTimeout = DefaultShutdownTimeout
-	}
-
+// waitForDeviceClose waits for device close with timeout and logging.
+func (n *Node) waitForDeviceClose(done <-chan struct{}, shutdownTimeout time.Duration) {
 	warnTimeout := shutdownTimeout * 2 / 5
 	remainingTimeout := shutdownTimeout - warnTimeout
-
-	done := make(chan struct{})
-	go func() {
-		n.device.Close()
-		close(done)
-	}()
 
 	select {
 	case <-done:
@@ -933,6 +928,22 @@ func (n *Node) cleanupDevice() {
 				"timeout", shutdownTimeout.String())
 		}
 	}
+}
+
+func (n *Node) cleanupDevice() {
+	if n.device == nil {
+		return
+	}
+
+	shutdownTimeout := n.getShutdownTimeout()
+
+	done := make(chan struct{})
+	go func() {
+		n.device.Close()
+		close(done)
+	}()
+
+	n.waitForDeviceClose(done, shutdownTimeout)
 	n.device = nil
 }
 
@@ -1276,32 +1287,49 @@ func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreat
 		return nil, errors.New("node not fully initialized")
 	}
 
-	// If no NetworkID exists, this is the first node creating a new network
-	// Auto-generate a NetworkID to bootstrap the mesh
-	if id.NetworkID() == "" {
-		networkID, err := identity.GenerateNetworkID()
-		if err != nil {
-			return nil, fmt.Errorf("generating network ID: %w", err)
-		}
-		id.SetNetworkID(networkID)
-
-		// Add the network discovery token for auto-connect
-		if pm != nil {
-			discoveryToken := identity.DeriveDiscoveryToken(networkID)
-			pm.AddValidToken(discoveryToken)
-			n.logger.Debug("added network discovery token for new network")
-		}
-
-		// Persist the identity with the new NetworkID
-		identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
-		if err := id.Save(identityPath); err != nil {
-			n.logger.Warn("failed to save identity with network ID", "error", err)
-		}
-
-		n.logger.Info("created new mesh network", "network_id", networkID)
+	if err := n.ensureNetworkID(id, pm); err != nil {
+		return nil, err
 	}
 
-	// Create invite options
+	invite, err := n.generateInvite(id, expiry, maxUses)
+	if err != nil {
+		return nil, err
+	}
+
+	key := n.storeAndRegisterInvite(invStore, pm, invite)
+
+	return n.buildInviteResult(invite, key)
+}
+
+// ensureNetworkID creates a new network ID if one doesn't exist.
+func (n *Node) ensureNetworkID(id *identity.Identity, pm *mesh.PeerManager) error {
+	if id.NetworkID() != "" {
+		return nil
+	}
+
+	networkID, err := identity.GenerateNetworkID()
+	if err != nil {
+		return fmt.Errorf("generating network ID: %w", err)
+	}
+	id.SetNetworkID(networkID)
+
+	if pm != nil {
+		discoveryToken := identity.DeriveDiscoveryToken(networkID)
+		pm.AddValidToken(discoveryToken)
+		n.logger.Debug("added network discovery token for new network")
+	}
+
+	identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
+	if err := id.Save(identityPath); err != nil {
+		n.logger.Warn("failed to save identity with network ID", "error", err)
+	}
+
+	n.logger.Info("created new mesh network", "network_id", networkID)
+	return nil
+}
+
+// generateInvite creates a new invite with the specified options.
+func (n *Node) generateInvite(id *identity.Identity, expiry time.Duration, maxUses int) (*identity.Invite, error) {
 	opts := identity.InviteOptions{
 		Expiry:  expiry,
 		MaxUses: maxUses,
@@ -1309,29 +1337,34 @@ func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreat
 	if opts.Expiry <= 0 {
 		opts.Expiry = identity.DefaultInviteExpiry
 	}
-	// Note: MaxUses=0 means unlimited uses, only default negative values
 	if opts.MaxUses < 0 {
 		opts.MaxUses = identity.DefaultMaxUses
 	}
 
-	// Generate the invite
 	invite, err := identity.NewInvite(id, opts)
 	if err != nil {
 		return nil, fmt.Errorf("generating invite: %w", err)
 	}
 
-	// Store the invite so we can validate incoming handshakes with this token
+	return invite, nil
+}
+
+// storeAndRegisterInvite stores the invite and registers its token with the peer manager.
+func (n *Node) storeAndRegisterInvite(invStore *identity.InviteStore, pm *mesh.PeerManager, invite *identity.Invite) string {
 	key := invStore.AddGenerated(invite)
 	if err := invStore.Save(); err != nil {
 		n.logger.Warn("failed to persist invite store", "error", err)
 	}
 
-	// Add the auth token to the peer manager's valid tokens
 	if pm != nil {
 		pm.AddValidToken(invite.AuthToken)
 	}
 
-	// Encode the invite to a shareable code
+	return key
+}
+
+// buildInviteResult creates the RPC result from an invite.
+func (n *Node) buildInviteResult(invite *identity.Invite, key string) (*rpc.InviteCreateResult, error) {
 	inviteCode, err := invite.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("encoding invite: %w", err)

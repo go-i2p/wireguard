@@ -177,6 +177,48 @@ func (pm *PeerManager) SetTokenUsedCallback(onTokenUsed func(token []byte)) {
 }
 
 // HandleHandshakeInit processes an incoming handshake initiation.
+// recordTokenStrike records a ban strike for invalid auth token.
+func (pm *PeerManager) recordTokenStrike(nodeID string) {
+	if pm.banList != nil {
+		pm.banList.RecordStrike(nodeID, BanReasonHandshakeFailures, "invalid auth token")
+	}
+}
+
+// updateExistingPeer refreshes an existing connected peer's last seen time.
+func (pm *PeerManager) updateExistingPeer(nodeID string) {
+	if existing, ok := pm.peers[nodeID]; ok {
+		if existing.State == PeerStateConnected {
+			existing.LastSeen = time.Now()
+			pm.logger.Info("peer already connected", "node_id", nodeID)
+		}
+	}
+}
+
+// createPeerEntry creates a new peer entry in the peers map.
+func (pm *PeerManager) createPeerEntry(init *HandshakeInit, pubKey wgtypes.Key, claimedIP netip.Addr, token []byte) {
+	pm.peers[init.NodeID] = &Peer{
+		NodeID:      init.NodeID,
+		I2PDest:     init.I2PDest,
+		WGPublicKey: pubKey,
+		TunnelIP:    claimedIP,
+		State:       PeerStatePending,
+		LastSeen:    time.Now(),
+		AuthToken:   token,
+	}
+}
+
+// buildHandshakeAcceptResponse creates a successful handshake response.
+func (pm *PeerManager) buildHandshakeAcceptResponse() *HandshakeResponse {
+	return &HandshakeResponse{
+		I2PDest:     pm.i2pDest,
+		WGPublicKey: pm.wgPublicKey.String(),
+		TunnelIP:    pm.tunnelIP.String(),
+		NetworkID:   pm.networkID,
+		NodeID:      pm.nodeID,
+		Accepted:    true,
+	}
+}
+
 func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeResponse, error) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -195,9 +237,7 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 
 	matchedToken, validToken := pm.validateToken(init.AuthToken)
 	if !validToken {
-		if pm.banList != nil {
-			pm.banList.RecordStrike(init.NodeID, BanReasonHandshakeFailures, "invalid auth token")
-		}
+		pm.recordTokenStrike(init.NodeID)
 		return pm.rejectHandshake("invalid auth token"), nil
 	}
 
@@ -210,35 +250,14 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		return resp, nil
 	}
 
-	if existing, ok := pm.peers[init.NodeID]; ok {
-		if existing.State == PeerStateConnected {
-			existing.LastSeen = time.Now()
-			pm.logger.Info("peer already connected", "node_id", init.NodeID)
-		}
-	}
+	pm.updateExistingPeer(init.NodeID)
 
 	if len(pm.peers) >= pm.maxPeers {
 		return pm.rejectHandshake("max peers reached"), nil
 	}
 
-	pm.peers[init.NodeID] = &Peer{
-		NodeID:      init.NodeID,
-		I2PDest:     init.I2PDest,
-		WGPublicKey: pubKey,
-		TunnelIP:    claimedIP,
-		State:       PeerStatePending,
-		LastSeen:    time.Now(),
-		AuthToken:   matchedToken,
-	}
-
-	return &HandshakeResponse{
-		I2PDest:     pm.i2pDest,
-		WGPublicKey: pm.wgPublicKey.String(),
-		TunnelIP:    pm.tunnelIP.String(),
-		NetworkID:   pm.networkID,
-		NodeID:      pm.nodeID,
-		Accepted:    true,
-	}, nil
+	pm.createPeerEntry(init, pubKey, claimedIP, matchedToken)
+	return pm.buildHandshakeAcceptResponse(), nil
 }
 
 // checkBanStatus verifies the peer is not banned by node ID or I2P destination.

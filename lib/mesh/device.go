@@ -65,47 +65,54 @@ type DevicePeer struct {
 }
 
 // NewDevice creates a new WireGuard device for the mesh network.
-func NewDevice(cfg DeviceConfig) (*Device, error) {
+// normalizeDeviceConfig sets default values for missing configuration.
+func normalizeDeviceConfig(cfg *DeviceConfig) *slog.Logger {
 	if cfg.MTU <= 0 {
 		cfg.MTU = 1280 // Safe default for I2P
 	}
-
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
+	return logger
+}
 
-	// Validate configuration
+// validateDeviceConfig checks that the device configuration is valid.
+func validateDeviceConfig(cfg *DeviceConfig) error {
 	if !cfg.TunnelIP.IsValid() {
-		return nil, errors.New("invalid tunnel IP")
+		return errors.New("invalid tunnel IP")
 	}
 	if !cfg.Subnet.IsValid() {
-		return nil, errors.New("invalid subnet")
+		return errors.New("invalid subnet")
 	}
 	if !cfg.Subnet.Contains(cfg.TunnelIP) {
-		return nil, errors.New("tunnel IP not in subnet")
+		return errors.New("tunnel IP not in subnet")
 	}
+	return nil
+}
 
-	// Create netstack TUN device
+// createNetstackTUN creates the netstack TUN device with the given configuration.
+func createNetstackTUN(cfg *DeviceConfig) (tun.Device, *netstack.Net, error) {
 	tun, net, err := netstack.CreateNetTUN(
 		[]netip.Addr{cfg.TunnelIP},
 		[]netip.Addr{}, // No DNS
 		cfg.MTU,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("creating netstack TUN: %w", err)
+		return nil, nil, fmt.Errorf("creating netstack TUN: %w", err)
 	}
+	return tun, net, nil
+}
 
-	// Use configured bind or default to standard UDP
+// initializeWireGuardDevice creates and configures the WireGuard device.
+func initializeWireGuardDevice(tunDev tun.Device, cfg *DeviceConfig) (*device.Device, error) {
 	bind := cfg.Bind
 	if bind == nil {
 		bind = conn.NewDefaultBind()
 	}
 
-	// Create WireGuard device
-	dev := device.NewDevice(tun, bind, device.NewLogger(device.LogLevelSilent, ""))
+	dev := device.NewDevice(tunDev, bind, device.NewLogger(device.LogLevelSilent, ""))
 
-	// Configure the device with our private key
 	ipcConfig := fmt.Sprintf("private_key=%s\n", hexKey(cfg.PrivateKey))
 	if cfg.ListenPort > 0 {
 		ipcConfig += fmt.Sprintf("listen_port=%d\n", cfg.ListenPort)
@@ -116,10 +123,29 @@ func NewDevice(cfg DeviceConfig) (*Device, error) {
 		return nil, fmt.Errorf("configuring device: %w", err)
 	}
 
-	// Bring up the device
 	if err := dev.Up(); err != nil {
 		dev.Close()
 		return nil, fmt.Errorf("bringing up device: %w", err)
+	}
+
+	return dev, nil
+}
+
+func NewDevice(cfg DeviceConfig) (*Device, error) {
+	logger := normalizeDeviceConfig(&cfg)
+
+	if err := validateDeviceConfig(&cfg); err != nil {
+		return nil, err
+	}
+
+	tunDev, net, err := createNetstackTUN(&cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	dev, err := initializeWireGuardDevice(tunDev, &cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	logger.Info("created WireGuard device",
@@ -130,7 +156,7 @@ func NewDevice(cfg DeviceConfig) (*Device, error) {
 	return &Device{
 		dev:        dev,
 		net:        net,
-		tun:        tun,
+		tun:        tunDev,
 		logger:     logger,
 		privateKey: cfg.PrivateKey,
 		tunnelIP:   cfg.TunnelIP,

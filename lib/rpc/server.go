@@ -137,6 +137,47 @@ func (s *Server) RegisterHandlers(handlers map[string]Handler) {
 }
 
 // Start starts the RPC server.
+// startUnixListener creates and starts the Unix socket listener.
+func (s *Server) startUnixListener(ctx context.Context, socketPath string) error {
+	os.Remove(socketPath)
+
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+		return fmt.Errorf("creating socket dir: %w", err)
+	}
+
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("listen unix: %w", err)
+	}
+
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		listener.Close()
+		return fmt.Errorf("chmod socket: %w", err)
+	}
+
+	s.unixListener = listener
+	s.wg.Add(1)
+	go s.acceptLoop(ctx, listener, "unix")
+
+	s.logger.Info("RPC server listening on Unix socket", "path", socketPath)
+	return nil
+}
+
+// startTCPListener creates and starts the TCP listener.
+func (s *Server) startTCPListener(ctx context.Context, address string) error {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("listen tcp: %w", err)
+	}
+
+	s.tcpListener = listener
+	s.wg.Add(1)
+	go s.acceptLoop(ctx, listener, "tcp")
+
+	s.logger.Info("RPC server listening on TCP", "address", address)
+	return nil
+}
+
 func (s *Server) Start(ctx context.Context, cfg ServerConfig) error {
 	s.mu.Lock()
 	if s.running {
@@ -146,49 +187,19 @@ func (s *Server) Start(ctx context.Context, cfg ServerConfig) error {
 	s.running = true
 	s.mu.Unlock()
 
-	// Start Unix socket listener
 	if cfg.UnixSocketPath != "" {
-		// Remove existing socket file
-		os.Remove(cfg.UnixSocketPath)
-
-		// Ensure directory exists
-		if err := os.MkdirAll(filepath.Dir(cfg.UnixSocketPath), 0o700); err != nil {
-			return fmt.Errorf("creating socket dir: %w", err)
+		if err := s.startUnixListener(ctx, cfg.UnixSocketPath); err != nil {
+			return err
 		}
-
-		listener, err := net.Listen("unix", cfg.UnixSocketPath)
-		if err != nil {
-			return fmt.Errorf("listen unix: %w", err)
-		}
-
-		// Set socket permissions (owner only)
-		if err := os.Chmod(cfg.UnixSocketPath, 0o600); err != nil {
-			listener.Close()
-			return fmt.Errorf("chmod socket: %w", err)
-		}
-
-		s.unixListener = listener
-		s.wg.Add(1)
-		go s.acceptLoop(ctx, listener, "unix")
-
-		s.logger.Info("RPC server listening on Unix socket", "path", cfg.UnixSocketPath)
 	}
 
-	// Start TCP listener
 	if cfg.TCPAddress != "" {
-		listener, err := net.Listen("tcp", cfg.TCPAddress)
-		if err != nil {
+		if err := s.startTCPListener(ctx, cfg.TCPAddress); err != nil {
 			if s.unixListener != nil {
 				s.unixListener.Close()
 			}
-			return fmt.Errorf("listen tcp: %w", err)
+			return err
 		}
-
-		s.tcpListener = listener
-		s.wg.Add(1)
-		go s.acceptLoop(ctx, listener, "tcp")
-
-		s.logger.Info("RPC server listening on TCP", "address", cfg.TCPAddress)
 	}
 
 	if s.unixListener == nil && s.tcpListener == nil {

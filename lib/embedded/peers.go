@@ -58,6 +58,34 @@ type InviteInfo struct {
 
 // Peers returns a list of all known peers.
 // This includes connected, disconnected, and stale peers.
+// convertRPCPeer converts an RPC peer to a PeerInfo struct.
+func convertRPCPeer(p struct {
+	NodeID      string
+	TunnelIP    string
+	State       string
+	LastSeen    string
+	ConnectedAt string
+	Latency     string
+}) PeerInfo {
+	var tunnelIP netip.Addr
+	if p.TunnelIP != "" {
+		tunnelIP, _ = netip.ParseAddr(p.TunnelIP)
+	}
+	lastSeen, connectedAt := parsePeerTimestamps(p.LastSeen, p.ConnectedAt)
+	var latency time.Duration
+	if p.Latency != "" {
+		latency, _ = time.ParseDuration(p.Latency)
+	}
+	return PeerInfo{
+		NodeID:      p.NodeID,
+		TunnelIP:    tunnelIP,
+		State:       p.State,
+		LastSeen:    lastSeen,
+		ConnectedAt: connectedAt,
+		Latency:     latency,
+	}
+}
+
 func (v *VPN) Peers() []PeerInfo {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -66,7 +94,6 @@ func (v *VPN) Peers() []PeerInfo {
 		return nil
 	}
 
-	// Delegate to core.Node's ListPeers
 	rpcPeers := v.node.ListPeers()
 	if len(rpcPeers) == 0 {
 		return nil
@@ -74,29 +101,14 @@ func (v *VPN) Peers() []PeerInfo {
 
 	result := make([]PeerInfo, len(rpcPeers))
 	for i, p := range rpcPeers {
-		var tunnelIP netip.Addr
-		if p.TunnelIP != "" {
-			tunnelIP, _ = netip.ParseAddr(p.TunnelIP)
-		}
-		var lastSeen, connectedAt time.Time
-		if p.LastSeen != "" {
-			lastSeen, _ = time.Parse(time.RFC3339, p.LastSeen)
-		}
-		if p.ConnectedAt != "" {
-			connectedAt, _ = time.Parse(time.RFC3339, p.ConnectedAt)
-		}
-		var latency time.Duration
-		if p.Latency != "" {
-			latency, _ = time.ParseDuration(p.Latency)
-		}
-		result[i] = PeerInfo{
-			NodeID:      p.NodeID,
-			TunnelIP:    tunnelIP,
-			State:       p.State,
-			LastSeen:    lastSeen,
-			ConnectedAt: connectedAt,
-			Latency:     latency,
-		}
+		result[i] = convertRPCPeer(struct {
+			NodeID      string
+			TunnelIP    string
+			State       string
+			LastSeen    string
+			ConnectedAt string
+			Latency     string
+		}{p.NodeID, p.TunnelIP, p.State, p.LastSeen, p.ConnectedAt, p.Latency})
 	}
 	return result
 }
@@ -116,6 +128,17 @@ func (v *VPN) PeerCount() int {
 
 // GetPeer returns information about a specific peer by node ID.
 // Returns nil if the peer is not found.
+// parsePeerTimestamps parses the timestamp strings from an RPC peer.
+func parsePeerTimestamps(lastSeenStr, connectedAtStr string) (lastSeen, connectedAt time.Time) {
+	if lastSeenStr != "" {
+		lastSeen, _ = time.Parse(time.RFC3339, lastSeenStr)
+	}
+	if connectedAtStr != "" {
+		connectedAt, _ = time.Parse(time.RFC3339, connectedAtStr)
+	}
+	return
+}
+
 func (v *VPN) GetPeer(nodeID string) *PeerInfo {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -124,7 +147,6 @@ func (v *VPN) GetPeer(nodeID string) *PeerInfo {
 		return nil
 	}
 
-	// Get all peers and find the matching one
 	rpcPeers := v.node.ListPeers()
 	for _, p := range rpcPeers {
 		if p.NodeID == nodeID {
@@ -132,13 +154,7 @@ func (v *VPN) GetPeer(nodeID string) *PeerInfo {
 			if p.TunnelIP != "" {
 				tunnelIP, _ = netip.ParseAddr(p.TunnelIP)
 			}
-			var lastSeen, connectedAt time.Time
-			if p.LastSeen != "" {
-				lastSeen, _ = time.Parse(time.RFC3339, p.LastSeen)
-			}
-			if p.ConnectedAt != "" {
-				connectedAt, _ = time.Parse(time.RFC3339, p.ConnectedAt)
-			}
+			lastSeen, connectedAt := parsePeerTimestamps(p.LastSeen, p.ConnectedAt)
 			var latency time.Duration
 			if p.Latency != "" {
 				latency, _ = time.ParseDuration(p.Latency)

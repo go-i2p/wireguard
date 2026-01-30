@@ -198,6 +198,30 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 // It demultiplexes incoming packets between WireGuard traffic and mesh protocol messages.
 // WireGuard messages have a 4-byte little-endian type header (1-4).
 // Mesh protocol messages are JSON and start with '{' (0x7B).
+// parseI2PAddress converts a network address to an I2P address.
+func parseI2PAddress(addr net.Addr) (i2pkeys.I2PAddr, error) {
+	i2pAddr, ok := addr.(i2pkeys.I2PAddr)
+	if ok {
+		return i2pAddr, nil
+	}
+	return i2pkeys.NewI2PAddrFromString(addr.String())
+}
+
+// isMeshProtocolMessage checks if the packet is a mesh protocol message (JSON format).
+func isMeshProtocolMessage(data []byte) bool {
+	return len(data) > 0 && data[0] == '{'
+}
+
+// handleMeshMessage dispatches a mesh protocol message to the handler.
+func (b *I2PBind) handleMeshMessage(data []byte, numBytes int, addr i2pkeys.I2PAddr, handler MeshMessageHandler) {
+	if handler == nil {
+		return
+	}
+	msgCopy := make([]byte, numBytes)
+	copy(msgCopy, data[:numBytes])
+	go handler(msgCopy, addr)
+}
+
 func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 	return func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
 		b.mu.Lock()
@@ -209,9 +233,6 @@ func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 			return 0, net.ErrClosed
 		}
 
-		// Validate all slices have at least one element.
-		// WireGuard's internal code always passes correctly-sized slices,
-		// but we validate defensively to prevent panics from misuse.
 		if len(packets) == 0 || len(sizes) == 0 || len(eps) == 0 {
 			return 0, nil
 		}
@@ -222,34 +243,16 @@ func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 				return 0, err
 			}
 
-			// Convert the address to our I2P endpoint type
-			i2pAddr, ok := addr.(i2pkeys.I2PAddr)
-			if !ok {
-				// Try string conversion as fallback
-				addrStr := addr.String()
-				i2pAddr, err = i2pkeys.NewI2PAddrFromString(addrStr)
-				if err != nil {
-					return 0, errors.New("i2pbind: could not parse sender address")
-				}
+			i2pAddr, err := parseI2PAddress(addr)
+			if err != nil {
+				return 0, errors.New("i2pbind: could not parse sender address")
 			}
 
-			// Demultiplex: check if this is a mesh protocol message
-			// Mesh messages are JSON and start with '{' (0x7B)
-			// WireGuard messages have binary format with type byte 1-4
-			if numBytes > 0 && packets[0][0] == '{' {
-				// This is a mesh protocol message (gossip, handshake, etc.)
-				if meshHandler != nil {
-					// Make a copy since the buffer will be reused
-					msgCopy := make([]byte, numBytes)
-					copy(msgCopy, packets[0][:numBytes])
-					// Handle in a goroutine to avoid blocking the receive loop
-					go meshHandler(msgCopy, i2pAddr)
-				}
-				// Continue reading - don't return this packet to WireGuard
+			if isMeshProtocolMessage(packets[0][:numBytes]) {
+				b.handleMeshMessage(packets[0], numBytes, i2pAddr, meshHandler)
 				continue
 			}
 
-			// This is a WireGuard packet - return it normally
 			sizes[0] = numBytes
 			eps[0] = &I2PEndpoint{dest: i2pAddr}
 			return 1, nil

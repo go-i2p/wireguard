@@ -54,6 +54,49 @@ func (m RoutesModel) Update(msg tea.KeyMsg) (RoutesModel, tea.Cmd) {
 }
 
 // View renders the routes view.
+// renderRouteRow renders a single route row with appropriate styling.
+func (m RoutesModel) renderRouteRow(route rpc.RouteInfo, index int) string {
+	nodeID := truncate(route.NodeID, 20)
+	via := route.ViaNodeID
+	if via == "" {
+		via = "(direct)"
+	} else {
+		via = truncate(via, 16)
+	}
+
+	hopStyle := styles.TableRow
+	if route.HopCount == 0 {
+		hopStyle = styles.Success
+	} else if route.HopCount > 2 {
+		hopStyle = styles.Warning
+	}
+
+	row := fmt.Sprintf("%-16s %-20s %-6s %-16s %-20s",
+		route.TunnelIP,
+		nodeID,
+		hopStyle.Render(fmt.Sprintf("%d", route.HopCount)),
+		via,
+		route.LastSeen,
+	)
+
+	if index == m.cursor {
+		return styles.Selected.Render(row)
+	}
+	return styles.TableRow.Render(row)
+}
+
+// renderRouteSummary renders the summary line showing route counts.
+func (m RoutesModel) renderRouteSummary() string {
+	directCount := 0
+	for _, r := range m.routes.Routes {
+		if r.HopCount == 0 {
+			directCount++
+		}
+	}
+	return fmt.Sprintf("Total: %d routes (%d direct, %d via relay)",
+		m.routes.Total, directCount, m.routes.Total-directCount)
+}
+
 func (m RoutesModel) View() string {
 	if m.routes == nil {
 		return styles.Muted.Render("Loading routes...")
@@ -72,50 +115,13 @@ func (m RoutesModel) View() string {
 
 	// Table rows
 	for i, route := range m.routes.Routes {
-		nodeID := truncate(route.NodeID, 20)
-		via := route.ViaNodeID
-		if via == "" {
-			via = "(direct)"
-		} else {
-			via = truncate(via, 16)
-		}
-
-		hopStyle := styles.TableRow
-		if route.HopCount == 0 {
-			hopStyle = styles.Success
-		} else if route.HopCount > 2 {
-			hopStyle = styles.Warning
-		}
-
-		row := fmt.Sprintf("%-16s %-20s %-6s %-16s %-20s",
-			route.TunnelIP,
-			nodeID,
-			hopStyle.Render(fmt.Sprintf("%d", route.HopCount)),
-			via,
-			route.LastSeen,
-		)
-
-		if i == m.cursor {
-			row = styles.Selected.Render(row)
-		} else {
-			row = styles.TableRow.Render(row)
-		}
-
-		b.WriteString(row)
+		b.WriteString(m.renderRouteRow(route, i))
 		b.WriteString("\n")
 	}
 
 	// Summary
 	b.WriteString("\n")
-	directCount := 0
-	for _, r := range m.routes.Routes {
-		if r.HopCount == 0 {
-			directCount++
-		}
-	}
-	summary := fmt.Sprintf("Total: %d routes (%d direct, %d via relay)",
-		m.routes.Total, directCount, m.routes.Total-directCount)
-	b.WriteString(styles.Muted.Render(summary))
+	b.WriteString(styles.Muted.Render(m.renderRouteSummary()))
 
 	return b.String()
 }

@@ -562,6 +562,35 @@ func (g *GossipEngine) handlePeerAnnounce(msg *Message) error {
 }
 
 // handlePeerList processes a peer list message.
+// isPeerKnown checks if a peer is already tracked by the peer manager.
+func (g *GossipEngine) isPeerKnown(nodeID string) bool {
+	if g.peerManager == nil {
+		return false
+	}
+	_, ok := g.peerManager.GetPeer(nodeID)
+	return ok
+}
+
+// processDiscoveredPeer handles a newly discovered peer from gossip.
+func (g *GossipEngine) processDiscoveredPeer(peer PeerInfo, callback func(PeerInfo)) {
+	if peer.NodeID == g.nodeID {
+		return // Skip ourselves
+	}
+
+	if g.isPeerKnown(peer.NodeID) {
+		g.logger.Debug("peer already known", "node_id", peer.NodeID)
+		return
+	}
+
+	g.logger.Info("discovered new peer via gossip",
+		"node_id", peer.NodeID,
+		"i2p_dest", truncateString(peer.I2PDest, 32))
+
+	if callback != nil {
+		callback(peer)
+	}
+}
+
 func (g *GossipEngine) handlePeerList(msg *Message) error {
 	peerList, err := DecodePayload[PeerListPayload](msg)
 	if err != nil {
@@ -576,45 +605,61 @@ func (g *GossipEngine) handlePeerList(msg *Message) error {
 		"from", peerList.NodeID,
 		"peers", len(peerList.Peers))
 
-	// Get discovery callback under lock
 	g.mu.RLock()
 	discoveryCallback := g.onPeerDiscovered
 	g.mu.RUnlock()
 
-	// Process discovered peers
 	for _, p := range peerList.Peers {
-		// Skip ourselves
-		if p.NodeID == g.nodeID {
-			continue
-		}
-
-		// Check if we already know this peer
-		isKnown := false
-		if g.peerManager != nil {
-			if _, ok := g.peerManager.GetPeer(p.NodeID); ok {
-				isKnown = true
-			}
-		}
-
-		if isKnown {
-			g.logger.Debug("peer already known", "node_id", p.NodeID)
-			continue
-		}
-
-		g.logger.Info("discovered new peer via gossip",
-			"node_id", p.NodeID,
-			"i2p_dest", truncateString(p.I2PDest, 32))
-
-		// Trigger connection attempt if callback is set
-		if discoveryCallback != nil {
-			discoveryCallback(p)
-		}
+		g.processDiscoveredPeer(p, discoveryCallback)
 	}
 
 	return nil
 }
 
 // handleRouteUpdate processes a route update message.
+// convertRouteInfoToEntries converts incoming route info to route entries with hop increment.
+func (g *GossipEngine) convertRouteInfoToEntries(update *RouteUpdatePayload) []*RouteEntry {
+	entries := make([]*RouteEntry, 0, len(update.Routes))
+	for _, ri := range update.Routes {
+		tunnelIP, err := netip.ParseAddr(ri.TunnelIP)
+		if err != nil {
+			g.logger.Debug("skipping invalid tunnel IP in route update",
+				"ip", ri.TunnelIP, "error", err)
+			continue
+		}
+
+		entry := &RouteEntry{
+			TunnelIP:    tunnelIP,
+			WGPublicKey: ri.WGPublicKey,
+			I2PDest:     ri.I2PDest,
+			NodeID:      ri.NodeID,
+			HopCount:    ri.HopCount + 1,
+			LastSeen:    ri.LastSeen,
+			ViaNodeID:   update.NodeID,
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// mergeRouteEntries merges route entries into the routing table and logs results.
+func (g *GossipEngine) mergeRouteEntries(entries []*RouteEntry) {
+	if len(entries) == 0 {
+		return
+	}
+
+	added, updated, collisions := g.routingTable.Merge(entries)
+	if added > 0 || updated > 0 {
+		g.logger.Debug("merged route update",
+			"added", added,
+			"updated", updated,
+			"collisions", len(collisions))
+	}
+	for _, coll := range collisions {
+		g.logger.Warn("route collision detected", "error", coll)
+	}
+}
+
 func (g *GossipEngine) handleRouteUpdate(msg *Message) error {
 	update, err := DecodePayload[RouteUpdatePayload](msg)
 	if err != nil {
@@ -633,40 +678,8 @@ func (g *GossipEngine) handleRouteUpdate(msg *Message) error {
 		"from", update.NodeID,
 		"routes", len(update.Routes))
 
-	// Convert RouteInfo to RouteEntry and merge into our table
-	entries := make([]*RouteEntry, 0, len(update.Routes))
-	for _, ri := range update.Routes {
-		tunnelIP, err := netip.ParseAddr(ri.TunnelIP)
-		if err != nil {
-			g.logger.Debug("skipping invalid tunnel IP in route update",
-				"ip", ri.TunnelIP, "error", err)
-			continue
-		}
-
-		entry := &RouteEntry{
-			TunnelIP:    tunnelIP,
-			WGPublicKey: ri.WGPublicKey,
-			I2PDest:     ri.I2PDest,
-			NodeID:      ri.NodeID,
-			HopCount:    ri.HopCount + 1, // Increment hop count since we're receiving via another node
-			LastSeen:    ri.LastSeen,
-			ViaNodeID:   update.NodeID, // Route came via the sender
-		}
-		entries = append(entries, entry)
-	}
-
-	if len(entries) > 0 {
-		added, updated, collisions := g.routingTable.Merge(entries)
-		if added > 0 || updated > 0 {
-			g.logger.Debug("merged route update",
-				"added", added,
-				"updated", updated,
-				"collisions", len(collisions))
-		}
-		for _, coll := range collisions {
-			g.logger.Warn("route collision detected", "error", coll)
-		}
-	}
+	entries := g.convertRouteInfoToEntries(update)
+	g.mergeRouteEntries(entries)
 
 	return nil
 }
@@ -696,6 +709,48 @@ func (g *GossipEngine) handlePeerLeave(msg *Message) error {
 	return nil
 }
 
+// delegateHandshakeInit routes the handshake to the appropriate handler.
+func (g *GossipEngine) delegateHandshakeInit(init *HandshakeInit) (*HandshakeResponse, error) {
+	g.mu.RLock()
+	customHandler := g.onHandshakeInit
+	g.mu.RUnlock()
+
+	if customHandler != nil {
+		return customHandler(init)
+	}
+	if g.peerManager != nil {
+		return g.peerManager.HandleHandshakeInit(init)
+	}
+	g.logger.Warn("no handler for handshake init")
+	return nil, nil
+}
+
+// sendHandshakeResponse sends the handshake response back to the initiator.
+func (g *GossipEngine) sendHandshakeResponse(init *HandshakeInit, response *HandshakeResponse) error {
+	if response == nil || g.sender == nil {
+		return nil
+	}
+
+	responseData, encErr := EncodeMessage(MsgHandshakeResponse, response)
+	if encErr != nil {
+		g.logger.Error("failed to encode handshake response", "error", encErr)
+		return encErr
+	}
+
+	if sendErr := g.sender.SendTo(init.NodeID, responseData); sendErr != nil {
+		g.logger.Debug("SendTo failed, falling back to SendToDest", "error", sendErr)
+		if fallbackErr := g.sender.SendToDest(init.I2PDest, responseData); fallbackErr != nil {
+			g.logger.Error("failed to send handshake response via fallback", "error", fallbackErr)
+			return fallbackErr
+		}
+	}
+
+	g.logger.Info("sent handshake response",
+		"to_node", init.NodeID,
+		"accepted", response.Accepted)
+	return nil
+}
+
 // handleHandshakeInit processes an incoming handshake initiation.
 func (g *GossipEngine) handleHandshakeInit(msg *Message) error {
 	init, err := DecodePayload[HandshakeInit](msg)
@@ -707,53 +762,52 @@ func (g *GossipEngine) handleHandshakeInit(msg *Message) error {
 		"from_node", init.NodeID,
 		"i2p_dest", truncateString(init.I2PDest, 32))
 
-	// Delegate to peer manager if no custom handler
-	g.mu.RLock()
-	customHandler := g.onHandshakeInit
-	g.mu.RUnlock()
-
-	var response *HandshakeResponse
-	if customHandler != nil {
-		response, err = customHandler(init)
-	} else if g.peerManager != nil {
-		response, err = g.peerManager.HandleHandshakeInit(init)
-	} else {
-		g.logger.Warn("no handler for handshake init")
-		return nil
-	}
-
+	response, err := g.delegateHandshakeInit(init)
 	if err != nil {
 		g.logger.Warn("handshake init handling failed", "error", err)
 		return err
 	}
 
-	// Send response back to the initiator
-	if response != nil && g.sender != nil {
-		responseData, encErr := EncodeMessage(MsgHandshakeResponse, response)
-		if encErr != nil {
-			g.logger.Error("failed to encode handshake response", "error", encErr)
-			return encErr
-		}
-
-		// Send directly to the initiator's I2P destination
-		if sendErr := g.sender.SendTo(init.NodeID, responseData); sendErr != nil {
-			// Fall back to destination-based send if nodeID not registered
-			g.logger.Debug("SendTo failed, falling back to SendToDest", "error", sendErr)
-			if fallbackErr := g.sender.SendToDest(init.I2PDest, responseData); fallbackErr != nil {
-				g.logger.Error("failed to send handshake response via fallback", "error", fallbackErr)
-				return fallbackErr
-			}
-		}
-
-		g.logger.Info("sent handshake response",
-			"to_node", init.NodeID,
-			"accepted", response.Accepted)
-	}
-
-	return nil
+	return g.sendHandshakeResponse(init, response)
 }
 
 // handleHandshakeResponse processes a handshake response.
+// delegateHandshakeResponse routes the response to the appropriate handler.
+func (g *GossipEngine) delegateHandshakeResponse(resp *HandshakeResponse) error {
+	g.mu.RLock()
+	customHandler := g.onHandshakeResponse
+	g.mu.RUnlock()
+
+	if customHandler != nil {
+		return customHandler(resp)
+	}
+	if g.peerManager != nil {
+		return g.peerManager.HandleHandshakeResponse(resp)
+	}
+	g.logger.Warn("no handler for handshake response")
+	return nil
+}
+
+// sendHandshakeComplete sends a completion message after successful handshake.
+func (g *GossipEngine) sendHandshakeComplete(nodeID string) {
+	if g.peerManager == nil || g.sender == nil {
+		return
+	}
+
+	complete := g.peerManager.CreateHandshakeComplete(true)
+	completeData, encErr := EncodeMessage(MsgHandshakeComplete, complete)
+	if encErr != nil {
+		g.logger.Error("failed to encode handshake complete", "error", encErr)
+		return
+	}
+
+	if sendErr := g.sender.SendTo(nodeID, completeData); sendErr != nil {
+		g.logger.Debug("failed to send handshake complete", "error", sendErr)
+	} else {
+		g.logger.Info("sent handshake complete", "to_node", nodeID)
+	}
+}
+
 func (g *GossipEngine) handleHandshakeResponse(msg *Message) error {
 	resp, err := DecodePayload[HandshakeResponse](msg)
 	if err != nil {
@@ -764,39 +818,13 @@ func (g *GossipEngine) handleHandshakeResponse(msg *Message) error {
 		"from_node", resp.NodeID,
 		"accepted", resp.Accepted)
 
-	// Delegate to custom handler or peer manager
-	g.mu.RLock()
-	customHandler := g.onHandshakeResponse
-	g.mu.RUnlock()
-
-	if customHandler != nil {
-		err = customHandler(resp)
-	} else if g.peerManager != nil {
-		err = g.peerManager.HandleHandshakeResponse(resp)
-	} else {
-		g.logger.Warn("no handler for handshake response")
-		return nil
-	}
-
-	if err != nil {
+	if err := g.delegateHandshakeResponse(resp); err != nil {
 		g.logger.Warn("handshake response handling failed", "error", err)
 		return err
 	}
 
-	// If accepted, send completion message
-	if resp.Accepted && g.peerManager != nil && g.sender != nil {
-		complete := g.peerManager.CreateHandshakeComplete(true)
-		completeData, encErr := EncodeMessage(MsgHandshakeComplete, complete)
-		if encErr != nil {
-			g.logger.Error("failed to encode handshake complete", "error", encErr)
-			return encErr
-		}
-
-		if sendErr := g.sender.SendTo(resp.NodeID, completeData); sendErr != nil {
-			g.logger.Debug("failed to send handshake complete", "error", sendErr)
-		} else {
-			g.logger.Info("sent handshake complete", "to_node", resp.NodeID)
-		}
+	if resp.Accepted {
+		g.sendHandshakeComplete(resp.NodeID)
 	}
 
 	return nil
