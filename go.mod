@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/go-i2p/i2pkeys v0.33.92
+	github.com/go-i2p/logger v0.1.3
 	github.com/go-i2p/onramp v0.33.92
 	github.com/pelletier/go-toml/v2 v2.2.4
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
@@ -39,7 +40,6 @@ require (
 	github.com/go-i2p/go-sam-bridge v0.0.0-20260127191723-8e14472fcc26 // indirect
 	github.com/go-i2p/go-sam-go v0.33.0 // indirect
 	github.com/go-i2p/go-streaming v0.0.0-20260127190938-144f6f599abb // indirect
-	github.com/go-i2p/logger v0.1.3 // indirect
 	github.com/go-i2p/noise v0.0.0-20251212204422-ded862d8cdf9 // indirect
 	github.com/go-i2p/su3 v0.0.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
