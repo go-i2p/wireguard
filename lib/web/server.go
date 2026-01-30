@@ -25,7 +25,7 @@ var content embed.FS
 // Server is the web UI HTTP server.
 type Server struct {
 	httpServer  *http.Server
-	rpcClient   *rpc.Client
+	rpcClient   RPCClient
 	templates   *template.Template
 	csrfManager *CSRFManager
 	csrfStop    chan struct{}
