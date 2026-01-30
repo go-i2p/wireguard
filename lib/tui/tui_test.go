@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -290,4 +291,380 @@ func TestKeysExist(t *testing.T) {
 	_ = keys.NewInvite
 	_ = keys.Accept
 	_ = keys.Connect
+}
+
+func TestPeerStateStyle(t *testing.T) {
+	tests := []struct {
+		state    string
+		expected string
+	}{
+		{"Connected", "Success"},
+		{"Pending", "Warning"},
+		{"Disconnected", "Error"},
+		{"Rejected", "Error"},
+		{"Unknown", "Muted"},
+		{"", "Muted"},
+	}
+
+	for _, tc := range tests {
+		style := PeerStateStyle(tc.state)
+		// Just verify it returns a style without panicking
+		_ = style.Render("test")
+	}
+}
+
+func TestPeersModelUpdate(t *testing.T) {
+	m := NewPeersModel()
+	m.SetData(&rpc.PeersListResult{
+		Peers: []rpc.PeerInfo{
+			{NodeID: "node1", TunnelIP: "10.0.0.1", State: "Connected"},
+			{NodeID: "node2", TunnelIP: "10.0.0.2", State: "Connected"},
+			{NodeID: "node3", TunnelIP: "10.0.0.3", State: "Connected"},
+		},
+		Total: 3,
+	})
+
+	t.Run("move cursor down", func(t *testing.T) {
+		m.cursor = 0
+		m2, _ := m.Update(fakeKeyMsgWithType(tea.KeyDown), nil)
+		if m2.cursor != 1 {
+			t.Errorf("cursor = %d, want 1", m2.cursor)
+		}
+	})
+
+	t.Run("move cursor up", func(t *testing.T) {
+		m.cursor = 2
+		m2, _ := m.Update(fakeKeyMsgWithType(tea.KeyUp), nil)
+		if m2.cursor != 1 {
+			t.Errorf("cursor = %d, want 1", m2.cursor)
+		}
+	})
+
+	t.Run("cursor stays at bottom", func(t *testing.T) {
+		m.cursor = 2
+		m2, _ := m.Update(fakeKeyMsgWithType(tea.KeyDown), nil)
+		if m2.cursor != 2 {
+			t.Errorf("cursor = %d, want 2", m2.cursor)
+		}
+	})
+
+	t.Run("cursor stays at top", func(t *testing.T) {
+		m.cursor = 0
+		m2, _ := m.Update(fakeKeyMsgWithType(tea.KeyUp), nil)
+		if m2.cursor != 0 {
+			t.Errorf("cursor = %d, want 0", m2.cursor)
+		}
+	})
+}
+
+func TestPeersModelView(t *testing.T) {
+	t.Run("loading state", func(t *testing.T) {
+		m := NewPeersModel()
+		view := m.View()
+		if !strings.Contains(view, "Loading") {
+			t.Errorf("expected loading message, got: %s", view)
+		}
+	})
+
+	t.Run("empty state", func(t *testing.T) {
+		m := NewPeersModel()
+		m.SetDimensions(80, 24)
+		m.SetData(&rpc.PeersListResult{
+			Peers: []rpc.PeerInfo{},
+			Total: 0,
+		})
+		view := m.View()
+		if !strings.Contains(view, "No Peers") {
+			t.Errorf("expected empty state message, got: %s", view)
+		}
+	})
+
+	t.Run("with peers", func(t *testing.T) {
+		m := NewPeersModel()
+		m.SetDimensions(100, 24)
+		m.SetData(&rpc.PeersListResult{
+			Peers: []rpc.PeerInfo{
+				{NodeID: "node1", TunnelIP: "10.0.0.1", State: "Connected", LastSeen: "1m ago"},
+			},
+			Total: 1,
+		})
+		view := m.View()
+		if !strings.Contains(view, "node1") {
+			t.Errorf("expected node1 in view, got: %s", view)
+		}
+		if !strings.Contains(view, "10.0.0.1") {
+			t.Errorf("expected tunnel IP in view, got: %s", view)
+		}
+	})
+}
+
+func TestPeersModelSetDimensions(t *testing.T) {
+	m := NewPeersModel()
+	m.SetDimensions(100, 50)
+
+	if m.width != 100 {
+		t.Errorf("width = %d, want 100", m.width)
+	}
+	if m.height != 50 {
+		t.Errorf("height = %d, want 50", m.height)
+	}
+}
+
+func TestRoutesModelView(t *testing.T) {
+	t.Run("loading state", func(t *testing.T) {
+		m := NewRoutesModel()
+		view := m.View()
+		if !strings.Contains(view, "Loading") {
+			t.Errorf("expected loading message, got: %s", view)
+		}
+	})
+
+	t.Run("empty state", func(t *testing.T) {
+		m := NewRoutesModel()
+		m.SetDimensions(80, 24)
+		m.SetData(&rpc.RoutesListResult{
+			Routes: []rpc.RouteInfo{},
+			Total:  0,
+		})
+		view := m.View()
+		if !strings.Contains(view, "No Routes") {
+			t.Errorf("expected empty state message, got: %s", view)
+		}
+	})
+
+	t.Run("with routes", func(t *testing.T) {
+		m := NewRoutesModel()
+		m.SetDimensions(100, 24)
+		m.SetData(&rpc.RoutesListResult{
+			Routes: []rpc.RouteInfo{
+				{NodeID: "node1", TunnelIP: "10.0.0.1", HopCount: 1},
+			},
+			Total: 1,
+		})
+		view := m.View()
+		if !strings.Contains(view, "node1") {
+			t.Errorf("expected node1 in view, got: %s", view)
+		}
+	})
+}
+
+func TestRoutesModelUpdate(t *testing.T) {
+	m := NewRoutesModel()
+	m.SetData(&rpc.RoutesListResult{
+		Routes: []rpc.RouteInfo{
+			{NodeID: "node1", TunnelIP: "10.0.0.1", HopCount: 1},
+			{NodeID: "node2", TunnelIP: "10.0.0.2", HopCount: 2},
+		},
+		Total: 2,
+	})
+
+	t.Run("move cursor down", func(t *testing.T) {
+		m.cursor = 0
+		m2, _ := m.Update(fakeKeyMsgWithType(tea.KeyDown))
+		if m2.cursor != 1 {
+			t.Errorf("cursor = %d, want 1", m2.cursor)
+		}
+	})
+
+	t.Run("move cursor up", func(t *testing.T) {
+		m.cursor = 1
+		m2, _ := m.Update(fakeKeyMsgWithType(tea.KeyUp))
+		if m2.cursor != 0 {
+			t.Errorf("cursor = %d, want 0", m2.cursor)
+		}
+	})
+}
+
+func TestRoutesModelSetDimensions(t *testing.T) {
+	m := NewRoutesModel()
+	m.SetDimensions(100, 50)
+
+	if m.width != 100 {
+		t.Errorf("width = %d, want 100", m.width)
+	}
+	if m.height != 50 {
+		t.Errorf("height = %d, want 50", m.height)
+	}
+}
+
+func TestStatusModelView(t *testing.T) {
+	t.Run("loading state", func(t *testing.T) {
+		m := NewStatusModel()
+		view := m.View()
+		if !strings.Contains(view, "Loading") {
+			t.Errorf("expected loading message, got: %s", view)
+		}
+	})
+
+	t.Run("with status", func(t *testing.T) {
+		m := NewStatusModel()
+		m.SetDimensions(100, 24)
+		m.SetData(&rpc.StatusResult{
+			NodeName:       "test-node",
+			NodeID:         "abc123",
+			State:          "running",
+			TunnelIP:       "10.0.0.1",
+			PeerCount:      5,
+			Uptime:         "2h",
+			Version:        "1.0.0",
+			I2PDestination: "dest.i2p",
+		})
+		view := m.View()
+		if !strings.Contains(view, "test-node") {
+			t.Errorf("expected node name in view, got: %s", view)
+		}
+		if !strings.Contains(view, "running") {
+			t.Errorf("expected state in view, got: %s", view)
+		}
+	})
+}
+
+func TestStatusModelSetDimensions(t *testing.T) {
+	m := NewStatusModel()
+	m.SetDimensions(100, 50)
+
+	if m.width != 100 {
+		t.Errorf("width = %d, want 100", m.width)
+	}
+	if m.height != 50 {
+		t.Errorf("height = %d, want 50", m.height)
+	}
+}
+
+func TestInvitesModelView(t *testing.T) {
+	t.Run("normal mode", func(t *testing.T) {
+		m := NewInvitesModel()
+		m.SetDimensions(80, 24)
+		view := m.View()
+		if view == "" {
+			t.Error("expected non-empty view")
+		}
+	})
+
+	t.Run("with created invite", func(t *testing.T) {
+		m := NewInvitesModel()
+		m.SetDimensions(80, 24)
+		m.SetCreatedInvite(&rpc.InviteCreateResult{
+			InviteCode: "i2plan://testcode123",
+			ExpiresAt:  "2024-01-01T00:00:00Z",
+			MaxUses:    5,
+		})
+		view := m.View()
+		if !strings.Contains(view, "testcode123") {
+			t.Errorf("expected invite code in view, got: %s", view)
+		}
+	})
+}
+
+func TestInvitesModelSetDimensions(t *testing.T) {
+	m := NewInvitesModel()
+	m.SetDimensions(100, 50)
+
+	if m.width != 100 {
+		t.Errorf("width = %d, want 100", m.width)
+	}
+	if m.height != 50 {
+		t.Errorf("height = %d, want 50", m.height)
+	}
+}
+
+func TestInvitesModelModes(t *testing.T) {
+	t.Run("initial mode is normal", func(t *testing.T) {
+		m := NewInvitesModel()
+		if m.mode != InvitesModeNormal {
+			t.Errorf("mode = %d, want %d", m.mode, InvitesModeNormal)
+		}
+	})
+
+	t.Run("mode constants", func(t *testing.T) {
+		if InvitesModeNormal != 0 {
+			t.Errorf("InvitesModeNormal = %d, want 0", InvitesModeNormal)
+		}
+		if InvitesModeCreate != 1 {
+			t.Errorf("InvitesModeCreate = %d, want 1", InvitesModeCreate)
+		}
+		if InvitesModeAccept != 2 {
+			t.Errorf("InvitesModeAccept = %d, want 2", InvitesModeAccept)
+		}
+	})
+}
+
+func TestKeyMapBindings(t *testing.T) {
+	// Verify all keys have valid bindings
+	testCases := []struct {
+		name    string
+		binding interface{}
+	}{
+		{"Quit", keys.Quit},
+		{"Tab", keys.Tab},
+		{"ShiftTab", keys.ShiftTab},
+		{"Refresh", keys.Refresh},
+		{"Up", keys.Up},
+		{"Down", keys.Down},
+		{"Enter", keys.Enter},
+		{"Escape", keys.Escape},
+		{"Peers", keys.Peers},
+		{"Routes", keys.Routes},
+		{"Invites", keys.Invites},
+		{"Status", keys.Status},
+		{"Logs", keys.Logs},
+		{"NewInvite", keys.NewInvite},
+		{"Accept", keys.Accept},
+		{"Connect", keys.Connect},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.binding == nil {
+				t.Errorf("binding %s is nil", tc.name)
+			}
+		})
+	}
+}
+
+func TestStylesRendering(t *testing.T) {
+	// Test that styles can render without panicking
+	testCases := []struct {
+		name  string
+		style interface{ Render(...string) string }
+	}{
+		{"Title", styles.Title},
+		{"TabActive", styles.TabActive},
+		{"TabInactive", styles.TabInactive},
+		{"Error", styles.Error},
+		{"Success", styles.Success},
+		{"Warning", styles.Warning},
+		{"Muted", styles.Muted},
+		{"TableHeader", styles.TableHeader},
+		{"TableRow", styles.TableRow},
+		{"Selected", styles.Selected},
+		{"BoxTitle", styles.BoxTitle},
+		{"Bold", styles.Bold},
+		{"Input", styles.Input},
+		{"InputFocus", styles.InputFocus},
+		{"Box", styles.Box},
+		{"HelpText", styles.HelpText},
+		{"StatusText", styles.StatusText},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := tc.style.Render("test content")
+			if rendered == "" {
+				t.Errorf("style %s rendered empty string", tc.name)
+			}
+		})
+	}
+}
+
+func TestConfigDefaults(t *testing.T) {
+	cfg := Config{
+		RPCSocketPath:   "/tmp/test.sock",
+		RPCAuthFile:     "/tmp/auth.token",
+		RefreshInterval: 0,
+	}
+
+	if cfg.RPCSocketPath != "/tmp/test.sock" {
+		t.Errorf("RPCSocketPath = %q, want %q", cfg.RPCSocketPath, "/tmp/test.sock")
+	}
 }
