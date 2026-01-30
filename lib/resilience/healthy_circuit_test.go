@@ -216,10 +216,10 @@ func TestHealthyCircuitProbeFailure(t *testing.T) {
 		CircuitBreaker: CircuitBreakerConfig{
 			FailureThreshold:    2,
 			SuccessThreshold:    1,
-			Timeout:             100 * time.Millisecond,
+			Timeout:             5 * time.Second, // Longer timeout to prevent auto-transition to half-open
 			MaxHalfOpenRequests: 1,
 		},
-		CheckInterval: 50 * time.Millisecond,
+		CheckInterval: 30 * time.Millisecond,
 		ProbeTimeout:  10 * time.Millisecond,
 	}
 
@@ -235,8 +235,8 @@ func TestHealthyCircuitProbeFailure(t *testing.T) {
 	}
 	defer hc.Stop()
 
-	// Wait for checks to fail
-	time.Sleep(150 * time.Millisecond)
+	// Wait for checks to fail (need at least 2 checks at 30ms intervals)
+	time.Sleep(100 * time.Millisecond)
 
 	// Should be unhealthy
 	if hc.IsHealthy() {
@@ -244,8 +244,9 @@ func TestHealthyCircuitProbeFailure(t *testing.T) {
 	}
 
 	// Circuit should be open after failures
-	if hc.CircuitState() != CircuitOpen {
-		t.Errorf("expected circuit open, got %v", hc.CircuitState())
+	state := hc.CircuitState()
+	if state != CircuitOpen {
+		t.Errorf("expected circuit open, got %v", state)
 	}
 }
 
