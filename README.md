@@ -160,7 +160,7 @@ func main() {
         DataDir:     "./data",
         SAMAddress:  "127.0.0.1:7656",
         EnableRPC:   true,
-        RPCAddress:  "127.0.0.1:9001",
+        RPCSocket:   "rpc.sock",  // Unix socket in DataDir
     }
 
     vpn, err := embedded.New(cfg)

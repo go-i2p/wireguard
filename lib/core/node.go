@@ -85,6 +85,11 @@ type Node struct {
 	gossip      *mesh.GossipEngine
 	banList     *mesh.BanList
 
+	// Resilience components
+	stateManager     *mesh.StateManager
+	reconnectManager *mesh.ReconnectManager
+	healthMonitor    *transport.HealthMonitor
+
 	// User interfaces
 	rpcServer *rpc.Server
 	webServer *web.Server
@@ -420,6 +425,15 @@ func (n *Node) initTransport() error {
 	// Create sender for gossip message transport
 	n.sender = transport.NewSender(n.trans)
 
+	// Create health monitor for SAM connection
+	n.healthMonitor = transport.NewHealthMonitor(n.config.I2P.SAMAddress, transport.HealthConfig{
+		CheckInterval: 30 * time.Second,
+		Timeout:       5 * time.Second,
+		RetryDelay:    5 * time.Second,
+		MaxRetryDelay: 2 * time.Minute,
+		Logger:        n.logger.With("component", "health"),
+	})
+
 	n.logger.Info("I2P transport opened",
 		"local_dest", localDest[:32]+"...",
 	)
@@ -476,6 +490,13 @@ func (n *Node) initMesh(ctx context.Context) error {
 		FilePath: routesPath,
 	})
 
+	// Load persisted routes from disk (if any exist)
+	if err := n.routing.Load(); err != nil {
+		n.logger.Debug("no persisted routes to load", "error", err)
+	} else {
+		n.logger.Info("loaded persisted routes", "count", n.routing.RouteCount())
+	}
+
 	// Add our own route
 	_ = n.routing.AddRoute(&mesh.RouteEntry{
 		TunnelIP:    n.tunnelIP,
@@ -505,6 +526,33 @@ func (n *Node) initMesh(ctx context.Context) error {
 		Logger:       n.logger.With("component", "peers"),
 		BanList:      n.banList,
 		RoutingTable: n.routing,
+	})
+
+	// Create state manager for persistence across restarts
+	statePath := filepath.Join(n.config.Node.DataDir, mesh.StateFileName)
+	n.stateManager = mesh.NewStateManager(mesh.StateManagerConfig{
+		Path:         statePath,
+		SaveInterval: 5 * time.Minute,
+		PeerManager:  n.peers,
+		RoutingTable: n.routing,
+	})
+
+	// Load persisted state (if any exists)
+	if err := n.stateManager.Load(); err != nil {
+		n.logger.Debug("no persisted state to load", "error", err)
+	} else {
+		n.logger.Info("loaded persisted state")
+	}
+
+	// Create reconnection manager for automatic peer reconnection
+	n.reconnectManager = mesh.NewReconnectManager(mesh.ReconnectConfig{
+		InitialDelay:   5 * time.Second,
+		MaxDelay:       5 * time.Minute,
+		Multiplier:     2.0,
+		MaxRetries:     0, // unlimited
+		JitterFraction: 0.2,
+		CheckInterval:  10 * time.Second,
+		Logger:         n.logger.With("component", "reconnect"),
 	})
 
 	// Wire up peer connection callbacks to register/unregister peers with the sender
@@ -544,6 +592,12 @@ func (n *Node) initMesh(ctx context.Context) error {
 					"error", err)
 			} else {
 				n.logger.Debug("removed WireGuard peer", "node_id", peer.NodeID)
+			}
+
+			// Queue peer for automatic reconnection (with nil auth token for network discovery)
+			if n.reconnectManager != nil {
+				n.reconnectManager.Add(peer.NodeID, peer.I2PDest, nil)
+				n.logger.Debug("queued peer for reconnection", "node_id", peer.NodeID)
 			}
 		},
 	)
@@ -613,6 +667,56 @@ func (n *Node) initMesh(ctx context.Context) error {
 	// Start ban list cleanup loop
 	if err := n.banList.Start(ctx); err != nil {
 		return fmt.Errorf("starting ban list cleanup: %w", err)
+	}
+
+	// Set up reconnection handler and start reconnect manager
+	if n.reconnectManager != nil {
+		n.reconnectManager.SetReconnectHandler(func(nodeID, i2pDest string, authToken []byte) error {
+			// Use network discovery token if no auth token provided
+			if authToken == nil {
+				if networkID := n.identity.NetworkID(); networkID != "" {
+					authToken = identity.DeriveDiscoveryToken(networkID)
+				}
+			}
+			// Attempt to reconnect via handshake
+			return n.attemptPeerReconnect(nodeID, i2pDest, authToken)
+		})
+		if err := n.reconnectManager.Start(ctx); err != nil {
+			return fmt.Errorf("starting reconnect manager: %w", err)
+		}
+	}
+
+	// Start state manager for periodic state saving
+	if n.stateManager != nil {
+		n.stateManager.Start()
+	}
+
+	// Start invite store cleanup loop (clean expired invites hourly)
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if removed := n.inviteStore.CleanExpired(); removed > 0 {
+					n.logger.Info("cleaned expired invites", "count", removed)
+				}
+			}
+		}
+	}()
+
+	// Start health monitor for SAM connection
+	if n.healthMonitor != nil {
+		n.healthMonitor.SetCallbacks(
+			func() { n.logger.Warn("I2P SAM connection unhealthy") },
+			func() { n.logger.Info("I2P SAM connection healthy") },
+			nil, // No automatic reconnect handler for now
+		)
+		if err := n.healthMonitor.Start(ctx); err != nil {
+			n.logger.Warn("failed to start health monitor", "error", err)
+		}
 	}
 
 	n.logger.Info("mesh networking initialized")
@@ -699,10 +803,37 @@ func (n *Node) cleanup() {
 		n.rpcServer = nil
 	}
 
-	// Stop gossip engine
+	// Stop gossip engine - notify peers before stopping
 	if n.gossip != nil {
+		n.gossip.AnnounceLeave("node shutting down")
 		n.gossip.Stop()
 		n.gossip = nil
+	}
+
+	// Stop reconnect manager
+	if n.reconnectManager != nil {
+		n.reconnectManager.Stop()
+		n.reconnectManager = nil
+	}
+
+	// Save state and stop state manager
+	if n.stateManager != nil {
+		if err := n.stateManager.Save(); err != nil {
+			n.logger.Warn("failed to save state", "error", err)
+		} else {
+			n.logger.Debug("saved state before shutdown")
+		}
+		n.stateManager.Stop()
+		n.stateManager = nil
+	}
+
+	// Save routing table before shutdown
+	if n.routing != nil {
+		if err := n.routing.Save(); err != nil {
+			n.logger.Warn("failed to save routing table", "error", err)
+		} else {
+			n.logger.Debug("saved routing table", "count", n.routing.RouteCount())
+		}
 	}
 
 	// Stop ban list cleanup loop
@@ -747,6 +878,12 @@ func (n *Node) cleanup() {
 	if n.trans != nil {
 		_ = n.trans.Close()
 		n.trans = nil
+	}
+
+	// Stop health monitor
+	if n.healthMonitor != nil {
+		n.healthMonitor.Stop()
+		n.healthMonitor = nil
 	}
 }
 
@@ -1000,6 +1137,65 @@ func (n *Node) connectToDiscoveredPeer(peerInfo mesh.PeerInfo) {
 		n.logger.Info("handshake sent to discovered peer",
 			"node_id", peerInfo.NodeID)
 	}
+}
+
+// attemptPeerReconnect attempts to reconnect to a previously connected peer.
+// This is called by the reconnect manager when a peer is due for retry.
+func (n *Node) attemptPeerReconnect(nodeID, i2pDest string, authToken []byte) error {
+	n.mu.RLock()
+	pm := n.peers
+	trans := n.trans
+	sender := n.sender
+	n.mu.RUnlock()
+
+	if pm == nil || trans == nil || sender == nil {
+		return fmt.Errorf("node not fully initialized")
+	}
+
+	// Check if already connected
+	if peer, ok := pm.GetPeer(nodeID); ok {
+		if peer.State == mesh.PeerStateConnected {
+			n.logger.Debug("peer already reconnected", "node_id", nodeID)
+			return nil // Success - already connected
+		}
+	}
+
+	n.logger.Info("attempting peer reconnection",
+		"node_id", nodeID,
+		"i2p_dest", truncateDest(i2pDest))
+
+	// Add peer to transport tracking
+	if err := trans.AddPeer(i2pDest, nodeID); err != nil {
+		return fmt.Errorf("failed to track peer: %w", err)
+	}
+
+	// Create handshake init with the auth token
+	handshakeInit := pm.CreateHandshakeInit(authToken)
+
+	// Parse remote endpoint
+	endpoint, err := trans.ParseEndpoint(i2pDest)
+	if err != nil {
+		trans.RemovePeer(i2pDest)
+		return fmt.Errorf("failed to parse endpoint: %w", err)
+	}
+
+	// Update transport with endpoint
+	trans.SetPeerEndpoint(i2pDest, endpoint)
+
+	// Encode and send the handshake init message
+	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
+	if err != nil {
+		trans.RemovePeer(i2pDest)
+		return fmt.Errorf("failed to encode handshake: %w", err)
+	}
+
+	// Send directly to the peer's I2P destination
+	if err := sender.SendToDest(i2pDest, handshakeData); err != nil {
+		return fmt.Errorf("failed to send handshake: %w", err)
+	}
+
+	n.logger.Info("reconnection handshake sent", "node_id", nodeID)
+	return nil
 }
 
 // --- InviteProvider implementation for RPC handlers ---

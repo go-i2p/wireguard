@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/go-i2p/wireguard/lib/metrics"
 	"github.com/go-i2p/wireguard/lib/ratelimit"
 )
 
@@ -235,6 +236,7 @@ func (h *Handlers) InviteAccept(ctx context.Context, params json.RawMessage) (an
 
 	// Rate limit invite acceptance to prevent brute-force attacks
 	if !h.inviteRateLimit.Allow() {
+		metrics.RateLimitRejections.Inc()
 		return nil, ErrRateLimited()
 	}
 
