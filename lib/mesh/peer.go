@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -70,9 +69,8 @@ type Peer struct {
 
 // PeerManager handles peer discovery, handshakes, and state.
 type PeerManager struct {
-	mu     sync.RWMutex
-	peers  map[string]*Peer // keyed by NodeID
-	logger *slog.Logger
+	mu    sync.RWMutex
+	peers map[string]*Peer // keyed by NodeID
 
 	// Our identity for handshakes
 	nodeID      string
@@ -109,7 +107,6 @@ type PeerManagerConfig struct {
 	TunnelIP     netip.Addr
 	NetworkID    string
 	MaxPeers     int
-	Logger       *slog.Logger
 	BanList      *BanList
 	RoutingTable *RoutingTable
 	Subnet       netip.Prefix // Tunnel subnet for IP allocation validation
@@ -117,11 +114,6 @@ type PeerManagerConfig struct {
 
 // NewPeerManager creates a new PeerManager.
 func NewPeerManager(cfg PeerManagerConfig) *PeerManager {
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	maxPeers := cfg.MaxPeers
 	if maxPeers <= 0 {
 		maxPeers = 50
@@ -135,7 +127,6 @@ func NewPeerManager(cfg PeerManagerConfig) *PeerManager {
 
 	return &PeerManager{
 		peers:           make(map[string]*Peer),
-		logger:          logger,
 		nodeID:          cfg.NodeID,
 		i2pDest:         cfg.I2PDest,
 		wgPublicKey:     cfg.WGPublicKey,
@@ -218,7 +209,7 @@ func (pm *PeerManager) updateExistingPeer(nodeID string) {
 	if existing, ok := pm.peers[nodeID]; ok {
 		if existing.State == PeerStateConnected {
 			existing.LastSeen = time.Now()
-			pm.logger.Info("peer already connected", "node_id", nodeID)
+			log.Info("peer already connected", "node_id", nodeID)
 		}
 	}
 }
@@ -252,7 +243,7 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	pm.logger.Info("received handshake init",
+	log.Info("received handshake init",
 		"from_node", init.NodeID,
 		"i2p_dest", truncateDest(init.I2PDest))
 
@@ -296,12 +287,12 @@ func (pm *PeerManager) checkBanStatus(init *HandshakeInit) *HandshakeResponse {
 	}
 
 	if pm.banList.IsBanned(init.NodeID) {
-		pm.logger.Warn("rejected handshake from banned peer", "node_id", init.NodeID)
+		log.Warn("rejected handshake from banned peer", "node_id", init.NodeID)
 		return pm.rejectHandshake("banned")
 	}
 
 	if pm.banList.IsBannedByDest(init.I2PDest) {
-		pm.logger.Warn("rejected handshake from banned I2P dest", "i2p_dest", truncateDest(init.I2PDest))
+		log.Warn("rejected handshake from banned I2P dest", "i2p_dest", truncateDest(init.I2PDest))
 		return pm.rejectHandshake("banned")
 	}
 
@@ -322,7 +313,7 @@ func (pm *PeerManager) parseHandshakeCredentials(init *HandshakeInit) (wgtypes.K
 
 	expectedIP := AllocateTunnelIPWithSubnet(pubKey, pm.subnet)
 	if claimedIP != expectedIP {
-		pm.logger.Warn("tunnel IP mismatch", "claimed", claimedIP, "expected", expectedIP, "subnet", pm.subnet)
+		log.Warn("tunnel IP mismatch", "claimed", claimedIP, "expected", expectedIP, "subnet", pm.subnet)
 		return wgtypes.Key{}, netip.Addr{}, errors.New("tunnel IP does not match public key")
 	}
 
@@ -341,7 +332,7 @@ func (pm *PeerManager) checkTunnelIPCollision(init *HandshakeInit, claimedIP net
 	}
 
 	if existingRoute.NodeID != init.NodeID {
-		pm.logger.Warn("tunnel IP collision detected",
+		log.Warn("tunnel IP collision detected",
 			"claimed_ip", claimedIP,
 			"new_node", init.NodeID,
 			"existing_node", existingRoute.NodeID)
@@ -356,12 +347,12 @@ func (pm *PeerManager) HandleHandshakeResponse(resp *HandshakeResponse) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	pm.logger.Info("received handshake response",
+	log.Info("received handshake response",
 		"from_node", resp.NodeID,
 		"accepted", resp.Accepted)
 
 	if !resp.Accepted {
-		pm.logger.Warn("handshake rejected", "reason", resp.RejectReason)
+		log.Warn("handshake rejected", "reason", resp.RejectReason)
 		return fmt.Errorf("handshake rejected: %s", resp.RejectReason)
 	}
 
@@ -416,7 +407,7 @@ func (pm *PeerManager) HandleHandshakeComplete(complete *HandshakeComplete) erro
 	peer.ConnectedAt = time.Now()
 	peer.LastSeen = time.Now()
 
-	pm.logger.Info("peer connected",
+	log.Info("peer connected",
 		"node_id", peer.NodeID,
 		"tunnel_ip", peer.TunnelIP)
 
@@ -579,7 +570,7 @@ func (pm *PeerManager) RunHeartbeat(ctx context.Context, interval, maxAge time.D
 			return
 		case <-ticker.C:
 			if pruned := pm.PruneStale(maxAge); pruned > 0 {
-				pm.logger.Info("pruned stale peers", "count", pruned)
+				log.Info("pruned stale peers", "count", pruned)
 			}
 		}
 	}

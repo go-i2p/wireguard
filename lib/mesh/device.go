@@ -5,7 +5,6 @@ package mesh
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/netip"
 	"strings"
 	"sync"
@@ -29,8 +28,6 @@ type DeviceConfig struct {
 	ListenPort uint16
 	// MTU is the tunnel MTU.
 	MTU int
-	// Logger for device operations.
-	Logger *slog.Logger
 	// Bind is the WireGuard network binding (e.g., i2pbind.I2PBind for I2P transport).
 	// If nil, defaults to conn.NewDefaultBind() for standard UDP.
 	Bind conn.Bind
@@ -38,11 +35,10 @@ type DeviceConfig struct {
 
 // Device wraps a wireguard-go device for mesh network use.
 type Device struct {
-	mu     sync.RWMutex
-	dev    *device.Device
-	net    *netstack.Net
-	tun    tun.Device
-	logger *slog.Logger
+	mu  sync.RWMutex
+	dev *device.Device
+	net *netstack.Net
+	tun tun.Device
 
 	// Configuration
 	privateKey wgtypes.Key
@@ -66,15 +62,10 @@ type DevicePeer struct {
 
 // NewDevice creates a new WireGuard device for the mesh network.
 // normalizeDeviceConfig sets default values for missing configuration.
-func normalizeDeviceConfig(cfg *DeviceConfig) *slog.Logger {
+func normalizeDeviceConfig(cfg *DeviceConfig) {
 	if cfg.MTU <= 0 {
 		cfg.MTU = 1280 // Safe default for I2P
 	}
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return logger
 }
 
 // validateDeviceConfig checks that the device configuration is valid.
@@ -132,7 +123,7 @@ func initializeWireGuardDevice(tunDev tun.Device, cfg *DeviceConfig) (*device.De
 }
 
 func NewDevice(cfg DeviceConfig) (*Device, error) {
-	logger := normalizeDeviceConfig(&cfg)
+	normalizeDeviceConfig(&cfg)
 
 	if err := validateDeviceConfig(&cfg); err != nil {
 		return nil, err
@@ -148,16 +139,12 @@ func NewDevice(cfg DeviceConfig) (*Device, error) {
 		return nil, err
 	}
 
-	logger.Info("created WireGuard device",
-		"tunnel_ip", cfg.TunnelIP,
-		"subnet", cfg.Subnet,
-		"mtu", cfg.MTU)
+	log.WithField("tunnel_ip", cfg.TunnelIP).WithField("subnet", cfg.Subnet).WithField("mtu", cfg.MTU).Info("created WireGuard device")
 
 	return &Device{
 		dev:        dev,
 		net:        net,
 		tun:        tunDev,
-		logger:     logger,
 		privateKey: cfg.PrivateKey,
 		tunnelIP:   cfg.TunnelIP,
 		subnet:     cfg.Subnet,
@@ -193,7 +180,7 @@ func (d *Device) AddPeer(publicKey wgtypes.Key, allowedIPs []netip.Prefix, endpo
 	// Enable persistent keepalive for I2P
 	ipc.WriteString("persistent_keepalive_interval=25\n")
 
-	d.logger.Debug("adding peer", "public_key", publicKey.String()[:8]+"...", "allowed_ips", allowedIPs)
+	log.Debug("adding peer", "public_key", publicKey.String()[:8]+"...", "allowed_ips", allowedIPs)
 
 	if err := d.dev.IpcSet(ipc.String()); err != nil {
 		return fmt.Errorf("adding peer: %w", err)
@@ -206,7 +193,7 @@ func (d *Device) AddPeer(publicKey wgtypes.Key, allowedIPs []netip.Prefix, endpo
 		Endpoint:   endpoint,
 	}
 
-	d.logger.Info("added peer",
+	log.Info("added peer",
 		"public_key", publicKey.String()[:8]+"...",
 		"allowed_ips", allowedIPs,
 		"endpoint", endpoint)
@@ -231,7 +218,7 @@ func (d *Device) RemovePeer(publicKey wgtypes.Key) error {
 
 	delete(d.peers, publicKey)
 
-	d.logger.Info("removed peer", "public_key", publicKey.String()[:8]+"...")
+	log.Info("removed peer", "public_key", publicKey.String()[:8]+"...")
 
 	return nil
 }
@@ -258,7 +245,7 @@ func (d *Device) UpdatePeerEndpoint(publicKey wgtypes.Key, endpoint string) erro
 
 	peer.Endpoint = endpoint
 
-	d.logger.Debug("updated peer endpoint", "public_key", publicKey.String()[:8]+"...", "endpoint", endpoint)
+	log.Debug("updated peer endpoint", "public_key", publicKey.String()[:8]+"...", "endpoint", endpoint)
 
 	return nil
 }
@@ -338,7 +325,7 @@ func (d *Device) Close() error {
 	d.closed = true
 	d.dev.Close()
 
-	d.logger.Info("closed WireGuard device")
+	log.Info("closed WireGuard device")
 
 	return nil
 }

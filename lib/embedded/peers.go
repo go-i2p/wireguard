@@ -67,7 +67,8 @@ func convertRPCPeer(p struct {
 	LastSeen    string
 	ConnectedAt string
 	Latency     string
-}) PeerInfo {
+},
+) PeerInfo {
 	var tunnelIP netip.Addr
 	if p.TunnelIP != "" {
 		tunnelIP, _ = netip.ParseAddr(p.TunnelIP)

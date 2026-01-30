@@ -321,7 +321,7 @@ func (c *Client) BansList(ctx context.Context) (*BanListResult, error) {
 }
 
 // BansAdd calls the "bans.add" method.
-func (c *Client) BansAdd(ctx context.Context, nodeID, reason, description string, duration string) (*BanAddResult, error) {
+func (c *Client) BansAdd(ctx context.Context, nodeID, reason, description, duration string) (*BanAddResult, error) {
 	params := BanAddParams{
 		NodeID:      nodeID,
 		Reason:      reason,

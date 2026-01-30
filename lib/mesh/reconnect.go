@@ -3,7 +3,6 @@ package mesh
 
 import (
 	"context"
-	"log/slog"
 	"math"
 	"math/rand"
 	"sync"
@@ -24,8 +23,6 @@ type ReconnectConfig struct {
 	JitterFraction float64
 	// CheckInterval is how often to check for peers to reconnect.
 	CheckInterval time.Duration
-	// Logger for reconnection operations.
-	Logger *slog.Logger
 }
 
 // DefaultReconnectConfig returns sensible defaults.
@@ -55,7 +52,6 @@ type reconnectEntry struct {
 type ReconnectManager struct {
 	mu     sync.RWMutex
 	config ReconnectConfig
-	logger *slog.Logger
 
 	// Peers queued for reconnection
 	queue map[string]*reconnectEntry
@@ -74,16 +70,12 @@ func NewReconnectManager(cfg ReconnectConfig) *ReconnectManager {
 	if cfg.InitialDelay == 0 {
 		cfg = DefaultReconnectConfig()
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
 	if cfg.Multiplier == 0 {
 		cfg.Multiplier = 2.0
 	}
 
 	return &ReconnectManager{
 		config: cfg,
-		logger: cfg.Logger,
 		queue:  make(map[string]*reconnectEntry),
 	}
 }
@@ -114,7 +106,7 @@ func (rm *ReconnectManager) Add(nodeID, i2pDest string, authToken []byte) {
 		CreatedAt: time.Now(),
 	}
 
-	rm.logger.Info("queued peer for reconnection",
+	log.Info("queued peer for reconnection",
 		"node_id", nodeID,
 		"next_retry", rm.config.InitialDelay)
 }
@@ -181,7 +173,7 @@ func (rm *ReconnectManager) Start(ctx context.Context) error {
 	rm.cancel = cancel
 	rm.mu.Unlock()
 
-	rm.logger.Info("starting reconnection manager",
+	log.Info("starting reconnection manager",
 		"check_interval", rm.config.CheckInterval,
 		"initial_delay", rm.config.InitialDelay,
 		"max_delay", rm.config.MaxDelay)
@@ -207,7 +199,7 @@ func (rm *ReconnectManager) Stop() {
 	rm.mu.Unlock()
 
 	rm.wg.Wait()
-	rm.logger.Info("reconnection manager stopped")
+	log.Info("reconnection manager stopped")
 }
 
 // reconnectLoop periodically attempts to reconnect to queued peers.
@@ -257,7 +249,7 @@ func (rm *ReconnectManager) processQueue() {
 
 // attemptReconnect tries to reconnect to a single peer.
 func (rm *ReconnectManager) attemptReconnect(entry *reconnectEntry, handler func(nodeID, i2pDest string, authToken []byte) error) {
-	rm.logger.Info("attempting reconnection",
+	log.Info("attempting reconnection",
 		"node_id", entry.NodeID,
 		"attempt", entry.Attempts+1)
 
@@ -275,7 +267,7 @@ func (rm *ReconnectManager) attemptReconnect(entry *reconnectEntry, handler func
 	if err == nil {
 		// Success - remove from queue
 		delete(rm.queue, entry.NodeID)
-		rm.logger.Info("reconnection successful",
+		log.Info("reconnection successful",
 			"node_id", entry.NodeID,
 			"attempts", entry.Attempts+1)
 		return
@@ -288,7 +280,7 @@ func (rm *ReconnectManager) attemptReconnect(entry *reconnectEntry, handler func
 	// Check max retries
 	if rm.config.MaxRetries > 0 && queuedEntry.Attempts >= rm.config.MaxRetries {
 		delete(rm.queue, entry.NodeID)
-		rm.logger.Warn("reconnection failed permanently",
+		log.Warn("reconnection failed permanently",
 			"node_id", entry.NodeID,
 			"attempts", queuedEntry.Attempts,
 			"error", err)
@@ -299,7 +291,7 @@ func (rm *ReconnectManager) attemptReconnect(entry *reconnectEntry, handler func
 	delay := rm.calculateBackoff(queuedEntry.Attempts)
 	queuedEntry.NextRetry = time.Now().Add(delay)
 
-	rm.logger.Info("reconnection failed, scheduling retry",
+	log.Info("reconnection failed, scheduling retry",
 		"node_id", entry.NodeID,
 		"attempt", queuedEntry.Attempts,
 		"next_retry", delay,
