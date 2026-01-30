@@ -274,6 +274,77 @@ The library implements WireGuard's `conn.Bind` interface, replacing UDP sockets 
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Configuration
+
+i2plan can be configured through TOML files, environment variables, or programmatically.
+
+### Configuration Files
+
+Configuration files use TOML format. See example configurations:
+- **`config.example.toml`** - Complete configuration with all options and defaults
+- **`config.minimal.toml`** - Minimal configuration for quick starts
+- **`config.production.toml`** - Production-ready settings with recommended values
+
+Default configuration locations:
+- **Unix/Linux:** `~/.i2plan/config.toml`
+- **Windows:** `%USERPROFILE%\.i2plan\config.toml`
+
+Example minimal configuration:
+```toml
+[node]
+name = "my-node"
+
+[i2p]
+sam_address = "127.0.0.1:7656"
+tunnel_length = 1
+
+[mesh]
+tunnel_subnet = "10.42.0.0/16"
+max_peers = 50
+```
+
+### Environment Variables
+
+Environment variables with the `I2PLAN_` prefix override configuration file values. This is useful for containerized deployments, CI/CD pipelines, and testing.
+
+**Available environment variables:**
+
+| Variable | Type | Description | Example |
+|----------|------|-------------|---------|
+| `I2PLAN_NODE_NAME` | string | Node identifier | `my-node` |
+| `I2PLAN_DATA_DIR` | string | Data directory path | `/var/lib/i2plan` |
+| `I2PLAN_SAM_ADDRESS` | string | SAM bridge address | `127.0.0.1:7656` |
+| `I2PLAN_TUNNEL_LENGTH` | int | I2P tunnel hops (0-7) | `1` |
+| `I2PLAN_TUNNEL_SUBNET` | string | Mesh IP range (CIDR) | `10.42.0.0/16` |
+| `I2PLAN_HEARTBEAT_INTERVAL` | int | Heartbeat interval (seconds) | `30` |
+| `I2PLAN_PEER_TIMEOUT` | int | Peer timeout (seconds) | `300` |
+| `I2PLAN_MAX_PEERS` | int | Maximum peer count | `50` |
+| `I2PLAN_SHUTDOWN_TIMEOUT` | int | Shutdown timeout (seconds) | `5` |
+| `I2PLAN_DRAIN_TIMEOUT` | int | Drain timeout (seconds) | `10` |
+| `I2PLAN_RPC_ENABLED` | bool | Enable RPC server | `true` |
+| `I2PLAN_RPC_SOCKET` | string | RPC socket path | `rpc.sock` |
+| `I2PLAN_RPC_TCP_ADDRESS` | string | RPC TCP address | `127.0.0.1:9090` |
+| `I2PLAN_WEB_ENABLED` | bool | Enable Web UI | `true` |
+| `I2PLAN_WEB_LISTEN` | string | Web UI listen address | `127.0.0.1:8080` |
+
+**Example usage:**
+```bash
+# Override node name and increase tunnel length
+I2PLAN_NODE_NAME=prod-node-01 I2PLAN_TUNNEL_LENGTH=2 i2plan
+
+# Container deployment with environment variables
+docker run -e I2PLAN_NODE_NAME=container-node \
+           -e I2PLAN_DATA_DIR=/data \
+           -e I2PLAN_SAM_ADDRESS=i2p-router:7656 \
+           i2plan
+```
+
+**Precedence order:** Environment variables > Configuration file > Built-in defaults
+
+### Configuration Options
+
+See the [complete configuration reference](config.example.toml) for detailed descriptions of all options.
+
 ## Building with Version Info
 
 ```bash

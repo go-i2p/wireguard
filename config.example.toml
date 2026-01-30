@@ -1,0 +1,87 @@
+# i2plan Configuration Example
+#
+# This file shows all available configuration options with their default values.
+# Copy this file to your desired location and modify as needed.
+#
+# Environment variables can override any setting using the I2PLAN_ prefix:
+#   I2PLAN_NODE_NAME=my-node
+#   I2PLAN_SAM_ADDRESS=192.168.1.1:7656
+#   I2PLAN_TUNNEL_LENGTH=3
+#
+# See README.md for complete documentation.
+
+# Node configuration
+[node]
+# Human-readable identifier for this node
+name = "my-node"
+
+# Directory where persistent data (identity, config) is stored
+# Default: ~/.i2plan on Unix, %USERPROFILE%\.i2plan on Windows
+data_dir = "/home/user/.i2plan"
+
+
+# I2P transport configuration
+[i2p]
+# SAM bridge address (host:port)
+# Requires I2P router with SAM enabled
+sam_address = "127.0.0.1:7656"
+
+# Number of hops for I2P tunnels (0-7)
+# Lower values = faster but less anonymous
+# This mesh VPN uses a trusted peer model, so the default is 1 hop
+# Increase to 2-3 if anonymity between mesh peers is required
+tunnel_length = 1
+
+
+# Mesh network configuration
+[mesh]
+# IP range used for mesh IPs (CIDR notation)
+# All nodes in the mesh should use the same subnet
+tunnel_subnet = "10.42.0.0/16"
+
+# How often to announce presence to peers (duration)
+# Accepts time.Duration strings: "30s", "1m", "1h30m"
+heartbeat_interval = "30s"
+
+# How long before a peer is considered stale (duration)
+# Should be significantly larger than heartbeat_interval
+peer_timeout = "5m"
+
+# Maximum number of peers to maintain connections with
+# Higher values increase mesh resilience but use more resources
+max_peers = 50
+
+# Maximum time to wait for graceful device shutdown (duration)
+# In production with slow I2P sessions, increase to 10-30s
+shutdown_timeout = "5s"
+
+# Maximum time to wait for in-flight requests during shutdown (duration)
+# Applies to RPC and Web servers
+drain_timeout = "10s"
+
+
+# RPC server configuration
+[rpc]
+# Enable the RPC server for external control
+# Required for TUI and Web UI
+enabled = true
+
+# Unix socket path for RPC (relative to data_dir)
+# Provides secure local control without network exposure
+socket = "rpc.sock"
+
+# Optional TCP address for remote RPC access
+# Leave empty for local-only access
+# WARNING: No authentication - use with caution
+# tcp_address = "127.0.0.1:9090"
+
+
+# Web UI configuration
+[web]
+# Enable the web management interface
+enabled = true
+
+# Address to bind the web server to
+# Use "127.0.0.1:8080" for local-only access
+# Use "0.0.0.0:8080" to allow remote access (not recommended)
+listen = "127.0.0.1:8080"

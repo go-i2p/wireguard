@@ -1,0 +1,19 @@
+# Minimal i2plan Configuration
+#
+# This is a minimal configuration file showing only the most commonly
+# changed settings. All other settings will use sensible defaults.
+#
+# To use: copy to ~/.i2plan/config.toml and modify as needed.
+
+[node]
+name = "my-node"
+
+# Uncomment and modify if you want custom I2P settings
+# [i2p]
+# sam_address = "127.0.0.1:7656"
+# tunnel_length = 1
+
+# Uncomment and modify if you want custom mesh settings
+# [mesh]
+# tunnel_subnet = "10.42.0.0/16"
+# max_peers = 50

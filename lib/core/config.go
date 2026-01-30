@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -132,12 +133,32 @@ func DefaultConfig() *Config {
 
 // LoadConfig reads configuration from a TOML file.
 // If the file doesn't exist, it returns the default configuration.
+// Environment variables with the I2PLAN_ prefix override configuration values.
+//
+// Environment variable mapping:
+//   - I2PLAN_NODE_NAME -> Node.Name
+//   - I2PLAN_DATA_DIR -> Node.DataDir
+//   - I2PLAN_SAM_ADDRESS -> I2P.SAMAddress
+//   - I2PLAN_TUNNEL_LENGTH -> I2P.TunnelLength
+//   - I2PLAN_TUNNEL_SUBNET -> Mesh.TunnelSubnet
+//   - I2PLAN_HEARTBEAT_INTERVAL -> Mesh.HeartbeatInterval (seconds)
+//   - I2PLAN_PEER_TIMEOUT -> Mesh.PeerTimeout (seconds)
+//   - I2PLAN_MAX_PEERS -> Mesh.MaxPeers
+//   - I2PLAN_SHUTDOWN_TIMEOUT -> Mesh.ShutdownTimeout (seconds)
+//   - I2PLAN_DRAIN_TIMEOUT -> Mesh.DrainTimeout (seconds)
+//   - I2PLAN_RPC_ENABLED -> RPC.Enabled (true/false)
+//   - I2PLAN_RPC_SOCKET -> RPC.Socket
+//   - I2PLAN_RPC_TCP_ADDRESS -> RPC.TCPAddress
+//   - I2PLAN_WEB_ENABLED -> Web.Enabled (true/false)
+//   - I2PLAN_WEB_LISTEN -> Web.Listen
 func LoadConfig(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Apply env overrides even if config file doesn't exist
+			applyEnvOverrides(cfg)
 			return cfg, nil
 		}
 		return nil, fmt.Errorf("reading config file: %w", err)
@@ -146,6 +167,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
+
+	// Apply environment variable overrides after loading from file
+	applyEnvOverrides(cfg)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -231,4 +255,79 @@ func (c *Config) DataPath(elem ...string) string {
 // EnsureDataDir creates the data directory if it doesn't exist.
 func (c *Config) EnsureDataDir() error {
 	return os.MkdirAll(c.Node.DataDir, 0o700)
+}
+
+// applyEnvOverrides applies environment variable overrides to the configuration.
+// Environment variables with the I2PLAN_ prefix take precedence over file-based config.
+func applyEnvOverrides(cfg *Config) {
+	// Node configuration
+	if v := os.Getenv("I2PLAN_NODE_NAME"); v != "" {
+		cfg.Node.Name = v
+	}
+	if v := os.Getenv("I2PLAN_DATA_DIR"); v != "" {
+		cfg.Node.DataDir = v
+	}
+
+	// I2P configuration
+	if v := os.Getenv("I2PLAN_SAM_ADDRESS"); v != "" {
+		cfg.I2P.SAMAddress = v
+	}
+	if v := os.Getenv("I2PLAN_TUNNEL_LENGTH"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.I2P.TunnelLength = i
+		}
+	}
+
+	// Mesh configuration
+	if v := os.Getenv("I2PLAN_TUNNEL_SUBNET"); v != "" {
+		cfg.Mesh.TunnelSubnet = v
+	}
+	if v := os.Getenv("I2PLAN_HEARTBEAT_INTERVAL"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Mesh.HeartbeatInterval = time.Duration(i) * time.Second
+		}
+	}
+	if v := os.Getenv("I2PLAN_PEER_TIMEOUT"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Mesh.PeerTimeout = time.Duration(i) * time.Second
+		}
+	}
+	if v := os.Getenv("I2PLAN_MAX_PEERS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Mesh.MaxPeers = i
+		}
+	}
+	if v := os.Getenv("I2PLAN_SHUTDOWN_TIMEOUT"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Mesh.ShutdownTimeout = time.Duration(i) * time.Second
+		}
+	}
+	if v := os.Getenv("I2PLAN_DRAIN_TIMEOUT"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Mesh.DrainTimeout = time.Duration(i) * time.Second
+		}
+	}
+
+	// RPC configuration
+	if v := os.Getenv("I2PLAN_RPC_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.RPC.Enabled = b
+		}
+	}
+	if v := os.Getenv("I2PLAN_RPC_SOCKET"); v != "" {
+		cfg.RPC.Socket = v
+	}
+	if v := os.Getenv("I2PLAN_RPC_TCP_ADDRESS"); v != "" {
+		cfg.RPC.TCPAddress = v
+	}
+
+	// Web configuration
+	if v := os.Getenv("I2PLAN_WEB_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Web.Enabled = b
+		}
+	}
+	if v := os.Getenv("I2PLAN_WEB_LISTEN"); v != "" {
+		cfg.Web.Listen = v
+	}
 }

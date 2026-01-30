@@ -228,3 +228,237 @@ func TestSaveConfig_CreatesDirectory(t *testing.T) {
 		t.Error("config file was not created")
 	}
 }
+
+func TestApplyEnvOverrides(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		validate func(*testing.T, *Config)
+	}{
+		{
+			name: "node configuration overrides",
+			envVars: map[string]string{
+				"I2PLAN_NODE_NAME": "test-node",
+				"I2PLAN_DATA_DIR":  "/custom/data",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Node.Name != "test-node" {
+					t.Errorf("Node.Name = %q, want %q", cfg.Node.Name, "test-node")
+				}
+				if cfg.Node.DataDir != "/custom/data" {
+					t.Errorf("Node.DataDir = %q, want %q", cfg.Node.DataDir, "/custom/data")
+				}
+			},
+		},
+		{
+			name: "I2P configuration overrides",
+			envVars: map[string]string{
+				"I2PLAN_SAM_ADDRESS":   "192.168.1.1:7656",
+				"I2PLAN_TUNNEL_LENGTH": "3",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.I2P.SAMAddress != "192.168.1.1:7656" {
+					t.Errorf("I2P.SAMAddress = %q, want %q", cfg.I2P.SAMAddress, "192.168.1.1:7656")
+				}
+				if cfg.I2P.TunnelLength != 3 {
+					t.Errorf("I2P.TunnelLength = %d, want %d", cfg.I2P.TunnelLength, 3)
+				}
+			},
+		},
+		{
+			name: "mesh configuration overrides",
+			envVars: map[string]string{
+				"I2PLAN_TUNNEL_SUBNET":      "172.16.0.0/12",
+				"I2PLAN_HEARTBEAT_INTERVAL": "60",
+				"I2PLAN_PEER_TIMEOUT":       "600",
+				"I2PLAN_MAX_PEERS":          "100",
+				"I2PLAN_SHUTDOWN_TIMEOUT":   "10",
+				"I2PLAN_DRAIN_TIMEOUT":      "20",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Mesh.TunnelSubnet != "172.16.0.0/12" {
+					t.Errorf("Mesh.TunnelSubnet = %q, want %q", cfg.Mesh.TunnelSubnet, "172.16.0.0/12")
+				}
+				if cfg.Mesh.HeartbeatInterval != 60*time.Second {
+					t.Errorf("Mesh.HeartbeatInterval = %v, want %v", cfg.Mesh.HeartbeatInterval, 60*time.Second)
+				}
+				if cfg.Mesh.PeerTimeout != 600*time.Second {
+					t.Errorf("Mesh.PeerTimeout = %v, want %v", cfg.Mesh.PeerTimeout, 600*time.Second)
+				}
+				if cfg.Mesh.MaxPeers != 100 {
+					t.Errorf("Mesh.MaxPeers = %d, want %d", cfg.Mesh.MaxPeers, 100)
+				}
+				if cfg.Mesh.ShutdownTimeout != 10*time.Second {
+					t.Errorf("Mesh.ShutdownTimeout = %v, want %v", cfg.Mesh.ShutdownTimeout, 10*time.Second)
+				}
+				if cfg.Mesh.DrainTimeout != 20*time.Second {
+					t.Errorf("Mesh.DrainTimeout = %v, want %v", cfg.Mesh.DrainTimeout, 20*time.Second)
+				}
+			},
+		},
+		{
+			name: "RPC configuration overrides",
+			envVars: map[string]string{
+				"I2PLAN_RPC_ENABLED":     "false",
+				"I2PLAN_RPC_SOCKET":      "custom.sock",
+				"I2PLAN_RPC_TCP_ADDRESS": "0.0.0.0:9090",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.RPC.Enabled != false {
+					t.Errorf("RPC.Enabled = %v, want %v", cfg.RPC.Enabled, false)
+				}
+				if cfg.RPC.Socket != "custom.sock" {
+					t.Errorf("RPC.Socket = %q, want %q", cfg.RPC.Socket, "custom.sock")
+				}
+				if cfg.RPC.TCPAddress != "0.0.0.0:9090" {
+					t.Errorf("RPC.TCPAddress = %q, want %q", cfg.RPC.TCPAddress, "0.0.0.0:9090")
+				}
+			},
+		},
+		{
+			name: "web configuration overrides",
+			envVars: map[string]string{
+				"I2PLAN_WEB_ENABLED": "false",
+				"I2PLAN_WEB_LISTEN":  "0.0.0.0:8888",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Web.Enabled != false {
+					t.Errorf("Web.Enabled = %v, want %v", cfg.Web.Enabled, false)
+				}
+				if cfg.Web.Listen != "0.0.0.0:8888" {
+					t.Errorf("Web.Listen = %q, want %q", cfg.Web.Listen, "0.0.0.0:8888")
+				}
+			},
+		},
+		{
+			name: "invalid integer values ignored",
+			envVars: map[string]string{
+				"I2PLAN_TUNNEL_LENGTH": "invalid",
+				"I2PLAN_MAX_PEERS":     "not-a-number",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				// Should retain default values when parsing fails
+				if cfg.I2P.TunnelLength != DefaultTunnelLength {
+					t.Errorf("I2P.TunnelLength = %d, want default %d", cfg.I2P.TunnelLength, DefaultTunnelLength)
+				}
+				if cfg.Mesh.MaxPeers != DefaultMaxPeers {
+					t.Errorf("Mesh.MaxPeers = %d, want default %d", cfg.Mesh.MaxPeers, DefaultMaxPeers)
+				}
+			},
+		},
+		{
+			name: "invalid boolean values ignored",
+			envVars: map[string]string{
+				"I2PLAN_RPC_ENABLED": "maybe",
+				"I2PLAN_WEB_ENABLED": "yes-please",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				// Should retain default values when parsing fails
+				if cfg.RPC.Enabled != true {
+					t.Errorf("RPC.Enabled = %v, want default true", cfg.RPC.Enabled)
+				}
+				if cfg.Web.Enabled != true {
+					t.Errorf("Web.Enabled = %v, want default true", cfg.Web.Enabled)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Save original environment
+			origEnv := make(map[string]string)
+			for key := range tt.envVars {
+				origEnv[key] = os.Getenv(key)
+			}
+
+			// Set test environment variables
+			for key, value := range tt.envVars {
+				os.Setenv(key, value)
+			}
+
+			// Restore environment after test
+			defer func() {
+				for key := range tt.envVars {
+					if orig, ok := origEnv[key]; ok {
+						os.Setenv(key, orig)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
+			}()
+
+			// Test applyEnvOverrides
+			cfg := DefaultConfig()
+			applyEnvOverrides(cfg)
+			tt.validate(t, cfg)
+		})
+	}
+}
+
+func TestLoadConfig_WithEnvOverrides(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Create a config file with specific values
+	cfg := DefaultConfig()
+	cfg.Node.Name = "file-node"
+	cfg.I2P.TunnelLength = 2
+	cfg.Mesh.MaxPeers = 25
+
+	if err := SaveConfig(cfg, configPath); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	// Set environment variables that should override file values
+	os.Setenv("I2PLAN_NODE_NAME", "env-node")
+	os.Setenv("I2PLAN_TUNNEL_LENGTH", "3")
+	os.Setenv("I2PLAN_MAX_PEERS", "75")
+	defer func() {
+		os.Unsetenv("I2PLAN_NODE_NAME")
+		os.Unsetenv("I2PLAN_TUNNEL_LENGTH")
+		os.Unsetenv("I2PLAN_MAX_PEERS")
+	}()
+
+	// Load config - env vars should override file values
+	loaded, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if loaded.Node.Name != "env-node" {
+		t.Errorf("Node.Name = %q, want %q (env override)", loaded.Node.Name, "env-node")
+	}
+	if loaded.I2P.TunnelLength != 3 {
+		t.Errorf("I2P.TunnelLength = %d, want %d (env override)", loaded.I2P.TunnelLength, 3)
+	}
+	if loaded.Mesh.MaxPeers != 75 {
+		t.Errorf("Mesh.MaxPeers = %d, want %d (env override)", loaded.Mesh.MaxPeers, 75)
+	}
+}
+
+func TestLoadConfig_NoFile_WithEnvOverrides(t *testing.T) {
+	tmpDir := t.TempDir()
+	nonExistentPath := filepath.Join(tmpDir, "does-not-exist.toml")
+
+	// Set environment variables
+	os.Setenv("I2PLAN_NODE_NAME", "env-only-node")
+	os.Setenv("I2PLAN_SAM_ADDRESS", "10.0.0.1:7656")
+	defer func() {
+		os.Unsetenv("I2PLAN_NODE_NAME")
+		os.Unsetenv("I2PLAN_SAM_ADDRESS")
+	}()
+
+	// Load config from non-existent file - should use defaults + env overrides
+	cfg, err := LoadConfig(nonExistentPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.Node.Name != "env-only-node" {
+		t.Errorf("Node.Name = %q, want %q", cfg.Node.Name, "env-only-node")
+	}
+	if cfg.I2P.SAMAddress != "10.0.0.1:7656" {
+		t.Errorf("I2P.SAMAddress = %q, want %q", cfg.I2P.SAMAddress, "10.0.0.1:7656")
+	}
+}
