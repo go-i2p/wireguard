@@ -400,6 +400,127 @@ log.WithFields(map[string]interface{}{
 log.WithError(err).Error("Failed to connect")
 ```
 
+### Log Rotation for Production
+
+For production deployments, configure log rotation to prevent disk space exhaustion:
+
+#### Using systemd (Linux)
+
+When running as a systemd service, logs are automatically captured by journald. Configure retention with `/etc/systemd/journald.conf`:
+
+```ini
+[Journal]
+SystemMaxUse=1G
+SystemMaxFileSize=100M
+MaxRetentionSec=7day
+```
+
+Apply changes:
+```bash
+sudo systemctl restart systemd-journald
+```
+
+Query logs:
+```bash
+# View logs with filtering
+journalctl -u i2plan.service -f
+
+# View logs from specific time range
+journalctl -u i2plan.service --since "1 hour ago"
+
+# Export logs to file
+journalctl -u i2plan.service > i2plan.log
+```
+
+#### Using logrotate (Linux)
+
+If logging to files, use logrotate. Create `/etc/logrotate.d/i2plan`:
+
+```
+/var/log/i2plan/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 i2plan i2plan
+    sharedscripts
+    postrotate
+        # Send HUP signal to reopen log files (if implemented)
+        # or restart the service
+        systemctl reload-or-restart i2plan.service > /dev/null 2>&1 || true
+    endscript
+}
+```
+
+Test the configuration:
+```bash
+sudo logrotate -d /etc/logrotate.d/i2plan
+sudo logrotate -f /etc/logrotate.d/i2plan
+```
+
+#### Container Deployments
+
+For Docker/Kubernetes, configure log drivers to limit storage:
+
+**Docker Compose:**
+```yaml
+services:
+  i2plan:
+    image: i2plan:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+**Kubernetes:**
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: i2plan
+spec:
+  containers:
+  - name: i2plan
+    image: i2plan:latest
+    # Logs are rotated automatically by kubelet
+    # Configure retention in kubelet flags:
+    # --container-log-max-size=10Mi
+    # --container-log-max-files=5
+```
+
+#### Centralized Logging
+
+For production environments, consider centralized logging:
+
+**Syslog:**
+Pipe i2plan output to syslog for centralized collection:
+```bash
+i2plan 2>&1 | logger -t i2plan -p local0.info
+```
+
+**ELK Stack / Loki:**
+Configure log aggregators to collect structured JSON logs:
+```bash
+# Run with JSON output (if supported by logger)
+DEBUG_I2P=info i2plan | filebeat -c filebeat.yml
+```
+
+### Security: Sensitive Data Protection
+
+i2plan is designed to never log sensitive information:
+
+- **Private keys** - Never logged in any context
+- **Authentication tokens** - Only token IDs logged for debugging, never token values
+- **CSRF tokens** - Not logged
+- **Invite codes** - Only metadata logged (expiry, usage count), not the full code
+- **I2P destinations** - Public identifiers only (safe to log)
+
+All log entries use structured fields to ensure consistent, parseable output without exposing secrets.
+
 ## License
 
 See [LICENSE](LICENSE) file.
