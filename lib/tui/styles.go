@@ -134,7 +134,9 @@ func initStyles() {
 		Foreground(currentTheme.Primary)
 }
 
-// PeerStateStyle returns the style for a peer state.
+// PeerStateStyle returns the appropriate style for displaying a peer's connection state.
+// Connected peers are shown in green (Success), Pending in yellow (Warning),
+// Disconnected/Rejected in red (Error), and unknown states in gray (Muted).
 func PeerStateStyle(state string) lipgloss.Style {
 	switch state {
 	case "Connected":

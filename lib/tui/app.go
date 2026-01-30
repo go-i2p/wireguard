@@ -129,7 +129,9 @@ func New(cfg Config) (*Model, error) {
 	}, nil
 }
 
-// Init initializes the TUI model.
+// Init initializes the TUI model and returns initial commands.
+// This starts the spinner animation, triggers the first data refresh,
+// and sets the window title.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
@@ -138,7 +140,8 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-// Update handles messages and updates the model.
+// Update handles messages and updates the model according to the BubbleTea architecture.
+// This is the central message dispatcher that routes messages to appropriate handlers.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -469,7 +472,8 @@ func (m Model) refreshData() tea.Msg {
 	return msg
 }
 
-// Close cleans up resources.
+// Close cleans up resources, specifically the RPC client connection.
+// This should be called before the application exits to ensure graceful shutdown.
 func (m *Model) Close() error {
 	if m.client != nil {
 		return m.client.Close()
@@ -484,7 +488,9 @@ func max(a, b int) int {
 	return b
 }
 
-// attemptReconnection tries to reconnect to the RPC server.
+// attemptReconnection tries to reconnect to the RPC server after a connection failure.
+// It closes the existing connection, waits briefly, and attempts to establish a new one.
+// Returns a command that triggers an immediate refresh on success or another reconnection attempt on failure.
 func (m *Model) attemptReconnection() tea.Cmd {
 	return func() tea.Msg {
 		log.Info("attempting RPC reconnection")
@@ -518,6 +524,8 @@ func (m *Model) attemptReconnection() tea.Cmd {
 }
 
 // isConnectionError checks if an error is related to connection failure.
+// This includes common error types like connection refused, broken pipe, and connection reset.
+// Returns true if the error indicates a connection problem that might be resolved by reconnection.
 func isConnectionError(err error) bool {
 	if err == nil {
 		return false
