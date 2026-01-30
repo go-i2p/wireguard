@@ -243,24 +243,24 @@ The library implements WireGuard's `conn.Bind` interface, replacing UDP sockets 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                lib/web (UI) │ lib/tui (UI)                   │
-│                   ↓ RPC client connection ↓                  │
+│                lib/web (UI) │ lib/tui (UI)                  │
+│                   ↓ RPC client connection ↓                 │
 ├─────────────────────────────────────────────────────────────┤
-│                      Application                             │
+│                      Application                            │
 ├─────────────────────────────────────────────────────────────┤
-│                   lib/embedded (VPN API)                     │
+│                   lib/embedded (VPN API)                    │
 ├─────────────────────────────────────────────────────────────┤
-│  lib/core    │  lib/mesh   │  lib/rpc                        │
-│  (Node)      │  (Gossip)   │  (Control Server)               │
+│  lib/core    │  lib/mesh   │  lib/rpc                       │
+│  (Node)      │  (Gossip)   │  (Control Server)              │
 ├──────────────┼─────────────┴────────────────────────────────┤
-│ lib/identity │              lib/transport                    │
-│  (Keys)      │              (Peer Tracking)                  │
+│ lib/identity │              lib/transport                   │
+│  (Keys)      │              (Peer Tracking)                 │
 ├──────────────┴──────────────────────────────────────────────┤
-│                      i2pbind (conn.Bind)                     │
+│                      i2pbind (conn.Bind)                    │
 ├─────────────────────────────────────────────────────────────┤
-│                   wireguard-go (WireGuard)                   │
+│                   wireguard-go (WireGuard)                  │
 ├─────────────────────────────────────────────────────────────┤
-│                      I2P SAM Bridge                          │
+│                      I2P SAM Bridge                         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
