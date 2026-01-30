@@ -14,7 +14,6 @@ package i2pbind
 
 import (
 	"errors"
-	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
@@ -50,6 +49,7 @@ type I2PEndpoint struct {
 
 // NewI2PEndpoint creates a new I2P endpoint from a destination address
 func NewI2PEndpoint(dest i2pkeys.I2PAddr) *I2PEndpoint {
+	log.WithField("dest", dest.Base32()).Debug("creating new I2P endpoint")
 	return &I2PEndpoint{dest: dest}
 }
 
@@ -144,6 +144,7 @@ func NewI2PBindWithSAM(name, samAddr string) *I2PBind {
 // If options is nil or empty, onramp.OPT_DEFAULTS will be used.
 // See github.com/go-i2p/sam3 for available options.
 func NewI2PBindWithOptions(name, samAddr string, options []string) *I2PBind {
+	log.WithField("name", name).WithField("samAddr", samAddr).Debug("creating new I2P bind")
 	return &I2PBind{
 		name:       name,
 		samAddr:    samAddr,
@@ -161,18 +162,21 @@ func (b *I2PBind) SetMeshHandler(handler MeshMessageHandler) {
 	defer b.mu.Unlock()
 
 	if b.messagesReceived.Load() {
-		slog.Warn("i2pbind: SetMeshHandler called after messages received, earlier mesh messages may have been dropped")
+		log.Warn("SetMeshHandler called after messages received, earlier mesh messages may have been dropped")
 	}
 
+	log.Debug("mesh handler set")
 	b.meshHandler = handler
 }
 
 // Open initializes the I2P datagram session and returns receive functions
 func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
+	log.WithField("name", b.name).Debug("opening I2P bind")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.packetConn != nil {
+		log.Warn("bind already open")
 		return nil, 0, conn.ErrBindAlreadyOpen
 	}
 
@@ -183,15 +187,20 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	}
 
 	// Create a new Garlic session with configured options
+	log.WithField("samAddr", b.samAddr).Debug("creating garlic session")
 	garlic, err := onramp.NewGarlic(b.name, b.samAddr, options)
 	if err != nil {
+		log.WithError(err).Error("failed to create garlic session")
 		return nil, 0, err
 	}
 	b.garlic = garlic
+	log.Debug("garlic session created successfully")
 
 	// Get a PacketConn (uses hybrid2 protocol internally)
+	log.Debug("listening for packets")
 	packetConn, err := garlic.ListenPacket()
 	if err != nil {
+		log.WithError(err).Error("failed to listen for packets")
 		garlic.Close()
 		return nil, 0, err
 	}
@@ -201,6 +210,7 @@ func (b *I2PBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	// Create receive function
 	recvFunc := b.makeReceiveFunc()
 
+	log.WithField("name", b.name).Debug("I2P bind opened successfully")
 	// Port is not meaningful for I2P, return 0
 	return []conn.ReceiveFunc{recvFunc}, 0, nil
 }
@@ -276,10 +286,12 @@ func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 
 // Close shuts down the I2P session
 func (b *I2PBind) Close() error {
+	log.WithField("name", b.name).Debug("closing I2P bind")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.closed {
+		log.Debug("bind already closed")
 		return nil
 	}
 	b.closed = true
@@ -287,22 +299,28 @@ func (b *I2PBind) Close() error {
 	var errs []error
 
 	if b.packetConn != nil {
+		log.Debug("closing packet connection")
 		if err := b.packetConn.Close(); err != nil {
+			log.WithError(err).Warn("error closing packet connection")
 			errs = append(errs, err)
 		}
 		b.packetConn = nil
 	}
 
 	if b.garlic != nil {
+		log.Debug("closing garlic session")
 		if err := b.garlic.Close(); err != nil {
+			log.WithError(err).Warn("error closing garlic session")
 			errs = append(errs, err)
 		}
 		b.garlic = nil
 	}
 
 	if len(errs) > 0 {
+		log.WithField("errorCount", len(errs)).Warn("bind closed with errors")
 		return errs[0]
 	}
+	log.Debug("bind closed successfully")
 	return nil
 }
 
@@ -319,22 +337,28 @@ func (b *I2PBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
 	b.mu.Unlock()
 
 	if pc == nil {
+		log.Debug("send called on closed bind")
 		return net.ErrClosed
 	}
 
 	i2pEp, ok := endpoint.(*I2PEndpoint)
 	if !ok {
+		log.Warn("wrong endpoint type for send")
 		return conn.ErrWrongEndpointType
 	}
+
+	log.WithField("dest", i2pEp.dest.Base32()).WithField("buffers", len(bufs)).Debug("sending packets")
 
 	// Send each buffer as a separate I2P datagram
 	for _, buf := range bufs {
 		if len(buf) > MaxI2PDatagramSize {
+			log.WithField("size", len(buf)).Error("datagram exceeds I2P maximum size")
 			return errors.New("i2pbind: datagram exceeds I2P maximum size (31KB)")
 		}
 
 		_, err := pc.WriteTo(buf, i2pEp.dest)
 		if err != nil {
+			log.WithError(err).Error("failed to send datagram")
 			return err
 		}
 	}
@@ -345,8 +369,10 @@ func (b *I2PBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
 // ParseEndpoint parses an I2P address string into an endpoint
 // Accepts base32 addresses (xxx.b32.i2p) or full base64 destinations
 func (b *I2PBind) ParseEndpoint(s string) (conn.Endpoint, error) {
+	log.WithField("endpoint", s).Debug("parsing endpoint")
 	addr, err := i2pkeys.NewI2PAddrFromString(s)
 	if err != nil {
+		log.WithError(err).WithField("endpoint", s).Error("failed to parse endpoint")
 		return nil, err
 	}
 	return &I2PEndpoint{dest: addr}, nil
@@ -367,20 +393,25 @@ func (b *I2PBind) BatchSize() int {
 // After a successful Open() call, LocalAddress() should always succeed.
 // If it fails after Open(), the I2P session may have been terminated.
 func (b *I2PBind) LocalAddress() (string, error) {
+	log.Debug("getting local I2P address")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.garlic == nil {
+		log.Warn("cannot get local address: bind not open")
 		return "", errors.New("i2pbind: bind not open")
 	}
 
 	// Get the I2P keys from the Garlic session
 	keys, err := b.garlic.Keys()
 	if err != nil {
+		log.WithError(err).Error("failed to get I2P keys")
 		return "", err
 	}
 
-	return keys.Addr().Base32(), nil
+	addr := keys.Addr().Base32()
+	log.WithField("address", addr).Debug("local I2P address retrieved")
+	return addr, nil
 }
 
 // LocalDestination returns the full I2P destination.
@@ -390,18 +421,22 @@ func (b *I2PBind) LocalAddress() (string, error) {
 //
 // After a successful Open() call, LocalDestination() should always succeed.
 func (b *I2PBind) LocalDestination() (i2pkeys.I2PAddr, error) {
+	log.Debug("getting local I2P destination")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.garlic == nil {
+		log.Warn("cannot get local destination: bind not open")
 		return "", errors.New("i2pbind: bind not open")
 	}
 
 	// Get the I2P keys from the Garlic session
 	keys, err := b.garlic.Keys()
 	if err != nil {
+		log.WithError(err).Error("failed to get I2P keys")
 		return "", err
 	}
 
+	log.Debug("local I2P destination retrieved")
 	return keys.Addr(), nil
 }

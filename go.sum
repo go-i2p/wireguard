@@ -61,8 +61,8 @@ github.com/go-i2p/go-streaming v0.0.0-20260127190938-144f6f599abb h1:HgusE3AQ2/2
 github.com/go-i2p/go-streaming v0.0.0-20260127190938-144f6f599abb/go.mod h1:U5h+lLOWSIO7D2Tl/ackfdL4BYcMnleKoXjoGU1Qrrc=
 github.com/go-i2p/i2pkeys v0.33.92 h1:e2vx3vf7tNesaJ8HmAlGPOcfiGM86jzeIGxh27I9J2Y=
 github.com/go-i2p/i2pkeys v0.33.92/go.mod h1:BRURQ/twxV0WKjZlFSKki93ivBi+MirZPWudfwTzMpE=
-github.com/go-i2p/logger v0.1.0 h1:S6LIPtyoYigNDbAnx4rGHAfSVHmps++0eXAdpZJDKJY=
-github.com/go-i2p/logger v0.1.0/go.mod h1:8cnb1aRi0bAK8QgrQi5ZXKQaK7QFeZ24Cy2hokqGpAE=
+github.com/go-i2p/logger v0.1.3 h1:2ejL/Jw0P2EpktX7GIxub4lbxg6mr2Gngn4fTgnAOao=
+github.com/go-i2p/logger v0.1.3/go.mod h1:fEh2nRZ6HwLJNaWJuE25mCzDa6VpCI4O37u5OfGNvus=
 github.com/go-i2p/noise v0.0.0-20251212204422-ded862d8cdf9 h1:GB+OInR0InM9wXdHwYNBks7kGFoeov8EGwV1IQ+Mjxw=
 github.com/go-i2p/noise v0.0.0-20251212204422-ded862d8cdf9/go.mod h1:I7AHlf/Oq0r0wMwmjwLj+IceRGJMxRLQF1RBRxyCR0I=
 github.com/go-i2p/su3 v0.0.1 h1:qiujRfdbXgJ5lCkuNG4P0q/LOl+miU50VpBNRsut8kA=

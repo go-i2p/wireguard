@@ -69,18 +69,23 @@ type persistedIdentity struct {
 
 // NewIdentity generates a new random identity with fresh WireGuard and Ed25519 keypairs.
 func NewIdentity() (*Identity, error) {
+	log.Debug("generating new identity")
 	privateKey, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
+		log.WithError(err).Error("failed to generate WireGuard private key")
 		return nil, fmt.Errorf("generating WireGuard private key: %w", err)
 	}
 
 	// Generate Ed25519 signing keypair
 	verifyingKey, signingKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
+		log.WithError(err).Error("failed to generate Ed25519 signing key")
 		return nil, fmt.Errorf("generating Ed25519 signing key: %w", err)
 	}
 
-	return newIdentityFromKeys(privateKey, signingKey, verifyingKey), nil
+	id := newIdentityFromKeys(privateKey, signingKey, verifyingKey)
+	log.WithField("nodeID", id.nodeID).Debug("identity generated successfully")
+	return id, nil
 }
 
 // newIdentityFromKeys creates an identity from existing keys.
@@ -108,16 +113,20 @@ func deriveNodeID(publicKey wgtypes.Key) string {
 // LoadIdentity loads an identity from a JSON file.
 // Returns nil, nil if the file doesn't exist (caller should create new identity).
 func LoadIdentity(path string) (*Identity, error) {
+	log.WithField("path", path).Debug("loading identity from file")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.WithField("path", path).Debug("identity file does not exist")
 			return nil, nil
 		}
+		log.WithError(err).WithField("path", path).Error("failed to read identity file")
 		return nil, fmt.Errorf("reading identity file: %w", err)
 	}
 
 	var p persistedIdentity
 	if err := json.Unmarshal(data, &p); err != nil {
+		log.WithError(err).Error("failed to parse identity file")
 		return nil, fmt.Errorf("parsing identity file: %w", err)
 	}
 
@@ -151,13 +160,16 @@ func LoadIdentity(path string) (*Identity, error) {
 
 // parseWireGuardKey parses and validates the WireGuard private key from persisted identity.
 func parseWireGuardKey(p persistedIdentity) (wgtypes.Key, error) {
+	log.Debug("parsing WireGuard key")
 	privateKey, err := wgtypes.ParseKey(p.PrivateKey)
 	if err != nil {
+		log.WithError(err).Error("failed to parse WireGuard private key")
 		return wgtypes.Key{}, fmt.Errorf("parsing WireGuard private key: %w", err)
 	}
 
 	derivedPublicKey := privateKey.PublicKey()
 	if p.PublicKey != derivedPublicKey.String() {
+		log.Error("WireGuard public key mismatch in identity file")
 		return wgtypes.Key{}, errors.New("WireGuard public key mismatch in identity file")
 	}
 
@@ -166,25 +178,31 @@ func parseWireGuardKey(p persistedIdentity) (wgtypes.Key, error) {
 
 // parseSigningKeys parses and validates the Ed25519 signing keys from persisted identity.
 func parseSigningKeys(p persistedIdentity) (ed25519.PrivateKey, ed25519.PublicKey, error) {
+	log.Debug("parsing Ed25519 signing keys")
 	signingKeyBytes, err := hex.DecodeString(p.SigningKey)
 	if err != nil {
+		log.WithError(err).Error("failed to parse signing key")
 		return nil, nil, fmt.Errorf("parsing signing key: %w", err)
 	}
 	if len(signingKeyBytes) != ed25519.PrivateKeySize {
+		log.Error("invalid signing key size")
 		return nil, nil, errors.New("invalid signing key size")
 	}
 	signingKey := ed25519.PrivateKey(signingKeyBytes)
 
 	verifyingKeyBytes, err := hex.DecodeString(p.VerifyingKey)
 	if err != nil {
+		log.WithError(err).Error("failed to parse verifying key")
 		return nil, nil, fmt.Errorf("parsing verifying key: %w", err)
 	}
 	if len(verifyingKeyBytes) != ed25519.PublicKeySize {
+		log.Error("invalid verifying key size")
 		return nil, nil, errors.New("invalid verifying key size")
 	}
 	verifyingKey := ed25519.PublicKey(verifyingKeyBytes)
 
 	if !verifyingKey.Equal(signingKey.Public()) {
+		log.Error("Ed25519 key mismatch in identity file")
 		return nil, nil, errors.New("Ed25519 key mismatch in identity file")
 	}
 
@@ -194,6 +212,7 @@ func parseSigningKeys(p persistedIdentity) (ed25519.PrivateKey, ed25519.PublicKe
 // Save persists the identity to a JSON file.
 // Creates the parent directory if it doesn't exist.
 func (id *Identity) Save(path string) error {
+	log.WithField("path", path).Debug("saving identity to file")
 	id.mu.RLock()
 	p := persistedIdentity{
 		PrivateKey:   id.privateKey.String(),
@@ -209,29 +228,35 @@ func (id *Identity) Save(path string) error {
 
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
+		log.WithError(err).Error("failed to marshal identity")
 		return fmt.Errorf("marshaling identity: %w", err)
 	}
 
 	// Create parent directory
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.WithError(err).WithField("dir", dir).Error("failed to create identity directory")
 		return fmt.Errorf("creating identity directory: %w", err)
 	}
 
 	// Write atomically via temp file
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		log.WithError(err).Error("failed to write identity file")
 		return fmt.Errorf("writing identity file: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
 		if rmErr := os.Remove(tmpPath); rmErr != nil {
+			log.WithError(rmErr).Warn("failed to remove temp file after rename error")
 			// Log but don't fail on cleanup error - the rename error is more important
 			// Stale temp files will be overwritten on next save attempt
 		}
+		log.WithError(err).Error("failed to rename identity file")
 		return fmt.Errorf("renaming identity file: %w", err)
 	}
 
+	log.WithField("path", path).Debug("identity saved successfully")
 	return nil
 }
 
@@ -267,6 +292,7 @@ func (id *Identity) I2PDest() string {
 // SetI2PDest sets the I2P destination address.
 // This is typically called after the transport layer opens.
 func (id *Identity) SetI2PDest(dest string) {
+	log.WithField("dest", dest).Debug("setting I2P destination")
 	id.mu.Lock()
 	defer id.mu.Unlock()
 	id.i2pDest = dest
@@ -281,6 +307,7 @@ func (id *Identity) NetworkID() string {
 
 // SetNetworkID sets the network identifier.
 func (id *Identity) SetNetworkID(networkID string) {
+	log.WithField("networkID", networkID).Debug("setting network ID")
 	id.mu.Lock()
 	defer id.mu.Unlock()
 	id.networkID = networkID
@@ -296,11 +323,15 @@ func (id *Identity) CreatedAt() time.Time {
 // GenerateNetworkID creates a new random network identifier.
 // Used when creating a new mesh network.
 func GenerateNetworkID() (string, error) {
+	log.Debug("generating new network ID")
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
+		log.WithError(err).Error("failed to generate network ID")
 		return "", fmt.Errorf("generating network ID: %w", err)
 	}
-	return hex.EncodeToString(bytes), nil
+	networkID := hex.EncodeToString(bytes)
+	log.WithField("networkID", networkID).Debug("network ID generated")
+	return networkID, nil
 }
 
 // SignatureLength is the length of Ed25519 signatures in bytes.

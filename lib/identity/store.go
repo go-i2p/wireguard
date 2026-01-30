@@ -37,48 +37,59 @@ func NewInviteStore(path string) *InviteStore {
 // LoadInviteStore loads an invite store from disk.
 // Returns an empty store if the file doesn't exist.
 func LoadInviteStore(path string) (*InviteStore, error) {
+	log.WithField("path", path).Debug("loading invite store")
 	store := NewInviteStore(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.WithField("path", path).Debug("invite store does not exist, creating empty store")
 			return store, nil
 		}
+		log.WithError(err).WithField("path", path).Error("failed to read invite store")
 		return nil, fmt.Errorf("reading invite store: %w", err)
 	}
 
 	if err := json.Unmarshal(data, store); err != nil {
+		log.WithError(err).Error("failed to parse invite store")
 		return nil, fmt.Errorf("parsing invite store: %w", err)
 	}
 
+	log.WithField("generated", len(store.Generated)).WithField("pending", len(store.Pending)).WithField("accepted", len(store.Accepted)).Debug("invite store loaded")
 	return store, nil
 }
 
 // Save persists the invite store to disk.
 func (s *InviteStore) Save() error {
+	log.WithField("path", s.path).Debug("saving invite store")
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
+		log.WithError(err).Error("failed to marshal invite store")
 		return fmt.Errorf("marshaling invite store: %w", err)
 	}
 
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.WithError(err).Error("failed to create invite store directory")
 		return fmt.Errorf("creating invite store directory: %w", err)
 	}
 
 	tmpPath := s.path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		log.WithError(err).Error("failed to write invite store")
 		return fmt.Errorf("writing invite store: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		os.Remove(tmpPath)
+		log.WithError(err).Error("failed to rename invite store")
 		return fmt.Errorf("renaming invite store: %w", err)
 	}
 
+	log.Debug("invite store saved successfully")
 	return nil
 }
 
@@ -129,25 +140,30 @@ func (s *InviteStore) UpdateGenerated(key string, inv *Invite) {
 // was not found or already exhausted. This method is safe for concurrent
 // calls - only one caller will successfully use an invite with 1 remaining use.
 func (s *InviteStore) UseGenerated(key string) (remainingUses int, found bool) {
+	log.WithField("key", key).Debug("using generated invite")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	inv, ok := s.Generated[key]
 	if !ok {
+		log.WithField("key", key).Debug("invite not found")
 		return -1, false
 	}
 
 	// Check if invite is still valid
 	if err := inv.Validate(); err != nil {
+		log.WithField("key", key).WithError(err).Debug("invite is invalid")
 		return -1, true // Found but invalid (expired or exhausted)
 	}
 
 	// Atomically increment usage count
 	inv.UsedCount++
 	remaining := inv.RemainingUses()
+	log.WithField("key", key).WithField("remaining", remaining).Debug("invite used")
 
 	// If exhausted, remove from generated (caller can still save)
 	if remaining <= 0 {
+		log.WithField("key", key).Debug("invite exhausted, removing")
 		delete(s.Generated, key)
 	}
 
@@ -259,6 +275,7 @@ func (s *InviteStore) ListAccepted() []*Invite {
 // CleanExpired removes all expired invites from the store.
 // Returns the number of invites removed.
 func (s *InviteStore) CleanExpired() int {
+	log.Debug("cleaning expired invites")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -266,6 +283,7 @@ func (s *InviteStore) CleanExpired() int {
 
 	for key, inv := range s.Generated {
 		if inv.IsExpired() {
+			log.WithField("key", key).Debug("removing expired generated invite")
 			delete(s.Generated, key)
 			count++
 		}
@@ -273,13 +291,14 @@ func (s *InviteStore) CleanExpired() int {
 
 	for key, inv := range s.Pending {
 		if inv.IsExpired() {
+			log.WithField("networkID", key).Debug("removing expired pending invite")
 			delete(s.Pending, key)
 			count++
 		}
 	}
 
 	// Don't clean accepted invites - they're historical records
-
+	log.WithField("removed", count).Debug("expired invites cleaned")
 	return count
 }
 

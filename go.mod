@@ -39,7 +39,7 @@ require (
 	github.com/go-i2p/go-sam-bridge v0.0.0-20260127191723-8e14472fcc26 // indirect
 	github.com/go-i2p/go-sam-go v0.33.0 // indirect
 	github.com/go-i2p/go-streaming v0.0.0-20260127190938-144f6f599abb // indirect
-	github.com/go-i2p/logger v0.1.0 // indirect
+	github.com/go-i2p/logger v0.1.3 // indirect
 	github.com/go-i2p/noise v0.0.0-20251212204422-ded862d8cdf9 // indirect
 	github.com/go-i2p/su3 v0.0.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

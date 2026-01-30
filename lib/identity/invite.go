@@ -88,16 +88,20 @@ func DefaultInviteOptions() InviteOptions {
 // NewInvite creates a new invite from the given identity.
 // The identity must have I2PDest and NetworkID set.
 func NewInvite(id *Identity, opts InviteOptions) (*Invite, error) {
+	log.Debug("creating new invite")
 	if id.I2PDest() == "" {
+		log.Error("cannot create invite: identity has no I2P destination")
 		return nil, errors.New("identity has no I2P destination")
 	}
 	if id.NetworkID() == "" {
+		log.Error("cannot create invite: identity has no network ID")
 		return nil, errors.New("identity has no network ID")
 	}
 
 	// Generate random auth token
 	authToken := make([]byte, AuthTokenLength)
 	if _, err := rand.Read(authToken); err != nil {
+		log.WithError(err).Error("failed to generate auth token")
 		return nil, fmt.Errorf("generating auth token: %w", err)
 	}
 
@@ -112,6 +116,7 @@ func NewInvite(id *Identity, opts InviteOptions) (*Invite, error) {
 	}
 
 	now := time.Now()
+	log.WithField("maxUses", opts.MaxUses).WithField("expiry", opts.Expiry).Debug("invite created successfully")
 	return &Invite{
 		I2PDest:   id.I2PDest(),
 		AuthToken: authToken,
@@ -127,6 +132,7 @@ func NewInvite(id *Identity, opts InviteOptions) (*Invite, error) {
 // Encode serializes the invite to a URL-safe string.
 // Format: i2plan://<base64url(json)>
 func (inv *Invite) Encode() (string, error) {
+	log.Debug("encoding invite")
 	// Create a minimal payload for the invite code
 	payload := struct {
 		I2PDest   string    `json:"d"`
@@ -142,6 +148,7 @@ func (inv *Invite) Encode() (string, error) {
 
 	data, err := json.Marshal(payload)
 	if err != nil {
+		log.WithError(err).Error("failed to encode invite")
 		return "", fmt.Errorf("encoding invite: %w", err)
 	}
 
@@ -152,17 +159,25 @@ func (inv *Invite) Encode() (string, error) {
 // ParseInvite decodes an invite code string into an Invite.
 // Does NOT validate expiry or uses - call Validate() for that.
 func ParseInvite(code string) (*Invite, error) {
+	log.Debug("parsing invite code")
 	data, err := decodeInviteCode(code)
 	if err != nil {
+		log.WithError(err).Warn("failed to decode invite code")
 		return nil, err
 	}
 
 	payload, err := unmarshalInvitePayload(data)
 	if err != nil {
+		log.WithError(err).Warn("failed to unmarshal invite payload")
 		return nil, err
 	}
 
-	return buildInviteFromPayload(payload)
+	invite, err := buildInviteFromPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	log.WithField("networkID", invite.NetworkID).Debug("invite parsed successfully")
+	return invite, nil
 }
 
 // decodeInviteCode extracts and decodes the base64 payload from an invite code.
@@ -225,9 +240,11 @@ func buildInviteFromPayload(payload *invitePayload) (*Invite, error) {
 // Validate checks if the invite is still valid (not expired, has remaining uses).
 func (inv *Invite) Validate() error {
 	if time.Now().After(inv.ExpiresAt) {
+		log.Debug("invite validation failed: expired")
 		return ErrInviteExpired
 	}
 	if inv.MaxUses > 0 && inv.UsedCount >= inv.MaxUses {
+		log.Debug("invite validation failed: exhausted")
 		return ErrInviteExhausted
 	}
 	return nil
