@@ -364,7 +364,7 @@ func (m Model) renderFooter() string {
 		if time.Since(m.errTimestamp) > m.errDisplayTime {
 			m.err = nil // Auto-clear old errors
 		} else {
-			statusInfo = styles.Error.Render(m.err.Error())
+			statusInfo = styles.Error.Render(fmt.Sprintf("⚠ %s", m.err.Error()))
 		}
 	}
 
@@ -475,35 +475,6 @@ func (m *Model) Close() error {
 		return m.client.Close()
 	}
 	return nil
-}
-
-// Messages
-
-type refreshMsg struct {
-	status *rpc.StatusResult
-	peers  *rpc.PeersListResult
-	routes *rpc.RoutesListResult
-	err    error
-}
-
-type tickMsg time.Time
-
-type inviteCreatedMsg struct {
-	invite *rpc.InviteCreateResult
-}
-
-type inviteAcceptedMsg struct {
-	result *rpc.InviteAcceptResult
-}
-
-type errMsg struct {
-	err error
-}
-
-type cleanupMsg struct{}
-
-type reconnectMsg struct {
-	err error
 }
 
 func max(a, b int) int {
