@@ -88,6 +88,9 @@ var (
 
 	// ErrConfiguration indicates a configuration error.
 	ErrConfiguration = errors.New("configuration error")
+
+	// ErrCircuitOpen indicates the circuit breaker is open.
+	ErrCircuitOpen = errors.New("circuit breaker is open")
 )
 
 // Transport-specific errors
