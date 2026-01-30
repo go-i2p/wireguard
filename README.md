@@ -243,13 +243,16 @@ The library implements WireGuard's `conn.Bind` interface, replacing UDP sockets 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
+│                lib/web (UI) │ lib/tui (UI)                   │
+│                   ↓ RPC client connection ↓                  │
+├─────────────────────────────────────────────────────────────┤
 │                      Application                             │
 ├─────────────────────────────────────────────────────────────┤
 │                   lib/embedded (VPN API)                     │
 ├─────────────────────────────────────────────────────────────┤
-│  lib/core    │  lib/mesh   │  lib/rpc  │ lib/web │ lib/tui  │
-│  (Node)      │  (Gossip)   │  (Control)│  (UI)   │  (UI)    │
-├──────────────┼─────────────┴───────────┴─────────┴──────────┤
+│  lib/core    │  lib/mesh   │  lib/rpc                        │
+│  (Node)      │  (Gossip)   │  (Control Server)               │
+├──────────────┼─────────────┴────────────────────────────────┤
 │ lib/identity │              lib/transport                    │
 │  (Keys)      │              (Peer Tracking)                  │
 ├──────────────┴──────────────────────────────────────────────┤
