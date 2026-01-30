@@ -219,7 +219,6 @@ func (h *MultiNodeHarness) CreateNode(ctx context.Context, id string) (*TestNode
 	node := NewTestNode(TestNodeConfig{
 		ID:         id,
 		SAMAddress: h.samAddr,
-		Logger:     h.logger,
 	})
 
 	if err := node.Start(ctx); err != nil {
