@@ -397,3 +397,110 @@ func TestInviteStore_UpdateGenerated_NonExistent(t *testing.T) {
 		t.Error("UpdateGenerated should not add new invites")
 	}
 }
+
+func TestInviteStore_UseGenerated_Atomic(t *testing.T) {
+	store := NewInviteStore("/tmp/test.json")
+
+	id, _ := NewIdentity()
+	id.SetI2PDest("test.b32.i2p")
+	id.SetNetworkID("test-network")
+
+	// Create invite with 3 max uses
+	opts := DefaultInviteOptions()
+	opts.MaxUses = 3
+	inv, _ := NewInvite(id, opts)
+
+	key := store.AddGenerated(inv)
+
+	// First use
+	remaining, found := store.UseGenerated(key)
+	if !found {
+		t.Error("UseGenerated should find the invite")
+	}
+	if remaining != 2 {
+		t.Errorf("remaining should be 2, got %d", remaining)
+	}
+
+	// Second use
+	remaining, found = store.UseGenerated(key)
+	if !found {
+		t.Error("UseGenerated should still find the invite")
+	}
+	if remaining != 1 {
+		t.Errorf("remaining should be 1, got %d", remaining)
+	}
+
+	// Third use (exhausts invite)
+	remaining, found = store.UseGenerated(key)
+	if !found {
+		t.Error("UseGenerated should still find the invite")
+	}
+	if remaining != 0 {
+		t.Errorf("remaining should be 0, got %d", remaining)
+	}
+
+	// Invite should be removed now
+	if store.GeneratedCount() != 0 {
+		t.Error("exhausted invite should be removed")
+	}
+
+	// Fourth use should fail
+	remaining, found = store.UseGenerated(key)
+	if found {
+		t.Error("UseGenerated should not find exhausted invite")
+	}
+	if remaining != -1 {
+		t.Errorf("remaining should be -1 for not found, got %d", remaining)
+	}
+}
+
+func TestInviteStore_UseGenerated_NotFound(t *testing.T) {
+	store := NewInviteStore("/tmp/test.json")
+
+	remaining, found := store.UseGenerated("nonexistent")
+	if found {
+		t.Error("UseGenerated should return false for nonexistent key")
+	}
+	if remaining != -1 {
+		t.Errorf("remaining should be -1, got %d", remaining)
+	}
+}
+
+func TestInviteStore_UseGenerated_Concurrent(t *testing.T) {
+	store := NewInviteStore("/tmp/test.json")
+
+	id, _ := NewIdentity()
+	id.SetI2PDest("test.b32.i2p")
+	id.SetNetworkID("test-network")
+
+	// Create single-use invite
+	opts := DefaultInviteOptions()
+	opts.MaxUses = 1
+	inv, _ := NewInvite(id, opts)
+
+	key := store.AddGenerated(inv)
+
+	// Try to use from multiple goroutines simultaneously
+	const goroutines = 10
+	results := make(chan bool, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			remaining, found := store.UseGenerated(key)
+			// Only one goroutine should get remaining=0 (successful use)
+			results <- found && remaining == 0
+		}()
+	}
+
+	successCount := 0
+	for i := 0; i < goroutines; i++ {
+		if <-results {
+			successCount++
+		}
+	}
+
+	// Exactly one goroutine should have successfully used the invite
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 successful use, got %d", successCount)
+	}
+}
