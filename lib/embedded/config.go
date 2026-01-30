@@ -37,7 +37,8 @@ type Config struct {
 
 	// TunnelLength is the number of I2P tunnel hops (0-7).
 	// Lower values are faster but less anonymous.
-	// Default: 2
+	// Default: 1 (optimized for trusted mesh networks)
+	// Use 2-3 if anonymity between mesh peers is required.
 	TunnelLength int
 
 	// MaxPeers is the maximum number of peers to connect with.
@@ -149,7 +150,7 @@ func DefaultConfig() Config {
 		DataDir:         dataDir,
 		SAMAddress:      DefaultSAMAddress,
 		TunnelSubnet:    DefaultTunnelSubnet,
-		TunnelLength:    2,
+		TunnelLength:    1,
 		MaxPeers:        50,
 		EnableRPC:       false,
 		RPCSocket:       "rpc.sock",

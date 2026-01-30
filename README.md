@@ -18,6 +18,16 @@ In addition to the low-level bind interface, this library includes a complete **
 - **Routing table** - automatic IP-to-peer routing with collision detection
 - **Multiple interfaces** - JSON-RPC, Terminal UI (BubbleTea), and Web UI
 
+## Trust Model
+
+This mesh VPN operates on a **trusted peer model**: all computers that join the mesh are considered trusted members of the private network. This influences several design decisions:
+
+- **Default tunnel length is 1 hop** — provides consistent I2P connectivity without excessive latency; full anonymity is not required within a trusted mesh
+- **Invite-based authentication** — only peers with valid invite codes can join the network
+- **Focus on reliability over anonymity** — the mesh prioritizes stable connectivity between trusted nodes
+
+If you require anonymity between mesh peers, increase the `TunnelLength` configuration to 2 or 3.
+
 ## Prerequisites
 
 - Go 1.24 or later

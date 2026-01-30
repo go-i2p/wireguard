@@ -13,10 +13,14 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Default configuration values
+// Default configuration values.
+// Note: DefaultTunnelLength is set to 1 because this mesh VPN operates on a
+// trusted peer model where all nodes are considered trusted members. Lower
+// tunnel length provides faster, more reliable connectivity. Use higher values
+// (2-3) if anonymity between mesh peers is required.
 const (
 	DefaultSAMAddress        = "127.0.0.1:7656"
-	DefaultTunnelLength      = 2
+	DefaultTunnelLength      = 1
 	DefaultTunnelSubnet      = "10.42.0.0/16"
 	DefaultHeartbeatInterval = 30 * time.Second
 	DefaultPeerTimeout       = 5 * time.Minute
@@ -47,7 +51,9 @@ type NodeConfig struct {
 type I2PConfig struct {
 	// SAMAddress is the SAM bridge address (host:port)
 	SAMAddress string `toml:"sam_address"`
-	// TunnelLength is the number of hops for I2P tunnels (lower = faster, less anonymous)
+	// TunnelLength is the number of hops for I2P tunnels (0-7).
+	// Lower values are faster but provide less anonymity.
+	// Default is 1 for trusted mesh networks; use 2-3 for untrusted peers.
 	TunnelLength int `toml:"tunnel_length"`
 }
 
