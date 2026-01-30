@@ -6,7 +6,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/go-i2p/wireguard/lib/rpc"
 )
 
@@ -23,7 +22,9 @@ func NewRoutesModel() RoutesModel {
 	return RoutesModel{}
 }
 
-// SetData updates the routes data.
+// SetData updates the routes data and manages cursor position.
+// The cursor is preserved when possible to maintain user context, and only
+// reset if it becomes out of bounds after a data update.
 func (m *RoutesModel) SetData(routes *rpc.RoutesListResult) {
 	oldRoutes := m.routes
 	m.routes = routes
@@ -135,29 +136,17 @@ func (m RoutesModel) View() string {
 
 // renderEmptyState renders the empty state for no routes.
 func (m RoutesModel) renderEmptyState() string {
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(2, 4).
-		Width(50)
-
-	content := lipgloss.JoinVertical(lipgloss.Center,
-		styles.Bold.Render("No Routes"),
-		"",
-		styles.Muted.Render("Routes will appear when you"),
-		styles.Muted.Render("connect to peers."),
-	)
-
-	return lipgloss.Place(
+	return renderEmptyState(
 		m.width,
-		m.height-2,
-		lipgloss.Center,
-		lipgloss.Center,
-		box.Render(content),
+		m.height,
+		"No Routes",
+		"Routes will appear when you connect to peers.",
+		[]string{},
 	)
 }
 
-// SelectedRoute returns the currently selected route.
+// SelectedRoute returns the currently selected route, or nil if no route is selected
+// or if the routes list is empty.
 func (m RoutesModel) SelectedRoute() *rpc.RouteInfo {
 	if m.routes == nil || len(m.routes.Routes) == 0 {
 		return nil

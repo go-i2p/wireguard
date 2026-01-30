@@ -6,7 +6,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/go-i2p/wireguard/lib/rpc"
 )
 
@@ -24,7 +23,9 @@ func NewPeersModel() PeersModel {
 	return PeersModel{}
 }
 
-// SetData updates the peers data.
+// SetData updates the peers data and manages cursor position.
+// The cursor is preserved when possible to maintain user context, and only
+// reset if it becomes out of bounds after a data update.
 func (m *PeersModel) SetData(peers *rpc.PeersListResult) {
 	oldPeers := m.peers
 	m.peers = peers
@@ -110,31 +111,17 @@ func (m PeersModel) View() string {
 
 // renderEmptyState renders the empty state for no peers.
 func (m PeersModel) renderEmptyState() string {
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(2, 4).
-		Width(50)
-
-	content := lipgloss.JoinVertical(lipgloss.Center,
-		styles.Bold.Render("No Peers Connected"),
-		"",
-		styles.Muted.Render("Generate an invite code and share it"),
-		styles.Muted.Render("with someone to connect."),
-		"",
-		styles.HelpText.Render("Press Tab → Invites → n to create invite"),
-	)
-
-	return lipgloss.Place(
+	return renderEmptyState(
 		m.width,
-		m.height-2,
-		lipgloss.Center,
-		lipgloss.Center,
-		box.Render(content),
+		m.height,
+		"No Peers Connected",
+		"Generate an invite code and share it with someone to connect.",
+		[]string{"Press Tab → Invites → n to create invite"},
 	)
 }
 
-// SelectedPeer returns the currently selected peer.
+// SelectedPeer returns the currently selected peer, or nil if no peer is selected
+// or if the peers list is empty.
 func (m PeersModel) SelectedPeer() *rpc.PeerInfo {
 	if m.peers == nil || len(m.peers.Peers) == 0 {
 		return nil

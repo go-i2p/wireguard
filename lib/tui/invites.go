@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -66,7 +67,9 @@ func (m *InvitesModel) SetDimensions(width, height int) {
 	m.height = height
 }
 
-// SetCreatedInvite sets the created invite result.
+// SetCreatedInvite sets the created invite result and clears any pending state.
+// This method ignores stale messages by checking the pendingCreate flag to prevent
+// race conditions when users cancel operations.
 func (m *InvitesModel) SetCreatedInvite(invite *rpc.InviteCreateResult) {
 	// Only update if we were actually waiting for this result
 	if !m.pendingCreate {
@@ -77,7 +80,9 @@ func (m *InvitesModel) SetCreatedInvite(invite *rpc.InviteCreateResult) {
 	m.error = ""
 }
 
-// SetAcceptResult sets the accept result.
+// SetAcceptResult sets the accept result and resets the mode to normal.
+// This method ignores stale messages by checking the pendingAccept flag to prevent
+// race conditions when users cancel operations.
 func (m *InvitesModel) SetAcceptResult(result *rpc.InviteAcceptResult) {
 	// Only update if we were actually waiting for this result
 	if !m.pendingAccept {
@@ -89,7 +94,8 @@ func (m *InvitesModel) SetAcceptResult(result *rpc.InviteAcceptResult) {
 	m.mode = InvitesModeNormal
 }
 
-// Update handles messages for the invites view.
+// Update handles keyboard input messages for the invites view.
+// The behavior changes based on the current mode (Normal, Create, or Accept).
 func (m InvitesModel) Update(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, tea.Cmd) {
 	switch m.mode {
 	case InvitesModeNormal:
@@ -103,6 +109,7 @@ func (m InvitesModel) Update(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, 
 }
 
 // UpdateSpinner updates the spinner animation (called from app.go).
+// This must be called on every spinner.TickMsg to keep the animation running.
 func (m InvitesModel) UpdateSpinner(msg tea.Msg) (InvitesModel, tea.Cmd) {
 	var cmd tea.Cmd
 	m.spinner, cmd = m.spinner.Update(msg)
@@ -218,7 +225,7 @@ func (m InvitesModel) viewNormal() string {
 
 	if m.error != "" {
 		b.WriteString("\n")
-		b.WriteString(styles.Error.Render("Error: " + m.error))
+		b.WriteString(styles.Error.Render(fmt.Sprintf("⚠ %s", m.error)))
 	}
 
 	return b.String()
@@ -334,7 +341,7 @@ func (m InvitesModel) buildInviteErrorContent() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		styles.BoxTitle.Render("Create Invite"),
 		"",
-		styles.Error.Render("Error: "+m.error),
+		styles.Error.Render(fmt.Sprintf("⚠ %s", m.error)),
 		"",
 		styles.HelpText.Render("Press Esc to close"),
 	)
@@ -377,7 +384,7 @@ func (m InvitesModel) viewAccept() string {
 		if m.error != "" {
 			content = lipgloss.JoinVertical(lipgloss.Left,
 				content,
-				styles.Error.Render("Error: "+m.error),
+				styles.Error.Render(fmt.Sprintf("⚠ %s", m.error)),
 				"",
 			)
 		}

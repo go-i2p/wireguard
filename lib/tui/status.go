@@ -20,7 +20,7 @@ func NewStatusModel() StatusModel {
 	return StatusModel{}
 }
 
-// SetData updates the status data.
+// SetData updates the status data displayed in the view.
 func (m *StatusModel) SetData(status *rpc.StatusResult) {
 	m.status = status
 }
