@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -59,7 +58,6 @@ type VPN struct {
 	mu sync.RWMutex
 
 	config    Config
-	logger    *slog.Logger
 	node      *core.Node
 	state     State
 	emitter   *eventEmitter
@@ -80,14 +78,8 @@ func New(cfg Config) (*VPN, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	return &VPN{
 		config:  cfg,
-		logger:  logger.With("component", "embedded-vpn"),
 		state:   StateInitial,
 		emitter: newEventEmitter(cfg.EventBufferSize),
 		done:    make(chan struct{}),
@@ -132,7 +124,7 @@ func (v *VPN) Start(ctx context.Context) error {
 	coreConfig := v.config.toCoreConfig()
 
 	// Create the core node
-	node, err := core.NewNode(coreConfig, v.logger)
+	node, err := core.NewNode(coreConfig)
 	if err != nil {
 		v.transitionTo(StateStopped)
 		v.emitter.emitError(err, "Failed to create node")

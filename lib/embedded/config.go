@@ -3,7 +3,6 @@ package embedded
 
 import (
 	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -44,10 +43,6 @@ type Config struct {
 	// MaxPeers is the maximum number of peers to connect with.
 	// Default: 50
 	MaxPeers int
-
-	// Logger for VPN operations.
-	// Default: slog.Default()
-	Logger *slog.Logger
 
 	// EnableRPC starts the RPC server for external control.
 	// Default: false (embedded apps typically control directly)
@@ -115,13 +110,6 @@ func WithMaxPeers(max int) Option {
 	}
 }
 
-// WithLogger sets the logger.
-func WithLogger(logger *slog.Logger) Option {
-	return func(c *Config) {
-		c.Logger = logger
-	}
-}
-
 // WithRPC enables the RPC server.
 func WithRPC(enabled bool) Option {
 	return func(c *Config) {
@@ -163,7 +151,6 @@ func DefaultConfig() Config {
 		TunnelSubnet:    DefaultTunnelSubnet,
 		TunnelLength:    2,
 		MaxPeers:        50,
-		Logger:          nil, // Will use slog.Default() if nil
 		EnableRPC:       false,
 		RPCSocket:       "rpc.sock",
 		EnableWeb:       false,

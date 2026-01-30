@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -103,20 +102,16 @@ func parseFlags() *cliFlags {
 	}
 }
 
-// createLogger creates a structured logger with the specified verbosity.
-func createLogger(verbose bool) *slog.Logger {
-	logLevel := slog.LevelInfo
+// enableDebugLogging sets up debug logging if verbose mode is enabled.
+func enableDebugLogging(verbose bool) {
 	if verbose {
-		logLevel = slog.LevelDebug
+		os.Setenv("DEBUG_I2P", "debug")
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: logLevel,
-	}))
 }
 
 // handleSubcommand checks for and handles subcommands (rpc, tui, web).
 // Returns exit code and true if a subcommand was handled, or 0 and false otherwise.
-func handleSubcommand(flags *cliFlags, logger *slog.Logger) (int, bool) {
+func handleSubcommand(flags *cliFlags) (int, bool) {
 	args := flag.Args()
 	if len(args) == 0 {
 		return 0, false
@@ -129,20 +124,19 @@ func handleSubcommand(flags *cliFlags, logger *slog.Logger) (int, bool) {
 
 	switch args[0] {
 	case "rpc":
-		return handleRPC(args[1:], logger, dataDir), true
+		return handleRPC(args[1:], dataDir), true
 	case "tui":
-		return handleTUI(logger, dataDir), true
+		return handleTUI(dataDir), true
 	case "web":
-		return handleWeb(logger, dataDir), true
+		return handleWeb(dataDir), true
 	default:
 		return 0, false
 	}
 }
 
 // buildVPNConfig creates the VPN configuration from config file and CLI flags.
-func buildVPNConfig(flags *cliFlags, logger *slog.Logger) (*embedded.Config, error) {
+func buildVPNConfig(flags *cliFlags) (*embedded.Config, error) {
 	vpnConfig := embedded.DefaultConfig()
-	vpnConfig.Logger = logger
 
 	cfg, err := core.LoadConfig(flags.configPath)
 	if err != nil {
@@ -174,10 +168,10 @@ func buildVPNConfig(flags *cliFlags, logger *slog.Logger) (*embedded.Config, err
 }
 
 // runVPN starts the VPN and waits for shutdown signal.
-func runVPN(vpnConfig *embedded.Config, logger *slog.Logger) int {
+func runVPN(vpnConfig *embedded.Config) int {
 	vpn, err := embedded.New(*vpnConfig)
 	if err != nil {
-		logger.Error("failed to create VPN", "error", err)
+		log.WithError(err).Error("failed to create VPN")
 		return 1
 	}
 	defer vpn.Close()
@@ -189,17 +183,17 @@ func runVPN(vpnConfig *embedded.Config, logger *slog.Logger) int {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	if err := vpn.Start(ctx); err != nil {
-		logger.Error("failed to start VPN", "error", err)
+		log.WithError(err).Error("failed to start VPN")
 		return 1
 	}
 
-	logger.Info("i2plan started", "name", vpnConfig.NodeName, "version", Version)
+	log.WithField("name", vpnConfig.NodeName).WithField("version", Version).Info("i2plan started")
 
 	select {
 	case sig := <-sigChan:
-		logger.Info("received signal, shutting down", "signal", sig)
+		log.WithField("signal", sig).Info("received signal, shutting down")
 	case <-vpn.Done():
-		logger.Info("VPN stopped unexpectedly")
+		log.Info("VPN stopped unexpectedly")
 	}
 
 	cancel()
@@ -208,11 +202,11 @@ func runVPN(vpnConfig *embedded.Config, logger *slog.Logger) int {
 	defer shutdownCancel()
 
 	if err := vpn.Stop(shutdownCtx); err != nil {
-		logger.Error("shutdown error", "error", err)
+		log.WithError(err).Error("shutdown error")
 		return 1
 	}
 
-	logger.Info("i2plan stopped")
+	log.Info("i2plan stopped")
 	return 0
 }
 
@@ -224,23 +218,23 @@ func run() int {
 		return 0
 	}
 
-	logger := createLogger(flags.verbose)
+	enableDebugLogging(flags.verbose)
 
-	if exitCode, handled := handleSubcommand(flags, logger); handled {
+	if exitCode, handled := handleSubcommand(flags); handled {
 		return exitCode
 	}
 
-	vpnConfig, err := buildVPNConfig(flags, logger)
+	vpnConfig, err := buildVPNConfig(flags)
 	if err != nil {
-		logger.Error("configuration error", "error", err)
+		log.WithError(err).Error("configuration error")
 		return 1
 	}
 
-	return runVPN(vpnConfig, logger)
+	return runVPN(vpnConfig)
 }
 
 // handleRPC handles the "rpc" subcommand.
-func handleRPC(args []string, _ *slog.Logger, dataDir string) int {
+func handleRPC(args []string, dataDir string) int {
 	if len(args) == 0 {
 		printRPCUsage()
 		return 1
@@ -630,7 +624,7 @@ func rpcBansRemove(ctx context.Context, client *rpc.Client, args []string) int {
 }
 
 // handleTUI launches the interactive terminal user interface.
-func handleTUI(logger *slog.Logger, dataDir string) int {
+func handleTUI(dataDir string) int {
 	socketPath, authFile := resolveRPCPaths(dataDir)
 
 	tuiApp, err := createTUIApp(socketPath, authFile)
@@ -664,11 +658,11 @@ func runTUIProgram(tuiApp *tui.Model) int {
 }
 
 // handleWeb starts the web UI server.
-func handleWeb(logger *slog.Logger, dataDir string) int {
+func handleWeb(dataDir string) int {
 	socketPath, authFile := resolveRPCPaths(dataDir)
 	listenAddr := resolveWebListenAddr()
 
-	server, err := createWebServer(logger, listenAddr, socketPath, authFile)
+	server, err := createWebServer(listenAddr, socketPath, authFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Is the i2plan daemon running?\n")
@@ -710,12 +704,11 @@ func resolveWebListenAddr() string {
 }
 
 // createWebServer creates and configures a new web server instance.
-func createWebServer(logger *slog.Logger, listenAddr, socketPath, authFile string) (*web.Server, error) {
+func createWebServer(listenAddr, socketPath, authFile string) (*web.Server, error) {
 	return web.New(web.Config{
 		ListenAddr:    listenAddr,
 		RPCSocketPath: socketPath,
 		RPCAuthFile:   authFile,
-		Logger:        logger,
 	})
 }
 

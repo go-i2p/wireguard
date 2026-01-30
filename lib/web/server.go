@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -28,7 +27,6 @@ type Server struct {
 	httpServer *http.Server
 	rpcClient  *rpc.Client
 	templates  *template.Template
-	logger     *slog.Logger
 	mu         sync.RWMutex
 	running    bool
 }
@@ -41,8 +39,6 @@ type Config struct {
 	RPCSocketPath string
 	// RPCAuthFile is the path to the RPC auth token file
 	RPCAuthFile string
-	// Logger is the structured logger
-	Logger *slog.Logger
 }
 
 // New creates a new web server.
@@ -50,10 +46,6 @@ type Config struct {
 // When the server is no longer needed, call Stop() to release resources.
 // The server owns the RPC client connection and will close it when Stop() is called.
 func New(cfg Config) (*Server, error) {
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-
 	// Create RPC client
 	client, err := rpc.NewClient(rpc.ClientConfig{
 		UnixSocketPath: cfg.RPCSocketPath,
@@ -73,7 +65,6 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{
 		rpcClient: client,
 		templates: tmpl,
-		logger:    cfg.Logger,
 	}
 
 	// Create HTTP mux

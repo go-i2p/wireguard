@@ -14,7 +14,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	status, err := s.rpcClient.Status(ctx)
 	if err != nil {
-		s.logger.Error("rpc status error", "error", err)
+		log.Error("rpc status error", "error", err)
 		s.renderTemplate(w, "dashboard", map[string]any{
 			"Error": "Failed to connect to node",
 		})
@@ -47,7 +47,7 @@ func (s *Server) handlePeers(w http.ResponseWriter, r *http.Request) {
 
 	peers, err := s.rpcClient.PeersList(ctx)
 	if err != nil {
-		s.logger.Error("rpc peers error", "error", err)
+		log.Error("rpc peers error", "error", err)
 		s.renderTemplate(w, "peers", map[string]any{
 			"Error": "Failed to fetch peers",
 		})
@@ -72,7 +72,7 @@ func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 
 	routes, err := s.rpcClient.RoutesList(ctx)
 	if err != nil {
-		s.logger.Error("rpc routes error", "error", err)
+		log.Error("rpc routes error", "error", err)
 		s.renderTemplate(w, "routes", map[string]any{
 			"Error": "Failed to fetch routes",
 		})
@@ -92,7 +92,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 	config, err := s.rpcClient.ConfigGet(ctx, "")
 	if err != nil {
-		s.logger.Error("rpc config error", "error", err)
+		log.Error("rpc config error", "error", err)
 		s.renderTemplate(w, "settings", map[string]any{
 			"Error": "Failed to fetch configuration",
 		})

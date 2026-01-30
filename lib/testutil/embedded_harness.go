@@ -3,7 +3,6 @@ package testutil
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -28,7 +27,6 @@ type EmbeddedTestNode struct {
 	// Configuration
 	dataDir string
 	samAddr string
-	logger  *slog.Logger
 }
 
 // EmbeddedTestNodeConfig configures an embedded test node.
@@ -41,8 +39,6 @@ type EmbeddedTestNodeConfig struct {
 	SAMAddress string
 	// DataDir is the data directory (defaults to temp dir).
 	DataDir string
-	// Logger for node operations.
-	Logger *slog.Logger
 }
 
 // NewEmbeddedTestNode creates a new embedded test node.
@@ -56,16 +52,12 @@ func NewEmbeddedTestNode(cfg EmbeddedTestNodeConfig) *EmbeddedTestNode {
 	if cfg.DataDir == "" {
 		cfg.DataDir = filepath.Join(os.TempDir(), "i2plan-test", cfg.ID)
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
 
 	return &EmbeddedTestNode{
 		ID:      cfg.ID,
 		Name:    cfg.Name,
 		samAddr: cfg.SAMAddress,
 		dataDir: cfg.DataDir,
-		logger:  cfg.Logger.With("node", cfg.ID),
 	}
 }
 
@@ -78,7 +70,7 @@ func (n *EmbeddedTestNode) Start(ctx context.Context) error {
 		return fmt.Errorf("node %s already started", n.ID)
 	}
 
-	n.logger.Info("starting embedded test node")
+	log.Info("starting embedded test node")
 
 	vpn, err := embedded.New(embedded.Config{
 		NodeName:     n.Name,
@@ -86,7 +78,6 @@ func (n *EmbeddedTestNode) Start(ctx context.Context) error {
 		SAMAddress:   n.samAddr,
 		TunnelLength: 1, // Fast tunnels for tests
 		MaxPeers:     10,
-		Logger:       n.logger,
 		EnableRPC:    false,
 		EnableWeb:    false,
 	})
@@ -99,7 +90,7 @@ func (n *EmbeddedTestNode) Start(ctx context.Context) error {
 	}
 
 	n.VPN = vpn
-	n.logger.Info("embedded test node started")
+	log.Info("embedded test node started")
 
 	return nil
 }
@@ -113,7 +104,7 @@ func (n *EmbeddedTestNode) Stop() error {
 		return nil
 	}
 
-	n.logger.Info("stopping embedded test node")
+	log.Info("stopping embedded test node")
 
 	err := n.VPN.Close()
 	n.VPN = nil
@@ -231,7 +222,6 @@ type EmbeddedHarness struct {
 	nodes     map[string]*EmbeddedTestNode
 	samAddr   string
 	baseDir   string
-	logger    *slog.Logger
 	nodeOrder []string
 }
 
@@ -241,8 +231,6 @@ type EmbeddedHarnessConfig struct {
 	SAMAddress string
 	// BaseDir is the base directory for node data (defaults to temp dir).
 	BaseDir string
-	// Logger for harness operations.
-	Logger *slog.Logger
 }
 
 // NewEmbeddedHarness creates a new embedded test harness.
@@ -253,15 +241,11 @@ func NewEmbeddedHarness(cfg EmbeddedHarnessConfig) *EmbeddedHarness {
 	if cfg.BaseDir == "" {
 		cfg.BaseDir = filepath.Join(os.TempDir(), "i2plan-test-harness")
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
 
 	return &EmbeddedHarness{
 		nodes:   make(map[string]*EmbeddedTestNode),
 		samAddr: cfg.SAMAddress,
 		baseDir: cfg.BaseDir,
-		logger:  cfg.Logger.With("component", "embedded-harness"),
 	}
 }
 
@@ -285,7 +269,6 @@ func (h *EmbeddedHarness) CreateNode(ctx context.Context, id string) (*EmbeddedT
 		ID:         id,
 		SAMAddress: h.samAddr,
 		DataDir:    filepath.Join(h.baseDir, id),
-		Logger:     h.logger,
 	})
 
 	if err := node.Start(ctx); err != nil {
@@ -295,7 +278,7 @@ func (h *EmbeddedHarness) CreateNode(ctx context.Context, id string) (*EmbeddedT
 	h.nodes[id] = node
 	h.nodeOrder = append(h.nodeOrder, id)
 
-	h.logger.Info("created embedded node", "id", id)
+	log.Info("created embedded node", "id", id)
 	return node, nil
 }
 
@@ -372,7 +355,7 @@ func (h *EmbeddedHarness) ConnectViaInvite(ctx context.Context, inviterID, invit
 		return fmt.Errorf("failed to accept invite: %w", err)
 	}
 
-	h.logger.Info("connected nodes via invite", "inviter", inviterID, "invitee", inviteeID)
+	log.Info("connected nodes via invite", "inviter", inviterID, "invitee", inviteeID)
 	return nil
 }
 
@@ -381,14 +364,14 @@ func (h *EmbeddedHarness) Cleanup() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.logger.Info("cleaning up embedded harness", "nodes", len(h.nodes))
+	log.Info("cleaning up embedded harness", "nodes", len(h.nodes))
 
 	// Stop nodes in reverse order
 	for i := len(h.nodeOrder) - 1; i >= 0; i-- {
 		id := h.nodeOrder[i]
 		if node, ok := h.nodes[id]; ok {
 			if err := node.Stop(); err != nil {
-				h.logger.Warn("error stopping node", "id", id, "error", err)
+				log.Warn("error stopping node", "id", id, "error", err)
 			}
 		}
 	}

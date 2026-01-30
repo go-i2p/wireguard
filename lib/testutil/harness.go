@@ -6,7 +6,6 @@ package testutil
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -45,7 +44,6 @@ type TestNode struct {
 	// Configuration
 	samAddr string
 	options []string
-	logger  *slog.Logger
 }
 
 // TestNodeConfig configures a test node.
@@ -58,8 +56,6 @@ type TestNodeConfig struct {
 	SAMAddress string
 	// Options are SAM tunnel options.
 	Options []string
-	// Logger for node operations.
-	Logger *slog.Logger
 }
 
 // NewTestNode creates a new test node with the given configuration.
@@ -79,16 +75,12 @@ func NewTestNode(cfg TestNodeConfig) *TestNode {
 			"outbound.quantity=1",
 		}
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
 
 	return &TestNode{
 		ID:      cfg.ID,
 		Name:    cfg.Name,
 		samAddr: cfg.SAMAddress,
 		options: cfg.Options,
-		logger:  cfg.Logger.With("node", cfg.ID),
 	}
 }
 
@@ -101,7 +93,7 @@ func (n *TestNode) Start(ctx context.Context) error {
 		return fmt.Errorf("node %s already started", n.ID)
 	}
 
-	n.logger.Info("starting test node")
+	log.Info("starting test node")
 
 	// Create transport
 	n.Transport = transport.NewTransport(n.Name, n.samAddr, n.options)
@@ -122,7 +114,7 @@ func (n *TestNode) Start(ctx context.Context) error {
 	n.i2pDest = string(dest)
 
 	n.started = true
-	n.logger.Info("test node started",
+	log.Info("test node started",
 		"local_addr", n.localAddr,
 		"dest_len", len(n.i2pDest))
 
@@ -138,7 +130,7 @@ func (n *TestNode) Stop() error {
 		return nil
 	}
 
-	n.logger.Info("stopping test node")
+	log.Info("stopping test node")
 
 	var err error
 	if n.Transport != nil {
@@ -179,7 +171,6 @@ type MultiNodeHarness struct {
 
 	nodes   map[string]*TestNode
 	samAddr string
-	logger  *slog.Logger
 
 	// Track node creation order for cleanup
 	nodeOrder []string
@@ -189,8 +180,6 @@ type MultiNodeHarness struct {
 type MultiNodeHarnessConfig struct {
 	// SAMAddress is the SAM bridge address (defaults to localhost:7656).
 	SAMAddress string
-	// Logger for harness operations.
-	Logger *slog.Logger
 }
 
 // NewMultiNodeHarness creates a new multi-node test harness.
@@ -198,14 +187,10 @@ func NewMultiNodeHarness(cfg MultiNodeHarnessConfig) *MultiNodeHarness {
 	if cfg.SAMAddress == "" {
 		cfg.SAMAddress = DefaultSAMAddress
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
 
 	return &MultiNodeHarness{
 		nodes:   make(map[string]*TestNode),
 		samAddr: cfg.SAMAddress,
-		logger:  cfg.Logger.With("component", "harness"),
 	}
 }
 
@@ -244,7 +229,7 @@ func (h *MultiNodeHarness) CreateNode(ctx context.Context, id string) (*TestNode
 	h.nodes[id] = node
 	h.nodeOrder = append(h.nodeOrder, id)
 
-	h.logger.Info("created node", "id", id, "addr", node.LocalAddress())
+	log.Info("created node", "id", id, "addr", node.LocalAddress())
 	return node, nil
 }
 
@@ -321,7 +306,7 @@ func (h *MultiNodeHarness) ConnectPeers(nodeA, nodeB string) error {
 		return fmt.Errorf("failed to add %s to %s: %w", nodeA, nodeB, err)
 	}
 
-	h.logger.Info("connected peers", "nodeA", nodeA, "nodeB", nodeB)
+	log.Info("connected peers", "nodeA", nodeA, "nodeB", nodeB)
 	return nil
 }
 
@@ -331,14 +316,14 @@ func (h *MultiNodeHarness) Cleanup() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.logger.Info("cleaning up harness", "nodes", len(h.nodes))
+	log.Info("cleaning up harness", "nodes", len(h.nodes))
 
 	// Stop nodes in reverse order
 	for i := len(h.nodeOrder) - 1; i >= 0; i-- {
 		id := h.nodeOrder[i]
 		if node, ok := h.nodes[id]; ok {
 			if err := node.Stop(); err != nil {
-				h.logger.Warn("error stopping node", "id", id, "error", err)
+				log.Warn("error stopping node", "id", id, "error", err)
 			}
 		}
 	}

@@ -2,13 +2,12 @@ package core
 
 import (
 	"context"
-	"log/slog"
 	"testing"
 	"time"
 )
 
 func TestNewNode_RequiresConfig(t *testing.T) {
-	_, err := NewNode(nil, nil)
+	_, err := NewNode(nil)
 	if err == nil {
 		t.Error("NewNode should error when config is nil")
 	}
@@ -18,7 +17,7 @@ func TestNewNode_ValidatesConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.Name = "" // Invalid
 
-	_, err := NewNode(cfg, nil)
+	_, err := NewNode(cfg)
 	if err == nil {
 		t.Error("NewNode should error when config is invalid")
 	}
@@ -28,7 +27,7 @@ func TestNewNode_Success(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -42,8 +41,8 @@ func TestNewNode_WithCustomLogger(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	logger := slog.Default()
-	node, err := NewNode(cfg, logger)
+	// Logger is now configured via DEBUG_I2P environment variable
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -57,7 +56,7 @@ func TestNode_StartAndStop(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -90,7 +89,7 @@ func TestNode_CannotStartTwice(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -116,7 +115,7 @@ func TestNode_CannotStopWhenNotRunning(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -134,7 +133,7 @@ func TestNode_RestartAfterStop(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -170,7 +169,7 @@ func TestNode_Config(t *testing.T) {
 	cfg.Node.DataDir = t.TempDir()
 	cfg.Node.Name = "test-config-node"
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -185,7 +184,7 @@ func TestNode_DoneChannel(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -243,7 +242,7 @@ func TestNode_GetConfig(t *testing.T) {
 	cfg.Node.DataDir = t.TempDir()
 	cfg.Node.Name = "test-node"
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -290,7 +289,7 @@ func TestNode_SetConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -342,7 +341,7 @@ func TestNode_PeerCount(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -357,7 +356,7 @@ func TestNode_I2PAddress(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Node.DataDir = t.TempDir()
 
-	node, err := NewNode(cfg, nil)
+	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}

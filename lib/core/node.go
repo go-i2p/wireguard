@@ -869,7 +869,6 @@ func (n *Node) initRPCServer(ctx context.Context) error {
 	var err error
 	n.rpcServer, err = rpc.NewServer(rpc.ServerConfig{
 		AuthFile: authPath,
-		Logger:   n.logger.With("component", "rpc"),
 	})
 	if err != nil {
 		return fmt.Errorf("creating RPC server: %w", err)
@@ -906,7 +905,6 @@ func (n *Node) initWebServer() error {
 		ListenAddr:    n.config.Web.Listen,
 		RPCSocketPath: socketPath,
 		RPCAuthFile:   authPath,
-		Logger:        n.logger.With("component", "web"),
 	})
 	if err != nil {
 		return fmt.Errorf("creating web server: %w", err)
