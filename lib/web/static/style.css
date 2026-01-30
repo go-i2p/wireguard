@@ -231,6 +231,17 @@ h1 {
     color: white;
 }
 
+.btn-secondary {
+    background: var(--color-secondary);
+    color: var(--color-text);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
 .actions {
     margin-top: 1.5rem;
 }
@@ -373,5 +384,48 @@ pre {
     .table th,
     .table td {
         padding: 0.75rem 0.5rem;
+    }
+}
+
+/* Status indicator - semantic wrapper for status badges */
+.status-indicator {
+    display: inline-block;
+}
+
+/* Additional status states for normalization */
+.status-connected,
+.status-running,
+.status-healthy {
+    background: rgba(76, 175, 80, 0.2);
+    color: var(--color-success);
+}
+
+.status-unknown {
+    background: rgba(136, 136, 160, 0.2);
+    color: var(--color-text-muted);
+}
+
+/* Notification container for JS toast messages */
+#notification-container {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1000;
+    max-width: 400px;
+}
+
+#notification-container .alert {
+    margin-bottom: 0.5rem;
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
     }
 }

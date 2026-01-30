@@ -1,43 +1,45 @@
 {{template "base" .}}
 {{define "content"}}
-<h1>Peers</h1>
+<section id="peers-page" aria-labelledby="peers-title">
+<h1 id="peers-title">Peers</h1>
 
 {{if .Error}}
-<div class="alert alert-error">{{.Error}}</div>
+<div class="alert alert-error" role="alert" id="peers-error">{{.Error}}</div>
 {{else}}
-<p class="subtitle">{{.Total}} peer(s) connected</p>
+<p class="subtitle" id="peers-count-label">{{.Total}} peer(s) connected</p>
 
 {{if .Peers}}
-<table class="table">
+<table class="table" id="peers-table" aria-describedby="peers-count-label">
     <thead>
         <tr>
-            <th>Node ID</th>
-            <th>Tunnel IP</th>
-            <th>State</th>
-            <th>Last Seen</th>
+            <th scope="col">Node ID</th>
+            <th scope="col">Tunnel IP</th>
+            <th scope="col">State</th>
+            <th scope="col">Last Seen</th>
         </tr>
     </thead>
-    <tbody id="peers-table">
+    <tbody id="peers-tbody">
         {{range .Peers}}
-        <tr>
+        <tr class="peer-row" data-node-id="{{.NodeID}}">
             <td class="mono">{{truncate .NodeID 20}}</td>
             <td class="mono">{{.TunnelIP}}</td>
-            <td><span class="status-badge status-{{.State}}">{{.State}}</span></td>
+            <td><span class="status-indicator status-badge status-{{.State}}">{{.State}}</span></td>
             <td>{{.LastSeen}}</td>
         </tr>
         {{end}}
     </tbody>
 </table>
 {{else}}
-<div class="empty-state">
+<div class="empty-state" id="peers-empty" role="status">
     <p>No peers connected yet.</p>
     <p>Generate an invite code to connect with others.</p>
     <a href="/invites" class="btn btn-primary">Create Invite</a>
 </div>
 {{end}}
 
-<div class="actions">
-    <button class="btn" onclick="refreshPeers()">Refresh</button>
+<div class="actions" id="peers-actions">
+    <button type="button" class="btn btn-secondary" id="refresh-peers-btn" onclick="refreshPeers()">Refresh</button>
 </div>
 {{end}}
+</section>
 {{end}}

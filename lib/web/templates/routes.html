@@ -1,26 +1,27 @@
 {{template "base" .}}
 {{define "content"}}
-<h1>Routes</h1>
+<section id="routes-page" aria-labelledby="routes-title">
+<h1 id="routes-title">Routes</h1>
 
 {{if .Error}}
-<div class="alert alert-error">{{.Error}}</div>
+<div class="alert alert-error" role="alert" id="routes-error">{{.Error}}</div>
 {{else}}
-<p class="subtitle">{{.Total}} route(s) in routing table</p>
+<p class="subtitle" id="routes-count-label">{{.Total}} route(s) in routing table</p>
 
 {{if .Routes}}
-<table class="table">
+<table class="table" id="routes-table" aria-describedby="routes-count-label">
     <thead>
         <tr>
-            <th>Tunnel IP</th>
-            <th>Node ID</th>
-            <th>Via</th>
-            <th>Hops</th>
-            <th>Last Seen</th>
+            <th scope="col">Tunnel IP</th>
+            <th scope="col">Node ID</th>
+            <th scope="col">Via</th>
+            <th scope="col">Hops</th>
+            <th scope="col">Last Seen</th>
         </tr>
     </thead>
-    <tbody id="routes-table">
+    <tbody id="routes-tbody">
         {{range .Routes}}
-        <tr>
+        <tr class="route-row" data-tunnel-ip="{{.TunnelIP}}">
             <td class="mono">{{.TunnelIP}}</td>
             <td class="mono">{{truncate .NodeID 20}}</td>
             <td class="mono">{{if .ViaNodeID}}{{truncate .ViaNodeID 16}}{{else}}<em>direct</em>{{end}}</td>
@@ -31,14 +32,15 @@
     </tbody>
 </table>
 {{else}}
-<div class="empty-state">
+<div class="empty-state" id="routes-empty" role="status">
     <p>No routes in the routing table.</p>
     <p>Connect to peers to populate the routing table.</p>
 </div>
 {{end}}
 
-<div class="actions">
-    <button class="btn" onclick="refreshRoutes()">Refresh</button>
+<div class="actions" id="routes-actions">
+    <button type="button" class="btn btn-secondary" id="refresh-routes-btn" onclick="refreshRoutes()">Refresh</button>
 </div>
 {{end}}
+</section>
 {{end}}

@@ -1,15 +1,17 @@
 {{template "base" .}}
 {{define "content"}}
-<h1>Settings</h1>
+<section id="settings-page" aria-labelledby="settings-title">
+<h1 id="settings-title">Settings</h1>
 
 {{if .Error}}
-<div class="alert alert-error">{{.Error}}</div>
+<div class="alert alert-error" role="alert" id="settings-error">{{.Error}}</div>
 {{else}}
-<div class="card">
+<article class="card" id="config-card">
     <h3>Current Configuration</h3>
-    <pre id="config-display">{{json .Config}}</pre>
-</div>
+    <pre id="config-display" class="config-display" aria-label="Current configuration JSON">{{json .Config}}</pre>
+</article>
 
-<p class="muted">Configuration editing is read-only in the web interface. Use the CLI or edit config file directly.</p>
+<p class="muted" id="settings-readonly-notice">Configuration editing is read-only in the web interface. Use the CLI or edit config file directly.</p>
 {{end}}
+</section>
 {{end}}
