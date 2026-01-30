@@ -57,6 +57,7 @@ func NewRoutingTable(cfg RoutingTableConfig) *RoutingTable {
 		subnet = TunnelSubnet
 	}
 
+	log.WithField("subnet", subnet.String()).Debug("creating new routing table")
 	return &RoutingTable{
 		routes:   make(map[netip.Addr]*RouteEntry),
 		byNodeID: make(map[string]*RouteEntry),
@@ -67,19 +68,23 @@ func NewRoutingTable(cfg RoutingTableConfig) *RoutingTable {
 
 // AddRoute adds or updates a route in the table.
 func (rt *RoutingTable) AddRoute(entry *RouteEntry) error {
+	log.WithField("tunnelIP", entry.TunnelIP.String()).WithField("nodeID", entry.NodeID).Debug("adding route")
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
 	if !entry.TunnelIP.IsValid() {
+		log.WithField("tunnelIP", entry.TunnelIP.String()).Warn("invalid tunnel IP")
 		return errors.New("invalid tunnel IP")
 	}
 	if !rt.subnet.Contains(entry.TunnelIP) {
+		log.WithField("tunnelIP", entry.TunnelIP.String()).WithField("subnet", rt.subnet.String()).Warn("IP not in subnet")
 		return fmt.Errorf("IP %s not in subnet %s", entry.TunnelIP, rt.subnet)
 	}
 
 	// Check for collision - same IP, different node
 	if existing, ok := rt.routes[entry.TunnelIP]; ok {
 		if existing.NodeID != entry.NodeID {
+			log.WithField("tunnelIP", entry.TunnelIP.String()).WithField("existingNode", existing.NodeID).WithField("newNode", entry.NodeID).Warn("IP collision detected")
 			return &IPCollisionError{
 				IP:           entry.TunnelIP,
 				ExistingNode: existing.NodeID,
@@ -96,12 +101,14 @@ func (rt *RoutingTable) AddRoute(entry *RouteEntry) error {
 		existing.I2PDest = entry.I2PDest
 		existing.HopCount = entry.HopCount
 		existing.ViaNodeID = entry.ViaNodeID
+		log.WithField("tunnelIP", entry.TunnelIP.String()).Debug("route updated")
 	} else {
 		// New entry
 		entry.CreatedAt = now
 		entry.LastSeen = now
 		rt.routes[entry.TunnelIP] = entry
 		rt.byNodeID[entry.NodeID] = entry
+		log.WithField("tunnelIP", entry.TunnelIP.String()).WithField("nodeID", entry.NodeID).Debug("route added")
 	}
 
 	return nil
@@ -109,31 +116,37 @@ func (rt *RoutingTable) AddRoute(entry *RouteEntry) error {
 
 // RemoveRoute removes a route by tunnel IP.
 func (rt *RoutingTable) RemoveRoute(ip netip.Addr) bool {
+	log.WithField("tunnelIP", ip.String()).Debug("removing route by IP")
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
 	entry, ok := rt.routes[ip]
 	if !ok {
+		log.WithField("tunnelIP", ip.String()).Debug("route not found")
 		return false
 	}
 
 	delete(rt.routes, ip)
 	delete(rt.byNodeID, entry.NodeID)
+	log.WithField("tunnelIP", ip.String()).WithField("nodeID", entry.NodeID).Debug("route removed")
 	return true
 }
 
 // RemoveByNodeID removes a route by node ID.
 func (rt *RoutingTable) RemoveByNodeID(nodeID string) bool {
+	log.WithField("nodeID", nodeID).Debug("removing route by node ID")
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
 	entry, ok := rt.byNodeID[nodeID]
 	if !ok {
+		log.WithField("nodeID", nodeID).Debug("route not found")
 		return false
 	}
 
 	delete(rt.routes, entry.TunnelIP)
 	delete(rt.byNodeID, nodeID)
+	log.WithField("nodeID", nodeID).WithField("tunnelIP", entry.TunnelIP.String()).Debug("route removed")
 	return true
 }
 
@@ -224,6 +237,7 @@ func (rt *RoutingTable) CheckAndAllocateIP(publicKey wgtypes.Key, nodeID string)
 
 // ExpireStale removes routes not seen within the TTL.
 func (rt *RoutingTable) ExpireStale(ttl time.Duration) int {
+	log.WithField("ttl", ttl).Debug("expiring stale routes")
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
@@ -238,6 +252,9 @@ func (rt *RoutingTable) ExpireStale(ttl time.Duration) int {
 		}
 	}
 
+	if expired > 0 {
+		log.WithField("expired", expired).Debug("expired stale routes")
+	}
 	return expired
 }
 
@@ -257,6 +274,7 @@ func (rt *RoutingTable) UpdateLastSeen(ip netip.Addr) bool {
 
 // Merge merges routes from another source, preferring newer entries.
 func (rt *RoutingTable) Merge(entries []*RouteEntry) (added, updated int, collisions []error) {
+	log.WithField("count", len(entries)).Debug("merging routes")
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
@@ -292,6 +310,7 @@ func (rt *RoutingTable) Merge(entries []*RouteEntry) (added, updated int, collis
 		}
 	}
 
+	log.WithField("added", added).WithField("updated", updated).WithField("collisions", len(collisions)).Debug("routes merged")
 	return added, updated, collisions
 }
 
@@ -301,6 +320,7 @@ func (rt *RoutingTable) Save() error {
 		return nil // No persistence configured
 	}
 
+	log.WithField("path", rt.filePath).Debug("saving routing table")
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
 
@@ -311,18 +331,22 @@ func (rt *RoutingTable) Save() error {
 
 	data, err := json.MarshalIndent(routes, "", "  ")
 	if err != nil {
+		log.WithError(err).Error("failed to marshal routes")
 		return fmt.Errorf("marshaling routes: %w", err)
 	}
 
 	dir := filepath.Dir(rt.filePath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.WithError(err).Error("failed to create directory")
 		return fmt.Errorf("creating directory: %w", err)
 	}
 
 	if err := os.WriteFile(rt.filePath, data, 0o600); err != nil {
+		log.WithError(err).Error("failed to write routing table")
 		return fmt.Errorf("writing file: %w", err)
 	}
 
+	log.WithField("count", len(routes)).Debug("routing table saved")
 	return nil
 }
 
@@ -332,16 +356,20 @@ func (rt *RoutingTable) Load() error {
 		return nil
 	}
 
+	log.WithField("path", rt.filePath).Debug("loading routing table")
 	data, err := os.ReadFile(rt.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.WithField("path", rt.filePath).Debug("routing table file does not exist")
 			return nil // No file yet
 		}
+		log.WithError(err).Error("failed to read routing table")
 		return fmt.Errorf("reading file: %w", err)
 	}
 
 	var routes []*RouteEntry
 	if err := json.Unmarshal(data, &routes); err != nil {
+		log.WithError(err).Error("failed to unmarshal routes")
 		return fmt.Errorf("unmarshaling routes: %w", err)
 	}
 
@@ -359,6 +387,7 @@ func (rt *RoutingTable) Load() error {
 		}
 	}
 
+	log.WithField("count", len(rt.routes)).Debug("routing table loaded")
 	return nil
 }
 

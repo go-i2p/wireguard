@@ -104,6 +104,7 @@ type HandlersConfig struct {
 
 // NewHandlers creates RPC handlers.
 func NewHandlers(cfg HandlersConfig) *Handlers {
+	log.Debug("creating RPC handlers")
 	return &Handlers{
 		node:            cfg.Node,
 		peers:           cfg.Peers,
@@ -117,6 +118,7 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 
 // RegisterAll registers all handlers with the server.
 func (h *Handlers) RegisterAll(s *Server) {
+	log.Debug("registering all RPC handlers")
 	s.RegisterHandler("status", h.Status)
 	s.RegisterHandler("peers.list", h.PeersList)
 	s.RegisterHandler("peers.connect", h.PeersConnect)
@@ -128,11 +130,14 @@ func (h *Handlers) RegisterAll(s *Server) {
 	s.RegisterHandler("bans.list", h.BansList)
 	s.RegisterHandler("bans.add", h.BansAdd)
 	s.RegisterHandler("bans.remove", h.BansRemove)
+	log.WithField("count", 11).Debug("RPC handlers registered")
 }
 
 // Status returns the node status.
 func (h *Handlers) Status(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling status request")
 	if h.node == nil {
+		log.Warn("status request failed: node not available")
 		return nil, ErrInternal("node not available")
 	}
 
@@ -153,16 +158,20 @@ func (h *Handlers) Status(ctx context.Context, params json.RawMessage) (any, *Er
 		result.PeerCount = len(h.peers.ListPeers())
 	}
 
+	log.WithField("state", result.State).WithField("peerCount", result.PeerCount).Debug("status request completed")
 	return result, nil
 }
 
 // PeersList returns the list of known peers.
 func (h *Handlers) PeersList(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling peers.list request")
 	if h.peers == nil {
+		log.Warn("peers.list request failed: peers not available")
 		return nil, ErrInternal("peers not available")
 	}
 
 	peers := h.peers.ListPeers()
+	log.WithField("count", len(peers)).Debug("peers.list request completed")
 	return &PeersListResult{
 		Peers: peers,
 		Total: len(peers),
@@ -171,42 +180,55 @@ func (h *Handlers) PeersList(ctx context.Context, params json.RawMessage) (any, 
 
 // PeersConnect connects to a peer using an invite code.
 func (h *Handlers) PeersConnect(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling peers.connect request")
 	if h.peers == nil {
+		log.Warn("peers.connect request failed: peers not available")
 		return nil, ErrInternal("peers not available")
 	}
 
 	var p PeersConnectParams
 	if err := json.Unmarshal(params, &p); err != nil {
+		log.WithError(err).Debug("peers.connect request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
 	if p.InviteCode == "" {
+		log.Debug("peers.connect request failed: invite_code is required")
 		return nil, ErrInvalidParams("invite_code is required")
 	}
 
+	log.Debug("connecting to peer via invite code")
 	result, err := h.peers.ConnectPeer(ctx, p.InviteCode)
 	if err != nil {
+		log.WithError(err).Warn("peers.connect request failed")
 		return nil, ErrInternal(err.Error())
 	}
 
+	log.WithField("nodeID", result.NodeID).Debug("peers.connect request completed")
 	return result, nil
 }
 
 // InviteCreate creates a new invite code.
 func (h *Handlers) InviteCreate(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling invite.create request")
 	if h.invite == nil {
+		log.Warn("invite.create request failed: invites not available")
 		return nil, ErrInternal("invites not available")
 	}
 
 	expiry, maxUses, rpcErr := h.parseInviteCreateParams(params)
 	if rpcErr != nil {
+		log.WithField("error", rpcErr.Message).Debug("invite.create request failed: invalid params")
 		return nil, rpcErr
 	}
 
+	log.WithField("expiry", expiry).WithField("maxUses", maxUses).Debug("creating invite")
 	result, err := h.invite.CreateInvite(expiry, maxUses)
 	if err != nil {
+		log.WithError(err).Warn("invite.create request failed")
 		return nil, ErrInternal(err.Error())
 	}
 
+	log.Debug("invite.create request completed")
 	return result, nil
 }
 
@@ -238,39 +260,50 @@ func (h *Handlers) parseInviteCreateParams(params json.RawMessage) (time.Duratio
 
 // InviteAccept accepts an invite code.
 func (h *Handlers) InviteAccept(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling invite.accept request")
 	if h.invite == nil {
+		log.Warn("invite.accept request failed: invites not available")
 		return nil, ErrInternal("invites not available")
 	}
 
 	// Rate limit invite acceptance to prevent brute-force attacks
 	if !h.inviteRateLimit.Allow() {
+		log.Warn("invite.accept request rate limited")
 		metrics.RateLimitRejections.Inc()
 		return nil, ErrRateLimited()
 	}
 
 	var p InviteAcceptParams
 	if err := json.Unmarshal(params, &p); err != nil {
+		log.WithError(err).Debug("invite.accept request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
 	if p.InviteCode == "" {
+		log.Debug("invite.accept request failed: invite_code is required")
 		return nil, ErrInvalidParams("invite_code is required")
 	}
 
+	log.Debug("accepting invite code")
 	result, err := h.invite.AcceptInvite(ctx, p.InviteCode)
 	if err != nil {
+		log.WithError(err).Warn("invite.accept request failed")
 		return nil, ErrInternal(err.Error())
 	}
 
+	log.WithField("networkID", result.NetworkID).Debug("invite.accept request completed")
 	return result, nil
 }
 
 // RoutesList returns the routing table.
 func (h *Handlers) RoutesList(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling routes.list request")
 	if h.routes == nil {
+		log.Warn("routes.list request failed: routes not available")
 		return nil, ErrInternal("routes not available")
 	}
 
 	routes := h.routes.ListRoutes()
+	log.WithField("count", len(routes)).Debug("routes.list request completed")
 	return &RoutesListResult{
 		Routes: routes,
 		Total:  len(routes),
@@ -279,22 +312,28 @@ func (h *Handlers) RoutesList(ctx context.Context, params json.RawMessage) (any,
 
 // ConfigGet returns configuration values.
 func (h *Handlers) ConfigGet(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling config.get request")
 	if h.config == nil {
+		log.Warn("config.get request failed: config not available")
 		return nil, ErrInternal("config not available")
 	}
 
 	var p ConfigGetParams
 	if params != nil {
 		if err := json.Unmarshal(params, &p); err != nil {
+			log.WithError(err).Debug("config.get request failed: invalid params")
 			return nil, ErrInvalidParams(err.Error())
 		}
 	}
 
+	log.WithField("key", p.Key).Debug("getting config value")
 	value, err := h.config.GetConfig(p.Key)
 	if err != nil {
+		log.WithField("key", p.Key).Debug("config.get request failed: key not found")
 		return nil, ErrNotFound(p.Key)
 	}
 
+	log.WithField("key", p.Key).Debug("config.get request completed")
 	return &ConfigGetResult{
 		Key:   p.Key,
 		Value: value,
@@ -303,23 +342,30 @@ func (h *Handlers) ConfigGet(ctx context.Context, params json.RawMessage) (any, 
 
 // ConfigSet sets a configuration value.
 func (h *Handlers) ConfigSet(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling config.set request")
 	if h.config == nil {
+		log.Warn("config.set request failed: config not available")
 		return nil, ErrInternal("config not available")
 	}
 
 	var p ConfigSetParams
 	if err := json.Unmarshal(params, &p); err != nil {
+		log.WithError(err).Debug("config.set request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
 	if p.Key == "" {
+		log.Debug("config.set request failed: key is required")
 		return nil, ErrInvalidParams("key is required")
 	}
 
+	log.WithField("key", p.Key).Debug("setting config value")
 	oldValue, err := h.config.SetConfig(p.Key, p.Value)
 	if err != nil {
+		log.WithError(err).WithField("key", p.Key).Warn("config.set request failed")
 		return nil, ErrInternal(err.Error())
 	}
 
+	log.WithField("key", p.Key).Debug("config.set request completed")
 	return &ConfigSetResult{
 		Key:      p.Key,
 		OldValue: oldValue,
@@ -384,7 +430,9 @@ func formatInt(n int) string {
 
 // BansList returns all banned peers.
 func (h *Handlers) BansList(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling bans.list request")
 	if h.bans == nil {
+		log.Warn("bans.list request failed: bans not available")
 		return nil, ErrInternal("bans not available")
 	}
 
@@ -408,6 +456,7 @@ func (h *Handlers) BansList(ctx context.Context, params json.RawMessage) (any, *
 		result.Bans = append(result.Bans, info)
 	}
 
+	log.WithField("count", len(bans)).Debug("bans.list request completed")
 	return result, nil
 }
 
@@ -429,15 +478,19 @@ func formatBanMessage(duration time.Duration) string {
 }
 
 func (h *Handlers) BansAdd(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling bans.add request")
 	if h.bans == nil {
+		log.Warn("bans.add request failed: bans not available")
 		return nil, ErrInternal("bans not available")
 	}
 
 	var p BanAddParams
 	if err := json.Unmarshal(params, &p); err != nil {
+		log.WithError(err).Debug("bans.add request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
 	if p.NodeID == "" {
+		log.Debug("bans.add request failed: node_id is required")
 		return nil, ErrInvalidParams("node_id is required")
 	}
 
@@ -448,13 +501,17 @@ func (h *Handlers) BansAdd(ctx context.Context, params json.RawMessage) (any, *E
 
 	duration, err := parseBanDuration(p.Duration)
 	if err != nil {
+		log.WithError(err).Debug("bans.add request failed: invalid duration")
 		return nil, ErrInvalidParams("invalid duration: " + err.Error())
 	}
 
+	log.WithField("nodeID", p.NodeID).WithField("reason", reason).WithField("duration", duration).Debug("adding ban")
 	if err := h.bans.AddBan(p.NodeID, reason, p.Description, duration); err != nil {
+		log.WithError(err).WithField("nodeID", p.NodeID).Warn("bans.add request failed")
 		return nil, ErrInternal(err.Error())
 	}
 
+	log.WithField("nodeID", p.NodeID).Debug("bans.add request completed")
 	return &BanAddResult{
 		Success: true,
 		Message: formatBanMessage(duration),
@@ -463,25 +520,32 @@ func (h *Handlers) BansAdd(ctx context.Context, params json.RawMessage) (any, *E
 
 // BansRemove unbans a peer.
 func (h *Handlers) BansRemove(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling bans.remove request")
 	if h.bans == nil {
+		log.Warn("bans.remove request failed: bans not available")
 		return nil, ErrInternal("bans not available")
 	}
 
 	var p BanRemoveParams
 	if err := json.Unmarshal(params, &p); err != nil {
+		log.WithError(err).Debug("bans.remove request failed: invalid params")
 		return nil, ErrInvalidParams(err.Error())
 	}
 	if p.NodeID == "" {
+		log.Debug("bans.remove request failed: node_id is required")
 		return nil, ErrInvalidParams("node_id is required")
 	}
 
+	log.WithField("nodeID", p.NodeID).Debug("removing ban")
 	if !h.bans.RemoveBan(p.NodeID) {
+		log.WithField("nodeID", p.NodeID).Debug("bans.remove: peer not found in ban list")
 		return &BanRemoveResult{
 			Success: false,
 			Message: "peer not found in ban list",
 		}, nil
 	}
 
+	log.WithField("nodeID", p.NodeID).Debug("bans.remove request completed")
 	return &BanRemoveResult{
 		Success: true,
 		Message: "peer unbanned",

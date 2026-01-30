@@ -72,12 +72,15 @@ type VPN struct {
 // New creates a new embedded VPN instance with the given configuration.
 // The VPN is not started until Start() is called.
 func New(cfg Config) (*VPN, error) {
+	log.WithField("nodeName", cfg.NodeName).Debug("creating new VPN instance")
 	cfg.applyDefaults()
 
 	if err := cfg.Validate(); err != nil {
+		log.WithError(err).Error("invalid VPN configuration")
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
+	log.WithField("nodeName", cfg.NodeName).Debug("VPN instance created")
 	return &VPN{
 		config:  cfg,
 		state:   StateInitial,
@@ -105,9 +108,11 @@ func NewWithOptions(opts ...Option) (*VPN, error) {
 //
 // The context controls the startup timeout, not the VPN lifetime.
 func (v *VPN) Start(ctx context.Context) error {
+	log.WithField("nodeName", v.config.NodeName).Info("starting VPN")
 	v.mu.Lock()
 	if v.state != StateInitial && v.state != StateStopped {
 		v.mu.Unlock()
+		log.WithField("state", v.state).Warn("cannot start VPN in current state")
 		return fmt.Errorf("cannot start VPN in state %s", v.state)
 	}
 	oldState := v.state
@@ -115,6 +120,7 @@ func (v *VPN) Start(ctx context.Context) error {
 	v.done = make(chan struct{})
 	v.mu.Unlock()
 
+	log.WithField("oldState", oldState).WithField("newState", StateStarting).Debug("VPN state transition")
 	v.emitter.emitStateChange(oldState, StateStarting, "VPN starting")
 
 	// Create internal context for VPN lifetime
@@ -124,8 +130,10 @@ func (v *VPN) Start(ctx context.Context) error {
 	coreConfig := v.config.toCoreConfig()
 
 	// Create the core node
+	log.Debug("creating core node")
 	node, err := core.NewNode(coreConfig)
 	if err != nil {
+		log.WithError(err).Error("failed to create core node")
 		v.transitionTo(StateStopped)
 		v.emitter.emitError(err, "Failed to create node")
 		return fmt.Errorf("failed to create node: %w", err)
@@ -133,7 +141,9 @@ func (v *VPN) Start(ctx context.Context) error {
 	v.node = node
 
 	// Start the node with the provided context for timeout
+	log.Debug("starting core node")
 	if err := node.Start(ctx); err != nil {
+		log.WithError(err).Error("failed to start core node")
 		v.transitionTo(StateStopped)
 		v.emitter.emitError(err, "Failed to start node")
 		return fmt.Errorf("failed to start node: %w", err)
@@ -144,12 +154,14 @@ func (v *VPN) Start(ctx context.Context) error {
 	v.startedAt = time.Now()
 	v.mu.Unlock()
 
+	log.WithField("oldState", StateStarting).WithField("newState", StateRunning).Debug("VPN state transition")
 	v.emitter.emitStateChange(StateStarting, StateRunning, "VPN started")
 	v.emitter.emitSimple(EventStarted, "VPN is now running")
 
 	// Start background monitor
 	go v.monitor()
 
+	log.WithField("nodeName", v.config.NodeName).Info("VPN started successfully")
 	return nil
 }
 
@@ -157,14 +169,17 @@ func (v *VPN) Start(ctx context.Context) error {
 // It notifies peers, saves state, and closes connections.
 // The context controls the shutdown timeout.
 func (v *VPN) Stop(ctx context.Context) error {
+	log.Info("stopping VPN")
 	v.mu.Lock()
 	if v.state != StateRunning {
 		v.mu.Unlock()
+		log.WithField("state", v.state).Warn("cannot stop VPN in current state")
 		return fmt.Errorf("cannot stop VPN in state %s", v.state)
 	}
 	v.state = StateStopping
 	v.mu.Unlock()
 
+	log.WithField("oldState", StateRunning).WithField("newState", StateStopping).Debug("VPN state transition")
 	v.emitter.emitStateChange(StateRunning, StateStopping, "VPN stopping")
 
 	// Cancel internal context
@@ -175,22 +190,29 @@ func (v *VPN) Stop(ctx context.Context) error {
 	// Stop the core node
 	var err error
 	if v.node != nil {
+		log.Debug("stopping core node")
 		err = v.node.Stop(ctx)
+		if err != nil {
+			log.WithError(err).Warn("error stopping core node")
+		}
 	}
 
 	v.transitionTo(StateStopped)
+	log.WithField("oldState", StateStopping).WithField("newState", StateStopped).Debug("VPN state transition")
 	v.emitter.emitStateChange(StateStopping, StateStopped, "VPN stopped")
 	v.emitter.emitSimple(EventStopped, "VPN has stopped")
 
 	// Close the done channel
 	close(v.done)
 
+	log.Info("VPN stopped")
 	return err
 }
 
 // Close is an alias for Stop with a default 30-second timeout.
 // Suitable for use with defer.
 func (v *VPN) Close() error {
+	log.Debug("closing VPN")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -200,12 +222,14 @@ func (v *VPN) Close() error {
 	v.mu.RUnlock()
 
 	if state == StateInitial || state == StateStopped {
+		log.WithField("state", state).Debug("VPN already stopped, cleaning up emitter")
 		v.emitter.close()
 		return nil
 	}
 
 	err := v.Stop(ctx)
 	v.emitter.close()
+	log.Debug("VPN closed")
 	return err
 }
 
@@ -333,21 +357,27 @@ func (v *VPN) Node() *core.Node {
 // transitionTo changes the VPN state.
 func (v *VPN) transitionTo(newState State) {
 	v.mu.Lock()
+	oldState := v.state
 	v.state = newState
 	v.mu.Unlock()
+	log.WithField("oldState", oldState).WithField("newState", newState).Debug("VPN state transition")
 }
 
 // monitor watches the core node and emits events.
 func (v *VPN) monitor() {
+	log.Debug("VPN monitor started")
 	if v.node == nil {
+		log.Warn("VPN monitor: node is nil")
 		return
 	}
 
 	select {
 	case <-v.ctx.Done():
 		// Normal shutdown
+		log.Debug("VPN monitor: normal shutdown")
 	case <-v.node.Done():
 		// Node stopped unexpectedly
+		log.Warn("VPN monitor: node stopped unexpectedly")
 		v.mu.Lock()
 		if v.state == StateRunning {
 			v.state = StateStopped
@@ -359,4 +389,5 @@ func (v *VPN) monitor() {
 			v.mu.Unlock()
 		}
 	}
+	log.Debug("VPN monitor stopped")
 }

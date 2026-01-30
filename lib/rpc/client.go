@@ -37,12 +37,14 @@ type ClientConfig struct {
 
 // NewClient creates a new RPC client and connects to the server.
 func NewClient(cfg ClientConfig) (*Client, error) {
+	log.Debug("creating new RPC client")
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
 
 	conn, err := dialConnection(cfg)
 	if err != nil {
+		log.WithError(err).Error("failed to dial connection")
 		return nil, err
 	}
 
@@ -58,57 +60,75 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 
 	if c.authToken != nil {
+		log.Debug("authenticating with server")
 		if err := c.authenticate(); err != nil {
+			log.WithError(err).Error("authentication failed")
 			conn.Close()
 			return nil, fmt.Errorf("authentication failed: %w", err)
 		}
+		log.Debug("authentication successful")
 	}
 
+	log.Debug("RPC client connected")
 	return c, nil
 }
 
 // dialConnection establishes a connection using Unix socket or TCP.
 func dialConnection(cfg ClientConfig) (net.Conn, error) {
 	if cfg.UnixSocketPath != "" {
+		log.WithField("path", cfg.UnixSocketPath).Debug("dialing Unix socket")
 		conn, err := net.DialTimeout("unix", cfg.UnixSocketPath, cfg.Timeout)
 		if err != nil {
+			log.WithError(err).WithField("path", cfg.UnixSocketPath).Debug("Unix socket connection failed")
 			return nil, fmt.Errorf("connect unix: %w", err)
 		}
+		log.WithField("path", cfg.UnixSocketPath).Debug("Unix socket connected")
 		return conn, nil
 	}
 
 	if cfg.TCPAddress != "" {
+		log.WithField("address", cfg.TCPAddress).Debug("dialing TCP")
 		conn, err := net.DialTimeout("tcp", cfg.TCPAddress, cfg.Timeout)
 		if err != nil {
+			log.WithError(err).WithField("address", cfg.TCPAddress).Debug("TCP connection failed")
 			return nil, fmt.Errorf("connect tcp: %w", err)
 		}
+		log.WithField("address", cfg.TCPAddress).Debug("TCP connected")
 		return conn, nil
 	}
 
+	log.Warn("no connection address specified")
 	return nil, errors.New("no connection address specified")
 }
 
 // loadAuthToken loads the authentication token from config or file.
 func (c *Client) loadAuthToken(cfg ClientConfig) error {
 	if cfg.AuthToken != "" {
+		log.Debug("loading auth token from config")
 		token, err := hex.DecodeString(cfg.AuthToken)
 		if err != nil {
+			log.WithError(err).Error("invalid auth token in config")
 			return fmt.Errorf("invalid auth token: %w", err)
 		}
 		c.authToken = token
+		log.Debug("auth token loaded from config")
 		return nil
 	}
 
 	if cfg.AuthFile != "" {
+		log.WithField("path", cfg.AuthFile).Debug("loading auth token from file")
 		data, err := os.ReadFile(cfg.AuthFile)
 		if err != nil {
+			log.WithError(err).WithField("path", cfg.AuthFile).Error("failed to read auth file")
 			return fmt.Errorf("reading auth file: %w", err)
 		}
 		token, err := hex.DecodeString(string(data))
 		if err != nil {
+			log.WithError(err).Error("invalid auth token in file")
 			return fmt.Errorf("invalid auth token in file: %w", err)
 		}
 		c.authToken = token
+		log.Debug("auth token loaded from file")
 	}
 
 	return nil
@@ -131,25 +151,31 @@ func (c *Client) authenticate() error {
 // Call makes an RPC call and unmarshals the result.
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {
 	c.requestID++
+	log.WithField("method", method).WithField("requestID", c.requestID).Debug("making RPC call")
 
 	req, err := c.buildRequest(method, params)
 	if err != nil {
+		log.WithError(err).WithField("method", method).Error("failed to build request")
 		return err
 	}
 
 	if err := c.sendRequest(req); err != nil {
+		log.WithError(err).WithField("method", method).Error("failed to send request")
 		return err
 	}
 
 	resp, err := c.readResponse()
 	if err != nil {
+		log.WithError(err).WithField("method", method).Error("failed to read response")
 		return err
 	}
 
 	if resp.Error != nil {
+		log.WithField("method", method).WithField("errorCode", resp.Error.Code).Debug("RPC call returned error")
 		return resp.Error
 	}
 
+	log.WithField("method", method).Debug("RPC call completed successfully")
 	return c.unmarshalResult(resp, result)
 }
 
@@ -228,7 +254,14 @@ func (c *Client) unmarshalResult(resp *Response, result any) error {
 
 // Close closes the connection.
 func (c *Client) Close() error {
-	return c.conn.Close()
+	log.Debug("closing RPC client connection")
+	err := c.conn.Close()
+	if err != nil {
+		log.WithError(err).Warn("error closing RPC client connection")
+	} else {
+		log.Debug("RPC client connection closed")
+	}
+	return err
 }
 
 // Status calls the "status" method.
