@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -41,7 +40,6 @@ type Handler func(ctx context.Context, params json.RawMessage) (any, *Error)
 // Server is an RPC server that listens on Unix socket and/or TCP.
 type Server struct {
 	mu           sync.RWMutex
-	logger       *slog.Logger
 	handlers     map[string]Handler
 	unixListener net.Listener
 	tcpListener  net.Listener
@@ -58,18 +56,11 @@ type ServerConfig struct {
 	TCPAddress string
 	// AuthFile is the path to the auth token file.
 	AuthFile string
-	// Logger is the logger to use.
-	Logger *slog.Logger
 }
 
 // NewServer creates a new RPC server.
 func NewServer(cfg ServerConfig) (*Server, error) {
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-
 	s := &Server{
-		logger:   cfg.Logger.With("component", "rpc-server"),
 		handlers: make(map[string]Handler),
 	}
 
@@ -93,11 +84,11 @@ func (s *Server) loadOrCreateAuthToken(path string) ([]byte, error) {
 		// Parse hex-encoded token
 		token, err := hex.DecodeString(string(data))
 		if err == nil && len(token) == AuthTokenLength {
-			s.logger.Debug("loaded existing auth token", "path", path)
+			log.Debug("loaded existing auth token", "path", path)
 			return token, nil
 		}
 		// Invalid token file, regenerate
-		s.logger.Warn("invalid auth token file, regenerating", "path", path)
+		log.Warn("invalid auth token file, regenerating", "path", path)
 	}
 
 	// Generate new token
@@ -116,7 +107,7 @@ func (s *Server) loadOrCreateAuthToken(path string) ([]byte, error) {
 		return nil, fmt.Errorf("writing token: %w", err)
 	}
 
-	s.logger.Info("generated new auth token", "path", path)
+	log.Info("generated new auth token", "path", path)
 	return token, nil
 }
 
@@ -159,7 +150,7 @@ func (s *Server) startUnixListener(ctx context.Context, socketPath string) error
 	s.wg.Add(1)
 	go s.acceptLoop(ctx, listener, "unix")
 
-	s.logger.Info("RPC server listening on Unix socket", "path", socketPath)
+	log.Info("RPC server listening on Unix socket", "path", socketPath)
 	return nil
 }
 
@@ -174,7 +165,7 @@ func (s *Server) startTCPListener(ctx context.Context, address string) error {
 	s.wg.Add(1)
 	go s.acceptLoop(ctx, listener, "tcp")
 
-	s.logger.Info("RPC server listening on TCP", "address", address)
+	log.Info("RPC server listening on TCP", "address", address)
 	return nil
 }
 
@@ -252,7 +243,7 @@ func (s *Server) handleAcceptError(ctx context.Context, network string, err erro
 		return true
 	default:
 		if !errors.Is(err, net.ErrClosed) {
-			s.logger.Error("accept error", "network", network, "error", err)
+			log.Error("accept error", "network", network, "error", err)
 		}
 		return true
 	}
@@ -272,7 +263,7 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn, network st
 	defer conn.Close()
 
 	remoteAddr := conn.RemoteAddr().String()
-	s.logger.Debug("new connection", "network", network, "remote", remoteAddr)
+	log.Debug("new connection", "network", network, "remote", remoteAddr)
 
 	reader := bufio.NewReaderSize(conn, 64*1024)
 	authenticated := s.authToken == nil
@@ -329,13 +320,13 @@ func (s *Server) isContextCancelled(ctx context.Context) bool {
 // readRequest reads and parses a JSON-RPC request from the connection.
 func (s *Server) readRequest(conn net.Conn, reader *bufio.Reader, remoteAddr string) (*Request, error) {
 	if err := conn.SetReadDeadline(time.Now().Add(ReadTimeout)); err != nil {
-		s.logger.Warn("failed to set read deadline", "remote", remoteAddr, "error", err)
+		log.Warn("failed to set read deadline", "remote", remoteAddr, "error", err)
 	}
 
 	line, err := reader.ReadBytes('\n')
 	if err != nil {
 		if err != io.EOF && !errors.Is(err, net.ErrClosed) {
-			s.logger.Debug("read error", "remote", remoteAddr, "error", err)
+			log.Debug("read error", "remote", remoteAddr, "error", err)
 		}
 		return nil, err
 	}
@@ -406,18 +397,18 @@ func (s *Server) dispatch(ctx context.Context, req *Request) *Response {
 // sendResponse sends a response to the client.
 func (s *Server) sendResponse(conn net.Conn, resp *Response) {
 	if err := conn.SetWriteDeadline(time.Now().Add(WriteTimeout)); err != nil {
-		s.logger.Warn("failed to set write deadline", "error", err)
+		log.Warn("failed to set write deadline", "error", err)
 	}
 
 	data, err := json.Marshal(resp)
 	if err != nil {
-		s.logger.Error("marshal response", "error", err)
+		log.Error("marshal response", "error", err)
 		return
 	}
 
 	data = append(data, '\n')
 	if _, err := conn.Write(data); err != nil {
-		s.logger.Debug("write error", "error", err)
+		log.Debug("write error", "error", err)
 	}
 }
 
@@ -442,7 +433,7 @@ func (s *Server) Stop() error {
 	// Wait for all handlers to finish
 	s.wg.Wait()
 
-	s.logger.Info("RPC server stopped")
+	log.Info("RPC server stopped")
 	return nil
 }
 

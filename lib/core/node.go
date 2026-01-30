@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/netip"
 	"path/filepath"
 	"sync"
@@ -59,7 +58,6 @@ func (s NodeState) String() string {
 type Node struct {
 	mu     sync.RWMutex
 	config *Config
-	logger *slog.Logger
 	state  NodeState
 
 	// cancel is used to signal shutdown to all goroutines
@@ -100,7 +98,7 @@ type Node struct {
 
 // NewNode creates a new Node with the given configuration.
 // The node is not started until Start() is called.
-func NewNode(cfg *Config, logger *slog.Logger) (*Node, error) {
+func NewNode(cfg *Config) (*Node, error) {
 	if cfg == nil {
 		return nil, errors.New("config is required")
 	}
@@ -109,13 +107,8 @@ func NewNode(cfg *Config, logger *slog.Logger) (*Node, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	return &Node{
 		config: cfg,
-		logger: logger.With("component", "node"),
 		state:  StateInitial,
 		done:   make(chan struct{}),
 	}, nil
@@ -170,7 +163,7 @@ func (n *Node) transitionToStarting() error {
 
 // logStarting logs the node startup information.
 func (n *Node) logStarting() {
-	n.logger.Info("starting node",
+	log.Info("starting node",
 		"name", n.config.Node.Name,
 		"data_dir", n.config.Node.DataDir,
 	)
@@ -264,7 +257,7 @@ func (n *Node) transitionToRunning() {
 	n.mu.Unlock()
 
 	n.emitStateChange(StateStarting, StateRunning)
-	n.logger.Info("node started")
+	log.Info("node started")
 }
 
 // run is the main loop that runs until the context is cancelled.
@@ -273,7 +266,7 @@ func (n *Node) run(ctx context.Context) {
 
 	<-ctx.Done()
 
-	n.logger.Info("node shutting down")
+	log.Info("node shutting down")
 
 	// Cleanup all components
 	n.cleanup()
@@ -299,7 +292,7 @@ func (n *Node) Stop(ctx context.Context) error {
 	n.mu.Unlock()
 
 	n.emitStateChange(StateRunning, StateStopping)
-	n.logger.Info("stopping node")
+	log.Info("stopping node")
 
 	// Signal all goroutines to stop
 	if cancel != nil {
@@ -309,7 +302,7 @@ func (n *Node) Stop(ctx context.Context) error {
 	// Wait for the run loop to finish or timeout
 	select {
 	case <-n.done:
-		n.logger.Info("node stopped")
+		log.Info("node stopped")
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -412,7 +405,7 @@ func (n *Node) emitError(err error, message string) {
 func (n *Node) initIdentity() error {
 	identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
 
-	n.logger.Info("loading identity", "path", identityPath)
+	log.Info("loading identity", "path", identityPath)
 
 	id, err := identity.LoadIdentity(identityPath)
 	if err != nil {
@@ -421,7 +414,7 @@ func (n *Node) initIdentity() error {
 
 	if id == nil {
 		// No existing identity, generate a new one
-		n.logger.Info("generating new identity")
+		log.Info("generating new identity")
 		id, err = identity.NewIdentity()
 		if err != nil {
 			return fmt.Errorf("generating identity: %w", err)
@@ -433,7 +426,7 @@ func (n *Node) initIdentity() error {
 	}
 
 	n.identity = id
-	n.logger.Info("identity loaded",
+	log.Info("identity loaded",
 		"node_id", id.NodeID(),
 		"public_key", id.PublicKey().String()[:16]+"...",
 	)
@@ -444,14 +437,14 @@ func (n *Node) initIdentity() error {
 	if err != nil {
 		return fmt.Errorf("loading invite store: %w", err)
 	}
-	n.logger.Info("invite store loaded", "path", inviteStorePath)
+	log.Info("invite store loaded", "path", inviteStorePath)
 
 	return nil
 }
 
 // initTransport opens the I2P transport layer.
 func (n *Node) initTransport() error {
-	n.logger.Info("opening I2P transport",
+	log.Info("opening I2P transport",
 		"sam_addr", n.config.I2P.SAMAddress,
 		"tunnel_length", n.config.I2P.TunnelLength,
 	)
@@ -475,7 +468,7 @@ func (n *Node) initTransport() error {
 	// Save identity with I2P destination
 	identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
 	if err := n.identity.Save(identityPath); err != nil {
-		n.logger.Warn("failed to save identity with I2P destination", "error", err)
+		log.Warn("failed to save identity with I2P destination", "error", err)
 	}
 
 	// Create sender for gossip message transport
@@ -487,10 +480,9 @@ func (n *Node) initTransport() error {
 		Timeout:       5 * time.Second,
 		RetryDelay:    5 * time.Second,
 		MaxRetryDelay: 2 * time.Minute,
-		Logger:        n.logger.With("component", "health"),
 	})
 
-	n.logger.Info("I2P transport opened",
+	log.Info("I2P transport opened",
 		"local_dest", localDest[:32]+"...",
 	)
 
@@ -508,7 +500,7 @@ func (n *Node) initDevice() error {
 	// Derive tunnel IP from our public key
 	n.tunnelIP = mesh.AllocateTunnelIPWithSubnet(n.identity.PublicKey(), subnet)
 
-	n.logger.Info("creating WireGuard device",
+	log.Info("creating WireGuard device",
 		"tunnel_ip", n.tunnelIP,
 		"subnet", subnet,
 	)
@@ -518,7 +510,6 @@ func (n *Node) initDevice() error {
 		TunnelIP:   n.tunnelIP,
 		Subnet:     subnet,
 		MTU:        1280, // Safe for I2P
-		Logger:     n.logger.With("component", "device"),
 		Bind:       n.trans.Bind(),
 	}
 
@@ -527,7 +518,7 @@ func (n *Node) initDevice() error {
 		return fmt.Errorf("creating WireGuard device: %w", err)
 	}
 
-	n.logger.Info("WireGuard device created")
+	log.Info("WireGuard device created")
 	return nil
 }
 
@@ -560,7 +551,7 @@ func (n *Node) initMesh(ctx context.Context) error {
 		return err
 	}
 
-	n.logger.Info("mesh networking initialized")
+	log.Info("mesh networking initialized")
 	return nil
 }
 
@@ -578,9 +569,9 @@ func (n *Node) initRoutingTable() error {
 	})
 
 	if err := n.routing.Load(); err != nil {
-		n.logger.Debug("no persisted routes to load", "error", err)
+		log.Debug("no persisted routes to load", "error", err)
 	} else {
-		n.logger.Info("loaded persisted routes", "count", n.routing.RouteCount())
+		log.Info("loaded persisted routes", "count", n.routing.RouteCount())
 	}
 
 	_ = n.routing.AddRoute(&mesh.RouteEntry{
@@ -601,7 +592,6 @@ func (n *Node) initBanList() {
 	banListPath := filepath.Join(n.config.Node.DataDir, "banlist.json")
 	n.banList = mesh.NewBanList(mesh.BanListConfig{
 		PersistPath: banListPath,
-		Logger:      n.logger.With("component", "banlist"),
 	})
 }
 
@@ -614,7 +604,6 @@ func (n *Node) initPeerManager() {
 		TunnelIP:     n.tunnelIP,
 		NetworkID:    n.identity.NetworkID(),
 		MaxPeers:     n.config.Mesh.MaxPeers,
-		Logger:       n.logger.With("component", "peers"),
 		BanList:      n.banList,
 		RoutingTable: n.routing,
 		Subnet:       n.routing.Subnet(),
@@ -632,9 +621,9 @@ func (n *Node) initStateManagement() {
 	})
 
 	if err := n.stateManager.Load(); err != nil {
-		n.logger.Debug("no persisted state to load", "error", err)
+		log.Debug("no persisted state to load", "error", err)
 	} else {
-		n.logger.Info("loaded persisted state")
+		log.Info("loaded persisted state")
 	}
 
 	n.reconnectManager = mesh.NewReconnectManager(mesh.ReconnectConfig{
@@ -644,7 +633,6 @@ func (n *Node) initStateManagement() {
 		MaxRetries:     0,
 		JitterFraction: 0.2,
 		CheckInterval:  10 * time.Second,
-		Logger:         n.logger.With("component", "reconnect"),
 	})
 }
 
@@ -663,17 +651,17 @@ func (n *Node) configurePeerCallbacks() {
 // handlePeerConnected registers a peer with the sender and WireGuard device.
 func (n *Node) handlePeerConnected(peer *mesh.Peer) {
 	n.sender.RegisterPeer(peer.NodeID, peer.I2PDest)
-	n.logger.Debug("registered peer with sender",
+	log.Debug("registered peer with sender",
 		"node_id", peer.NodeID,
 		"i2p_dest", peer.I2PDest[:32]+"...")
 
 	allowedIP := netip.PrefixFrom(peer.TunnelIP, 32)
 	if err := n.device.AddPeer(peer.WGPublicKey, []netip.Prefix{allowedIP}, peer.I2PDest); err != nil {
-		n.logger.Error("failed to add WireGuard peer",
+		log.Error("failed to add WireGuard peer",
 			"node_id", peer.NodeID,
 			"error", err)
 	} else {
-		n.logger.Info("added WireGuard peer",
+		log.Info("added WireGuard peer",
 			"node_id", peer.NodeID,
 			"tunnel_ip", peer.TunnelIP,
 			"wg_pubkey", peer.WGPublicKey.String()[:8]+"...")
@@ -683,19 +671,19 @@ func (n *Node) handlePeerConnected(peer *mesh.Peer) {
 // handlePeerDisconnected unregisters a peer and queues reconnection.
 func (n *Node) handlePeerDisconnected(peer *mesh.Peer) {
 	n.sender.UnregisterPeer(peer.NodeID)
-	n.logger.Debug("unregistered peer from sender", "node_id", peer.NodeID)
+	log.Debug("unregistered peer from sender", "node_id", peer.NodeID)
 
 	if err := n.device.RemovePeer(peer.WGPublicKey); err != nil {
-		n.logger.Error("failed to remove WireGuard peer",
+		log.Error("failed to remove WireGuard peer",
 			"node_id", peer.NodeID,
 			"error", err)
 	} else {
-		n.logger.Debug("removed WireGuard peer", "node_id", peer.NodeID)
+		log.Debug("removed WireGuard peer", "node_id", peer.NodeID)
 	}
 
 	if n.reconnectManager != nil {
 		n.reconnectManager.Add(peer.NodeID, peer.I2PDest, nil)
-		n.logger.Debug("queued peer for reconnection", "node_id", peer.NodeID)
+		log.Debug("queued peer for reconnection", "node_id", peer.NodeID)
 	}
 }
 
@@ -704,7 +692,6 @@ func (n *Node) initGossipEngine(ctx context.Context) error {
 	gossipConfig := mesh.DefaultGossipConfig()
 	gossipConfig.HeartbeatInterval = n.config.Mesh.HeartbeatInterval
 	gossipConfig.PeerTimeout = n.config.Mesh.PeerTimeout
-	gossipConfig.Logger = n.logger.With("component", "gossip")
 
 	n.gossip = mesh.NewGossipEngine(mesh.GossipEngineConfig{
 		Config:       gossipConfig,
@@ -729,7 +716,7 @@ func (n *Node) initGossipEngine(ctx context.Context) error {
 	if networkID := n.identity.NetworkID(); networkID != "" {
 		discoveryToken := identity.DeriveDiscoveryToken(networkID)
 		n.peers.AddValidToken(discoveryToken)
-		n.logger.Debug("added network discovery token for auto-connect")
+		log.Debug("added network discovery token for auto-connect")
 	}
 
 	return nil
@@ -739,11 +726,11 @@ func (n *Node) initGossipEngine(ctx context.Context) error {
 func (n *Node) handleMeshMessage(data []byte, from i2pkeys.I2PAddr) {
 	var msg mesh.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
-		n.logger.Debug("failed to parse mesh message", "error", err, "from", from.Base32()[:16]+"...")
+		log.Debug("failed to parse mesh message", "error", err, "from", from.Base32()[:16]+"...")
 		return
 	}
 	if err := n.gossip.HandleMessage(&msg); err != nil {
-		n.logger.Debug("failed to handle mesh message",
+		log.Debug("failed to handle mesh message",
 			"type", msg.Type,
 			"error", err,
 			"from", from.Base32()[:16]+"...")
@@ -784,7 +771,7 @@ func (n *Node) configureReconnectManager(ctx context.Context) {
 	})
 
 	if err := n.reconnectManager.Start(ctx); err != nil {
-		n.logger.Warn("failed to start reconnect manager", "error", err)
+		log.Warn("failed to start reconnect manager", "error", err)
 	}
 }
 
@@ -806,7 +793,7 @@ func (n *Node) startInviteCleanup(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if removed := n.inviteStore.CleanExpired(); removed > 0 {
-					n.logger.Info("cleaned expired invites", "count", removed)
+					log.Info("cleaned expired invites", "count", removed)
 				}
 			}
 		}
@@ -820,13 +807,13 @@ func (n *Node) startHealthMonitor(ctx context.Context) {
 	}
 
 	n.healthMonitor.SetCallbacks(
-		func() { n.logger.Warn("I2P SAM connection unhealthy") },
-		func() { n.logger.Info("I2P SAM connection healthy") },
+		func() { log.Warn("I2P SAM connection unhealthy") },
+		func() { log.Info("I2P SAM connection healthy") },
 		n.handleI2PReconnect,
 	)
 
 	if err := n.healthMonitor.Start(ctx); err != nil {
-		n.logger.Warn("failed to start health monitor", "error", err)
+		log.Warn("failed to start health monitor", "error", err)
 	}
 }
 
@@ -834,16 +821,16 @@ func (n *Node) startHealthMonitor(ctx context.Context) {
 // The I2P identity is persistent (keys stored by tunnel name), so the same destination
 // is restored after reconnection.
 func (n *Node) handleI2PReconnect() error {
-	n.logger.Info("attempting I2P transport reconnection")
+	log.Info("attempting I2P transport reconnection")
 
 	// Attempt to reconnect the transport
 	dest, err := n.trans.Reconnect()
 	if err != nil {
-		n.logger.Error("I2P transport reconnection failed", "error", err)
+		log.Error("I2P transport reconnection failed", "error", err)
 		return err
 	}
 
-	n.logger.Info("I2P transport reconnected", "dest", dest[:32]+"...")
+	log.Info("I2P transport reconnected", "dest", dest[:32]+"...")
 
 	// Re-register mesh handler with reconnected transport
 	n.trans.SetMeshHandler(n.handleMeshMessage)
@@ -851,7 +838,7 @@ func (n *Node) handleI2PReconnect() error {
 	// Re-announce our presence to the network
 	if n.gossip != nil {
 		n.gossip.AnnouncePresence()
-		n.logger.Info("re-announced presence to mesh network after reconnect")
+		log.Info("re-announced presence to mesh network after reconnect")
 	}
 
 	return nil
@@ -905,7 +892,7 @@ func (n *Node) initRPCServer(ctx context.Context) error {
 		return fmt.Errorf("starting RPC server: %w", err)
 	}
 
-	n.logger.Info("RPC server started", "socket", socketPath)
+	log.Info("RPC server started", "socket", socketPath)
 	return nil
 }
 
@@ -929,7 +916,7 @@ func (n *Node) initWebServer() error {
 		return fmt.Errorf("starting web server: %w", err)
 	}
 
-	n.logger.Info("web server started", "listen", n.config.Web.Listen)
+	log.Info("web server started", "listen", n.config.Web.Listen)
 	return nil
 }
 
@@ -979,9 +966,9 @@ func (n *Node) cleanupMeshServices() {
 func (n *Node) cleanupPersistence() {
 	if n.stateManager != nil {
 		if err := n.stateManager.Save(); err != nil {
-			n.logger.Warn("failed to save state", "error", err)
+			log.Warn("failed to save state", "error", err)
 		} else {
-			n.logger.Debug("saved state before shutdown")
+			log.Debug("saved state before shutdown")
 		}
 		n.stateManager.Stop()
 		n.stateManager = nil
@@ -989,9 +976,9 @@ func (n *Node) cleanupPersistence() {
 
 	if n.routing != nil {
 		if err := n.routing.Save(); err != nil {
-			n.logger.Warn("failed to save routing table", "error", err)
+			log.Warn("failed to save routing table", "error", err)
 		} else {
-			n.logger.Debug("saved routing table", "count", n.routing.RouteCount())
+			log.Debug("saved routing table", "count", n.routing.RouteCount())
 		}
 	}
 }
@@ -1013,14 +1000,14 @@ func (n *Node) waitForDeviceClose(done <-chan struct{}, shutdownTimeout time.Dur
 
 	select {
 	case <-done:
-		n.logger.Debug("device closed successfully")
+		log.Debug("device closed successfully")
 	case <-time.After(warnTimeout):
-		n.logger.Warn("device close taking longer than expected, continuing wait")
+		log.Warn("device close taking longer than expected, continuing wait")
 		select {
 		case <-done:
-			n.logger.Debug("device closed after extended wait")
+			log.Debug("device closed after extended wait")
 		case <-time.After(remainingTimeout):
-			n.logger.Error("device close timed out after configured timeout, continuing cleanup (resources may leak)",
+			log.Error("device close timed out after configured timeout, continuing cleanup (resources may leak)",
 				"timeout", shutdownTimeout.String())
 		}
 	}
@@ -1210,7 +1197,7 @@ func (n *Node) parseAndValidateInvite(inviteCode string) (*identity.Invite, erro
 		return nil, fmt.Errorf("invite validation failed: %w", err)
 	}
 
-	n.logger.Info("connecting to peer via invite",
+	log.Info("connecting to peer via invite",
 		"i2p_dest", invite.I2PDest[:32]+"...",
 		"network_id", invite.NetworkID)
 
@@ -1233,7 +1220,7 @@ func (n *Node) setupPeerConnection(pm *mesh.PeerManager, trans *transport.Transp
 
 	trans.SetPeerEndpoint(invite.I2PDest, endpoint)
 
-	n.logger.Info("handshake initiated",
+	log.Info("handshake initiated",
 		"our_node_id", handshakeInit.NodeID,
 		"our_tunnel_ip", handshakeInit.TunnelIP)
 
@@ -1245,16 +1232,16 @@ func (n *Node) sendConnectPeerHandshake(sender *transport.Sender, trans *transpo
 	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
 	if err != nil {
 		trans.RemovePeer(invite.I2PDest)
-		n.logger.Warn("failed to encode handshake", "error", err)
+		log.Warn("failed to encode handshake", "error", err)
 		return
 	}
 
 	if err := sender.SendToDest(invite.I2PDest, handshakeData); err != nil {
-		n.logger.Warn("failed to send handshake init",
+		log.Warn("failed to send handshake init",
 			"error", err,
 			"dest", invite.I2PDest[:32]+"...")
 	} else {
-		n.logger.Info("handshake init sent successfully",
+		log.Info("handshake init sent successfully",
 			"dest", invite.I2PDest[:32]+"...")
 	}
 }
@@ -1284,7 +1271,7 @@ func (n *Node) getConnectionComponents() (*mesh.PeerManager, *transport.Transpor
 // validateConnectionComponents checks if all required components are initialized.
 func (n *Node) validateConnectionComponents(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender, id *identity.Identity) bool {
 	if pm == nil || trans == nil || id == nil || sender == nil {
-		n.logger.Warn("cannot connect to discovered peer: node not fully initialized")
+		log.Warn("cannot connect to discovered peer: node not fully initialized")
 		return false
 	}
 	return true
@@ -1294,7 +1281,7 @@ func (n *Node) validateConnectionComponents(pm *mesh.PeerManager, trans *transpo
 func (n *Node) isPeerAlreadyConnectedOrPending(pm *mesh.PeerManager, nodeID string) bool {
 	if peer, ok := pm.GetPeer(nodeID); ok {
 		if peer.State == mesh.PeerStateConnected || peer.State == mesh.PeerStatePending {
-			n.logger.Debug("peer already connected or pending",
+			log.Debug("peer already connected or pending",
 				"node_id", nodeID,
 				"state", peer.State)
 			return true
@@ -1305,12 +1292,12 @@ func (n *Node) isPeerAlreadyConnectedOrPending(pm *mesh.PeerManager, nodeID stri
 
 // initiateDiscoveredPeerHandshake performs the handshake sequence with a discovered peer.
 func (n *Node) initiateDiscoveredPeerHandshake(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender, id *identity.Identity, peerInfo mesh.PeerInfo) {
-	n.logger.Info("auto-connecting to discovered peer",
+	log.Info("auto-connecting to discovered peer",
 		"node_id", peerInfo.NodeID,
 		"i2p_dest", truncateDest(peerInfo.I2PDest))
 
 	if err := trans.AddPeer(peerInfo.I2PDest, peerInfo.NodeID); err != nil {
-		n.logger.Warn("failed to track discovered peer", "error", err)
+		log.Warn("failed to track discovered peer", "error", err)
 		return
 	}
 
@@ -1320,7 +1307,7 @@ func (n *Node) initiateDiscoveredPeerHandshake(pm *mesh.PeerManager, trans *tran
 	endpoint, err := trans.ParseEndpoint(peerInfo.I2PDest)
 	if err != nil {
 		trans.RemovePeer(peerInfo.I2PDest)
-		n.logger.Warn("failed to parse discovered peer endpoint", "error", err)
+		log.Warn("failed to parse discovered peer endpoint", "error", err)
 		return
 	}
 
@@ -1334,16 +1321,16 @@ func (n *Node) sendDiscoveredPeerHandshake(sender *transport.Sender, trans *tran
 	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
 	if err != nil {
 		trans.RemovePeer(peerInfo.I2PDest)
-		n.logger.Warn("failed to encode handshake for discovered peer", "error", err)
+		log.Warn("failed to encode handshake for discovered peer", "error", err)
 		return
 	}
 
 	if err := sender.SendToDest(peerInfo.I2PDest, handshakeData); err != nil {
-		n.logger.Warn("failed to send handshake to discovered peer",
+		log.Warn("failed to send handshake to discovered peer",
 			"error", err,
 			"node_id", peerInfo.NodeID)
 	} else {
-		n.logger.Info("handshake sent to discovered peer",
+		log.Info("handshake sent to discovered peer",
 			"node_id", peerInfo.NodeID)
 	}
 }
@@ -1382,7 +1369,7 @@ func (n *Node) validateReconnectComponents(pm *mesh.PeerManager, trans *transpor
 func (n *Node) isPeerAlreadyReconnected(pm *mesh.PeerManager, nodeID string) bool {
 	if peer, ok := pm.GetPeer(nodeID); ok {
 		if peer.State == mesh.PeerStateConnected {
-			n.logger.Debug("peer already reconnected", "node_id", nodeID)
+			log.Debug("peer already reconnected", "node_id", nodeID)
 			return true
 		}
 	}
@@ -1391,7 +1378,7 @@ func (n *Node) isPeerAlreadyReconnected(pm *mesh.PeerManager, nodeID string) boo
 
 // performReconnectHandshake executes the reconnection handshake sequence.
 func (n *Node) performReconnectHandshake(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender, nodeID, i2pDest string, authToken []byte) error {
-	n.logger.Info("attempting peer reconnection",
+	log.Info("attempting peer reconnection",
 		"node_id", nodeID,
 		"i2p_dest", truncateDest(i2pDest))
 
@@ -1424,7 +1411,7 @@ func (n *Node) sendReconnectHandshake(sender *transport.Sender, trans *transport
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	n.logger.Info("reconnection handshake sent", "node_id", nodeID)
+	log.Info("reconnection handshake sent", "node_id", nodeID)
 	return nil
 }
 
@@ -1473,15 +1460,15 @@ func (n *Node) ensureNetworkID(id *identity.Identity, pm *mesh.PeerManager) erro
 	if pm != nil {
 		discoveryToken := identity.DeriveDiscoveryToken(networkID)
 		pm.AddValidToken(discoveryToken)
-		n.logger.Debug("added network discovery token for new network")
+		log.Debug("added network discovery token for new network")
 	}
 
 	identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
 	if err := id.Save(identityPath); err != nil {
-		n.logger.Warn("failed to save identity with network ID", "error", err)
+		log.Warn("failed to save identity with network ID", "error", err)
 	}
 
-	n.logger.Info("created new mesh network", "network_id", networkID)
+	log.Info("created new mesh network", "network_id", networkID)
 	return nil
 }
 
@@ -1510,7 +1497,7 @@ func (n *Node) generateInvite(id *identity.Identity, expiry time.Duration, maxUs
 func (n *Node) storeAndRegisterInvite(invStore *identity.InviteStore, pm *mesh.PeerManager, invite *identity.Invite) string {
 	key := invStore.AddGenerated(invite)
 	if err := invStore.Save(); err != nil {
-		n.logger.Warn("failed to persist invite store", "error", err)
+		log.Warn("failed to persist invite store", "error", err)
 	}
 
 	if pm != nil {
@@ -1527,7 +1514,7 @@ func (n *Node) buildInviteResult(invite *identity.Invite, key string) (*rpc.Invi
 		return nil, fmt.Errorf("encoding invite: %w", err)
 	}
 
-	n.logger.Info("invite created",
+	log.Info("invite created",
 		"key", key[:16]+"...",
 		"expires_at", invite.ExpiresAt,
 		"max_uses", invite.MaxUses)
@@ -1558,19 +1545,19 @@ func (n *Node) handleTokenUsed(token []byte) {
 	// use the same single-use invite simultaneously.
 	remainingUses, found := invStore.UseGenerated(tokenKey)
 	if !found {
-		n.logger.Debug("token used but no matching invite found (may be discovery token)")
+		log.Debug("token used but no matching invite found (may be discovery token)")
 		return
 	}
 	if remainingUses < 0 {
-		n.logger.Debug("invite already exhausted or invalid")
+		log.Debug("invite already exhausted or invalid")
 		return
 	}
 
 	// Persist the change
 	if err := invStore.Save(); err != nil {
-		n.logger.Warn("failed to persist invite usage", "error", err)
+		log.Warn("failed to persist invite usage", "error", err)
 	} else {
-		n.logger.Info("invite usage recorded",
+		log.Info("invite usage recorded",
 			"token_prefix", tokenKey[:16]+"...",
 			"uses_remaining", remainingUses)
 	}
@@ -1578,7 +1565,7 @@ func (n *Node) handleTokenUsed(token []byte) {
 	// If the invite is now exhausted, remove the token from
 	// valid tokens to prevent further handshake attempts
 	if remainingUses <= 0 {
-		n.logger.Info("invite exhausted, removing token",
+		log.Info("invite exhausted, removing token",
 			"token_prefix", tokenKey[:16]+"...")
 		n.peers.RemoveToken(token)
 	}
@@ -1602,7 +1589,7 @@ func (n *Node) AcceptInvite(ctx context.Context, inviteCode string) (*rpc.Invite
 		return nil, err
 	}
 
-	n.logger.Info("invite accepted",
+	log.Info("invite accepted",
 		"network_id", invite.NetworkID,
 		"peer_dest", invite.I2PDest[:32]+"...")
 
@@ -1631,7 +1618,7 @@ func (n *Node) getIdentityAndStore() (*identity.Identity, *identity.InviteStore,
 func (n *Node) storeAndUpdateInvite(invite *identity.Invite, id *identity.Identity, invStore *identity.InviteStore) {
 	invStore.AddPending(invite)
 	if err := invStore.Save(); err != nil {
-		n.logger.Warn("failed to persist invite store", "error", err)
+		log.Warn("failed to persist invite store", "error", err)
 	}
 
 	id.SetNetworkID(invite.NetworkID)
@@ -1642,7 +1629,7 @@ func (n *Node) storeAndUpdateInvite(invite *identity.Invite, id *identity.Identi
 	if pm != nil {
 		discoveryToken := identity.DeriveDiscoveryToken(invite.NetworkID)
 		pm.AddValidToken(discoveryToken)
-		n.logger.Debug("added network discovery token for joined network")
+		log.Debug("added network discovery token for joined network")
 	}
 }
 
@@ -1655,7 +1642,7 @@ func (n *Node) initiateInviteConnection(ctx context.Context, inviteCode string, 
 
 	invStore.MarkAccepted(invite.NetworkID)
 	if err := invStore.Save(); err != nil {
-		n.logger.Warn("failed to persist invite store", "error", err)
+		log.Warn("failed to persist invite store", "error", err)
 	}
 	return nil
 }
@@ -1881,7 +1868,7 @@ func (n *Node) SetConfig(key string, value any) (any, error) {
 		return nil, err
 	}
 
-	n.logger.Info("configuration updated", "key", key, "old_value", oldValue, "new_value", value)
+	log.Info("configuration updated", "key", key, "old_value", oldValue, "new_value", value)
 	return oldValue, nil
 }
 

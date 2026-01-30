@@ -139,16 +139,16 @@ func (s *Server) Start() error {
 		s.running = false
 		s.mu.Unlock()
 		if closeErr := s.rpcClient.Close(); closeErr != nil {
-			s.logger.Error("failed to close RPC client after start failure", "error", closeErr)
+			log.Error("failed to close RPC client after start failure", "error", closeErr)
 		}
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	s.logger.Info("web server started", "addr", s.httpServer.Addr)
+	log.Info("web server started", "addr", s.httpServer.Addr)
 
 	go func() {
 		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
-			s.logger.Error("server error", "error", err)
+			log.Error("server error", "error", err)
 		}
 	}()
 
@@ -173,7 +173,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		return fmt.Errorf("close rpc: %w", err)
 	}
 
-	s.logger.Info("web server stopped")
+	log.Info("web server stopped")
 	return nil
 }
 
@@ -183,7 +183,7 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 
 		// Log request
-		s.logger.Debug("request",
+		log.Debug("request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"remote", r.RemoteAddr,
@@ -195,7 +195,7 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 
-		s.logger.Debug("response",
+		log.Debug("response",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"duration", time.Since(start),
@@ -233,7 +233,7 @@ func (s *Server) renderTemplate(w http.ResponseWriter, name string, data map[str
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, name+".html", data); err != nil {
-		s.logger.Error("template error", "template", name, "error", err)
+		log.Error("template error", "template", name, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
@@ -243,7 +243,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		s.logger.Error("json encode error", "error", err)
+		log.Error("json encode error", "error", err)
 	}
 }
 
