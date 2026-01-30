@@ -504,3 +504,50 @@ func TestInviteStore_UseGenerated_Concurrent(t *testing.T) {
 		t.Errorf("expected exactly 1 successful use, got %d", successCount)
 	}
 }
+
+// TestInviteStore_SaveReadOnlyDirectory tests error handling for unwritable directory
+func TestInviteStore_SaveReadOnlyDirectory(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("test requires non-root user")
+	}
+
+	tmpDir := t.TempDir()
+	readOnlyDir := filepath.Join(tmpDir, "readonly")
+	if err := os.Mkdir(readOnlyDir, 0400); err != nil {
+		t.Fatal(err)
+	}
+	storePath := filepath.Join(readOnlyDir, "store.json")
+
+	store := NewInviteStore(storePath)
+	id, _ := NewIdentity()
+	id.SetI2PDest("test.b32.i2p")
+	id.SetNetworkID("test-network")
+
+	inv, _ := NewInvite(id, DefaultInviteOptions())
+	store.AddGenerated(inv)
+
+	err := store.Save()
+	if err == nil {
+		t.Error("Save should fail when directory is read-only")
+	}
+}
+
+// TestInviteStore_GetPending_NotFound tests missing entry handling
+func TestInviteStore_GetPending_NotFound(t *testing.T) {
+	store := NewInviteStore("/tmp/test.json")
+
+	_, ok := store.GetPending("nonexistent-token")
+	if ok {
+		t.Error("GetPending should return false for nonexistent token")
+	}
+}
+
+// TestInviteStore_GetAccepted_NotFound tests missing entry handling
+func TestInviteStore_GetAccepted_NotFound(t *testing.T) {
+	store := NewInviteStore("/tmp/test.json")
+
+	_, ok := store.GetAccepted("nonexistent-token")
+	if ok {
+		t.Error("GetAccepted should return false for nonexistent token")
+	}
+}

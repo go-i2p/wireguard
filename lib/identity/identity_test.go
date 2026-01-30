@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -375,5 +377,212 @@ func TestDeriveDiscoveryToken(t *testing.T) {
 	}
 	if same {
 		t.Error("different network IDs should produce different tokens")
+	}
+}
+
+// TestLoadIdentity_InvalidSigningKeyHex tests error handling for malformed signing key
+func TestLoadIdentity_InvalidSigningKeyHex(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "identity.json")
+
+	// Write invalid signing key hex
+	data := []byte(`{
+		"private_key": "aP8w4KaM7xXVr1gIvK6XDqLkL6dC8X0B9SkNj6Kl6Pw=",
+		"public_key": "test",
+		"signing_key": "not-valid-hex",
+		"verifying_key": "0000000000000000000000000000000000000000000000000000000000000000",
+		"node_id": "test",
+		"created_at": "2024-01-01T00:00:00Z"
+	}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadIdentity(path)
+	if err == nil {
+		t.Error("should fail with invalid signing key hex")
+	}
+}
+
+// TestLoadIdentity_InvalidSigningKeySize tests error handling for wrong size signing key
+func TestLoadIdentity_InvalidSigningKeySize(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "identity.json")
+
+	// Write signing key with wrong size (too short)
+	data := []byte(`{
+		"private_key": "aP8w4KaM7xXVr1gIvK6XDqLkL6dC8X0B9SkNj6Kl6Pw=",
+		"public_key": "test",
+		"signing_key": "0000",
+		"verifying_key": "0000000000000000000000000000000000000000000000000000000000000000",
+		"node_id": "test",
+		"created_at": "2024-01-01T00:00:00Z"
+	}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadIdentity(path)
+	if err == nil {
+		t.Error("should fail with invalid signing key size")
+	}
+}
+
+// TestLoadIdentity_InvalidVerifyingKeyHex tests error handling for malformed verifying key
+func TestLoadIdentity_InvalidVerifyingKeyHex(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "identity.json")
+
+	id, _ := NewIdentity()
+	validSigningKey := hex.EncodeToString(id.signingKey)
+
+	// Write invalid verifying key hex
+	data := []byte(`{
+		"private_key": "aP8w4KaM7xXVr1gIvK6XDqLkL6dC8X0B9SkNj6Kl6Pw=",
+		"public_key": "test",
+		"signing_key": "` + validSigningKey + `",
+		"verifying_key": "not-valid-hex",
+		"node_id": "test",
+		"created_at": "2024-01-01T00:00:00Z"
+	}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadIdentity(path)
+	if err == nil {
+		t.Error("should fail with invalid verifying key hex")
+	}
+}
+
+// TestLoadIdentity_InvalidVerifyingKeySize tests error handling for wrong size verifying key
+func TestLoadIdentity_InvalidVerifyingKeySize(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "identity.json")
+
+	id, _ := NewIdentity()
+	validSigningKey := hex.EncodeToString(id.signingKey)
+
+	// Write verifying key with wrong size
+	data := []byte(`{
+		"private_key": "aP8w4KaM7xXVr1gIvK6XDqLkL6dC8X0B9SkNj6Kl6Pw=",
+		"public_key": "test",
+		"signing_key": "` + validSigningKey + `",
+		"verifying_key": "0000",
+		"node_id": "test",
+		"created_at": "2024-01-01T00:00:00Z"
+	}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadIdentity(path)
+	if err == nil {
+		t.Error("should fail with invalid verifying key size")
+	}
+}
+
+// TestLoadIdentity_KeyMismatch tests error handling for mismatched signing/verifying keys
+func TestLoadIdentity_KeyMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "identity.json")
+
+	id1, _ := NewIdentity()
+	id2, _ := NewIdentity()
+	signingKey := hex.EncodeToString(id1.signingKey)
+	verifyingKey := hex.EncodeToString(id2.signingKey.Public().(ed25519.PublicKey))
+
+	// Write mismatched keys
+	data := []byte(`{
+		"private_key": "aP8w4KaM7xXVr1gIvK6XDqLkL6dC8X0B9SkNj6Kl6Pw=",
+		"public_key": "test",
+		"signing_key": "` + signingKey + `",
+		"verifying_key": "` + verifyingKey + `",
+		"node_id": "test",
+		"created_at": "2024-01-01T00:00:00Z"
+	}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadIdentity(path)
+	if err == nil {
+		t.Error("should fail with mismatched signing/verifying keys")
+	}
+}
+
+// TestIdentity_SaveDirectoryCreation tests that Save creates parent directories
+func TestIdentity_SaveDirectoryCreation(t *testing.T) {
+	tmpDir := t.TempDir()
+	nestedPath := filepath.Join(tmpDir, "a", "b", "c", "identity.json")
+
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = id.Save(nestedPath)
+	if err != nil {
+		t.Errorf("Save should create parent directories: %v", err)
+	}
+
+	// Verify file was created
+	if _, err := os.Stat(nestedPath); os.IsNotExist(err) {
+		t.Error("file should have been created")
+	}
+}
+
+// TestIdentity_SaveReadOnlyDirectory tests error handling for unwritable directory
+func TestIdentity_SaveReadOnlyDirectory(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("test requires non-root user")
+	}
+
+	tmpDir := t.TempDir()
+	readOnlyDir := filepath.Join(tmpDir, "readonly")
+	if err := os.Mkdir(readOnlyDir, 0400); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(readOnlyDir, "identity.json")
+
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = id.Save(path)
+	if err == nil {
+		t.Error("Save should fail when directory is read-only")
+	}
+}
+
+// TestGenerateNetworkID_Randomness tests that network IDs are unique
+func TestGenerateNetworkID_Randomness(t *testing.T) {
+	ids := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		netID, err := GenerateNetworkID()
+		if err != nil {
+			t.Fatalf("GenerateNetworkID failed: %v", err)
+		}
+		if ids[netID] {
+			t.Errorf("generated duplicate network ID: %s", netID)
+		}
+		ids[netID] = true
+	}
+}
+
+// TestIdentity_VerifyWithPublicKey_InvalidSignature tests signature verification failure
+func TestIdentity_VerifyWithPublicKey_InvalidSignature(t *testing.T) {
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pubKeyBytes := id.signingKey.Public().(ed25519.PublicKey)
+	message := []byte("test message")
+	invalidSig := make([]byte, SignatureLength)
+
+	if VerifyWithPublicKey(pubKeyBytes, message, invalidSig) {
+		t.Error("should fail with invalid signature")
 	}
 }

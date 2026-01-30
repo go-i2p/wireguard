@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -379,5 +381,76 @@ func TestNewInvite_NegativeMaxUsesMeansUnlimited(t *testing.T) {
 	// Should be treated as unlimited
 	if inv.RemainingUses() != -1 {
 		t.Errorf("RemainingUses should be -1 (unlimited), got %d", inv.RemainingUses())
+	}
+}
+
+// TestInvite_Encode_EmptyI2PDest tests error handling for missing I2P destination
+func TestInvite_Encode_EmptyI2PDest(t *testing.T) {
+	inv := &Invite{
+		I2PDest:   "", // empty
+		NetworkID: "test-network",
+		AuthToken: make([]byte, AuthTokenLength),
+	}
+
+	_, err := inv.Encode()
+	if err == nil {
+		t.Error("Encode should fail when I2P dest is empty")
+	}
+}
+
+// TestParseInvite_MissingNetworkID tests error handling for missing network ID in payload
+func TestParseInvite_MissingNetworkID(t *testing.T) {
+	// Create an invite without network_id field
+	payload := map[string]interface{}{
+		"i2p_dest":   "test.b32.i2p",
+		"auth_token": "dGVzdHRva2VuZm9ydGVzdGluZ3B1cnBvc2Vz", // base64
+	}
+
+	// Encode manually
+	jsonData, _ := json.Marshal(payload)
+	encoded := base64.URLEncoding.EncodeToString(jsonData)
+	code := InviteScheme + encoded
+
+	_, err := ParseInvite(code)
+	if err == nil {
+		t.Error("ParseInvite should fail when network_id is missing")
+	}
+}
+
+// TestParseInvite_MissingAuthToken tests error handling for missing auth token in payload
+func TestParseInvite_MissingAuthToken(t *testing.T) {
+	// Create an invite without auth_token field
+	payload := map[string]interface{}{
+		"i2p_dest":   "test.b32.i2p",
+		"network_id": "test-network",
+	}
+
+	// Encode manually
+	jsonData, _ := json.Marshal(payload)
+	encoded := base64.URLEncoding.EncodeToString(jsonData)
+	code := InviteScheme + encoded
+
+	_, err := ParseInvite(code)
+	if err == nil {
+		t.Error("ParseInvite should fail when auth_token is missing")
+	}
+}
+
+// TestParseInvite_MissingI2PDest tests error handling for missing I2P dest in payload
+func TestParseInvite_MissingI2PDest(t *testing.T) {
+	// Create an invite without i2p_dest field
+	payload := map[string]interface{}{
+		"network_id": "test-network",
+		"auth_token": "dGVzdHRva2VuZm9ydGVzdGluZ3B1cnBvc2Vz", // base64
+	}
+
+	// Encode manually
+	jsonData, _ := json.Marshal(payload)
+	encoded := base64.URLEncoding.EncodeToString(jsonData)
+	code := InviteScheme + encoded
+
+	_, err := ParseInvite(code)
+	if err == nil {
+		t.Error("ParseInvite should fail when i2p_dest is missing")
 	}
 }
