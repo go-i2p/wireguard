@@ -211,7 +211,8 @@ func TestConnectionLimiter_Constants(t *testing.T) {
 		t.Errorf("DefaultMaxConnections = %d, want 100", DefaultMaxConnections)
 	}
 
-	if ErrTooManyConnections.Error() != "too many connections" {
+	// Error message is "rpc: too many connections" from lib/errors
+	if ErrTooManyConnections.Error() != "rpc: too many connections" {
 		t.Errorf("ErrTooManyConnections.Error() = %q", ErrTooManyConnections.Error())
 	}
 }
