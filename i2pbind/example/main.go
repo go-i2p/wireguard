@@ -27,17 +27,19 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-	"log"
 	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/go-i2p/logger"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
 	"github.com/go-i2p/wireguard/i2pbind"
 )
+
+var log = logger.GetGoI2PLogger()
 
 // cliConfig holds parsed command-line configuration.
 type cliConfig struct {
@@ -86,8 +88,8 @@ func parseFlags() *cliConfig {
 // validatePrivateKey exits if no private key is provided.
 func validatePrivateKey(privKey string) {
 	if privKey == "" {
-		log.Println("No private key provided. Generate one with: wg genkey")
-		log.Println("Then derive public key with: echo <privkey> | wg pubkey")
+		log.Warn("No private key provided. Generate one with: wg genkey")
+		log.Warn("Then derive public key with: echo <privkey> | wg pubkey")
 		os.Exit(1)
 	}
 }
@@ -110,7 +112,7 @@ func createTUN(cfg *cliConfig) *netstack.Net {
 		cfg.mtu,
 	)
 	if err != nil {
-		log.Fatalf("Failed to create TUN: %v", err)
+		log.WithError(err).Fatal("Failed to create TUN")
 	}
 	_ = tun
 	return tnet
@@ -126,7 +128,7 @@ func createDevice(tnet *netstack.Net, bind *i2pbind.I2PBind, logger *device.Logg
 		1280,
 	)
 	if err != nil {
-		log.Fatalf("Failed to create TUN: %v", err)
+		log.WithError(err).Fatal("Failed to create TUN")
 	}
 	return device.NewDevice(tun, bind, logger)
 }
@@ -135,7 +137,7 @@ func createDevice(tnet *netstack.Net, bind *i2pbind.I2PBind, logger *device.Logg
 func configureDevice(dev *device.Device, cfg *cliConfig) {
 	config := buildDeviceConfig(cfg)
 	if err := dev.IpcSet(config); err != nil {
-		log.Fatalf("Failed to configure device: %v", err)
+		log.WithError(err).Fatal("Failed to configure device")
 	}
 }
 
@@ -156,7 +158,7 @@ func buildDeviceConfig(cfg *cliConfig) string {
 // startDevice brings up the WireGuard device.
 func startDevice(dev *device.Device) {
 	if err := dev.Up(); err != nil {
-		log.Fatalf("Failed to bring up device: %v", err)
+		log.WithError(err).Fatal("Failed to bring up device")
 	}
 }
 
@@ -164,14 +166,14 @@ func startDevice(dev *device.Device) {
 func printI2PAddress(bind *i2pbind.I2PBind) {
 	localAddr, err := bind.LocalAddress()
 	if err != nil {
-		log.Printf("Warning: could not get local I2P address: %v", err)
+		log.WithError(err).Warn("Could not get local I2P address")
 		return
 	}
-	log.Printf("===========================================")
-	log.Printf("WireGuard over I2P is running!")
-	log.Printf("Our I2P address: %s", localAddr)
-	log.Printf("Share this address with peers to connect")
-	log.Printf("===========================================")
+	log.Info("===========================================")
+	log.Info("WireGuard over I2P is running!")
+	log.WithField("address", localAddr).Info("Our I2P address")
+	log.Info("Share this address with peers to connect")
+	log.Info("===========================================")
 }
 
 // waitForShutdown waits for shutdown signal and closes the device.
@@ -180,7 +182,7 @@ func waitForShutdown(dev *device.Device) {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("Shutting down...")
+	log.Info("Shutting down...")
 	dev.Close()
 }
 
@@ -188,7 +190,7 @@ func waitForShutdown(dev *device.Device) {
 func toHex(b64 string) string {
 	data, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
-		log.Fatalf("Invalid base64 key: %v", err)
+		log.WithError(err).Fatal("Invalid base64 key")
 	}
 	return fmt.Sprintf("%x", data)
 }

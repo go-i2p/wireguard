@@ -188,12 +188,18 @@ func (v *VPN) convertRPCPeerInfoToInfo(p rpc.PeerInfo) *PeerInfo {
 // The invite expires after the specified duration and can be used up to maxUses times.
 // Use maxUses=0 for unlimited uses (not recommended for security).
 func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
+	log.WithFields(map[string]interface{}{
+		"expiry":   expiry.String(),
+		"max_uses": maxUses,
+	}).Debug("Creating invite")
+
 	v.mu.RLock()
 	state := v.state
 	node := v.node
 	v.mu.RUnlock()
 
 	if state != StateRunning || node == nil {
+		log.Warn("CreateInvite called while VPN not running")
 		return "", errors.New("VPN is not running")
 	}
 
@@ -209,9 +215,11 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 	// Delegate to core.Node's CreateInvite
 	result, err := node.CreateInvite(expiry, maxUses)
 	if err != nil {
+		log.WithError(err).Error("Failed to create invite")
 		return "", err
 	}
 
+	log.Debug("Invite created successfully")
 	v.emitter.emitSimple(EventInviteCreated, "Created invite code")
 	return result.InviteCode, nil
 }
@@ -219,41 +227,51 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 // AcceptInvite connects to a network using an invite code.
 // This will establish a connection to the inviting peer and join their mesh network.
 func (v *VPN) AcceptInvite(ctx context.Context, inviteCode string) error {
+	log.Debug("Accepting invite code")
+
 	v.mu.RLock()
 	state := v.state
 	node := v.node
 	v.mu.RUnlock()
 
 	if state != StateRunning || node == nil {
+		log.Warn("AcceptInvite called while VPN not running")
 		return errors.New("VPN is not running")
 	}
 
 	if inviteCode == "" {
+		log.Warn("AcceptInvite called with empty invite code")
 		return errors.New("invite code is required")
 	}
 
 	// Delegate to core.Node's AcceptInvite
 	_, err := node.AcceptInvite(ctx, inviteCode)
 	if err != nil {
+		log.WithError(err).Error("Failed to accept invite")
 		return err
 	}
 
+	log.Debug("Invite accepted successfully, joined network")
 	v.emitter.emitSimple(EventInviteAccepted, "Successfully joined network")
 	return nil
 }
 
 // Routes returns a list of all known routes.
 func (v *VPN) Routes() []RouteInfo {
+	log.Debug("Retrieving routes")
+
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
 	if v.state != StateRunning || v.node == nil {
+		log.Debug("Routes called while VPN not running, returning nil")
 		return nil
 	}
 
 	// Delegate to core.Node's ListRoutes
 	rpcRoutes := v.node.ListRoutes()
 	if len(rpcRoutes) == 0 {
+		log.Debug("No routes found")
 		return nil
 	}
 
@@ -293,23 +311,29 @@ func (v *VPN) RouteCount() int {
 
 // ListInvites returns a list of active invites created by this node.
 func (v *VPN) ListInvites() []InviteInfo {
+	log.Debug("Listing invites")
+
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
 	if v.state != StateRunning || v.node == nil {
+		log.Debug("ListInvites called while VPN not running")
 		return nil
 	}
 
 	store := v.node.InviteStore()
 	if store == nil {
+		log.Debug("Invite store not available")
 		return nil
 	}
 
 	invites := store.ListGenerated()
 	if len(invites) == 0 {
+		log.Debug("No invites found")
 		return nil
 	}
 
+	log.WithField("count", len(invites)).Debug("Found invites")
 	return v.filterAndConvertInvites(invites)
 }
 
@@ -345,23 +369,30 @@ func (v *VPN) convertInviteToInfo(inv *identity.Invite) *InviteInfo {
 
 // RevokeInvite revokes an invite code so it can no longer be used.
 func (v *VPN) RevokeInvite(inviteCode string) error {
+	log.Debug("Revoking invite")
+
 	if err := v.validateVPNRunning(); err != nil {
+		log.Warn("RevokeInvite called while VPN not running")
 		return err
 	}
 
 	if inviteCode == "" {
+		log.Warn("RevokeInvite called with empty invite code")
 		return errors.New("invite code is required")
 	}
 
 	store := v.node.InviteStore()
 	if store == nil {
+		log.Error("Invite store not available")
 		return errors.New("invite store not available")
 	}
 
 	if err := v.removeInviteFromStore(store, inviteCode); err != nil {
+		log.WithError(err).Error("Failed to revoke invite")
 		return err
 	}
 
+	log.Debug("Invite revoked successfully")
 	v.emitter.emitSimple(EventInviteRevoked, "Invite revoked")
 	return nil
 }
@@ -402,42 +433,63 @@ func (v *VPN) removeInviteFromStore(store *identity.InviteStore, inviteCode stri
 
 // BanPeer adds a peer to the ban list.
 func (v *VPN) BanPeer(nodeID, reason string, duration time.Duration) error {
+	log.WithFields(map[string]interface{}{
+		"node_id":  nodeID,
+		"reason":   reason,
+		"duration": duration.String(),
+	}).Debug("Banning peer")
+
 	v.mu.RLock()
 	state := v.state
 	node := v.node
 	v.mu.RUnlock()
 
 	if state != StateRunning || node == nil {
+		log.Warn("BanPeer called while VPN not running")
 		return errors.New("VPN is not running")
 	}
 
 	if nodeID == "" {
+		log.Warn("BanPeer called with empty node ID")
 		return errors.New("node ID is required")
 	}
 
 	// Delegate to core.Node's AddBan
-	return node.AddBan(nodeID, reason, "", duration)
+	if err := node.AddBan(nodeID, reason, "", duration); err != nil {
+		log.WithError(err).WithField("node_id", nodeID).Error("Failed to ban peer")
+		return err
+	}
+
+	log.WithField("node_id", nodeID).Debug("Peer banned successfully")
+	return nil
 }
 
 // UnbanPeer removes a peer from the ban list.
 func (v *VPN) UnbanPeer(nodeID string) error {
+	log.WithField("node_id", nodeID).Debug("Unbanning peer")
+
 	v.mu.RLock()
 	state := v.state
 	node := v.node
 	v.mu.RUnlock()
 
 	if state != StateRunning || node == nil {
+		log.Warn("UnbanPeer called while VPN not running")
 		return errors.New("VPN is not running")
 	}
 
 	if nodeID == "" {
+		log.Warn("UnbanPeer called with empty node ID")
 		return errors.New("node ID is required")
 	}
 
 	// Delegate to core.Node's RemoveBan
 	if !node.RemoveBan(nodeID) {
+		log.WithField("node_id", nodeID).Warn("Peer not found in ban list")
 		return errors.New("peer not found in ban list")
 	}
+
+	log.WithField("node_id", nodeID).Debug("Peer unbanned successfully")
 	return nil
 }
 
