@@ -628,3 +628,123 @@ func TestIntegrationWithAuth(t *testing.T) {
 		}
 	})
 }
+
+// TestServer_ConnectionLimits tests ActiveConnections, MaxConnections, SetMaxConnections
+func TestServer_ConnectionLimits(t *testing.T) {
+	s, err := NewServer(ServerConfig{})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	// Default max connections
+	maxConn := s.MaxConnections()
+	if maxConn != DefaultMaxConnections {
+		t.Errorf("expected default max connections %d, got %d", DefaultMaxConnections, maxConn)
+	}
+
+	// Set max connections
+	s.SetMaxConnections(50)
+	if s.MaxConnections() != 50 {
+		t.Errorf("expected max connections 50, got %d", s.MaxConnections())
+	}
+
+	// Active connections should start at 0
+	active := s.ActiveConnections()
+	if active != 0 {
+		t.Errorf("expected 0 active connections, got %d", active)
+	}
+}
+
+// TestServer_GracefulShutdown tests StopWithContext drain behavior
+func TestServer_GracefulShutdown(t *testing.T) {
+	s, err := NewServer(ServerConfig{})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	// Register a slow handler
+	s.RegisterHandler("slow", func(ctx context.Context, params json.RawMessage) (any, *Error) {
+		time.Sleep(200 * time.Millisecond)
+		return "done", nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	if err := s.Start(ctx, ServerConfig{UnixSocketPath: socketPath}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Start a slow request in background
+	go func() {
+		c, _ := NewClient(ClientConfig{UnixSocketPath: socketPath})
+		defer c.Close()
+		var result string
+		c.Call(context.Background(), "slow", nil, &result)
+	}()
+
+	time.Sleep(50 * time.Millisecond) // Let request start
+
+	// Graceful stop with context
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer stopCancel()
+
+	if err := s.StopWithContext(stopCtx); err != nil {
+		t.Errorf("StopWithContext: %v", err)
+	}
+}
+
+// TestServer_StartError tests error handling in Start
+func TestServer_StartError(t *testing.T) {
+	s, err := NewServer(ServerConfig{})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	ctx := context.Background()
+
+	t.Run("invalid unix socket path", func(t *testing.T) {
+		// Try to create socket in non-existent directory
+		err := s.Start(ctx, ServerConfig{UnixSocketPath: "/nonexistent/path/test.sock"})
+		if err == nil {
+			t.Error("Start should fail with invalid socket path")
+			s.Stop()
+		}
+	})
+
+	t.Run("invalid TCP address", func(t *testing.T) {
+		err := s.Start(ctx, ServerConfig{TCPAddress: "invalid address"})
+		if err == nil {
+			t.Error("Start should fail with invalid TCP address")
+			s.Stop()
+		}
+	})
+}
+
+// TestServer_DoubleStart tests that Start fails if already running
+func TestServer_DoubleStart(t *testing.T) {
+	s, err := NewServer(ServerConfig{})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	if err := s.Start(ctx, ServerConfig{UnixSocketPath: socketPath}); err != nil {
+		t.Fatalf("First Start: %v", err)
+	}
+	defer s.Stop()
+
+	// Second start should fail
+	err = s.Start(ctx, ServerConfig{UnixSocketPath: socketPath})
+	if err == nil {
+		t.Error("Second Start should fail when already running")
+	}
+}

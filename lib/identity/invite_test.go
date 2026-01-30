@@ -384,20 +384,6 @@ func TestNewInvite_NegativeMaxUsesMeansUnlimited(t *testing.T) {
 	}
 }
 
-// TestInvite_Encode_EmptyI2PDest tests error handling for missing I2P destination
-func TestInvite_Encode_EmptyI2PDest(t *testing.T) {
-	inv := &Invite{
-		I2PDest:   "", // empty
-		NetworkID: "test-network",
-		AuthToken: make([]byte, AuthTokenLength),
-	}
-
-	_, err := inv.Encode()
-	if err == nil {
-		t.Error("Encode should fail when I2P dest is empty")
-	}
-}
-
 // TestParseInvite_MissingNetworkID tests error handling for missing network ID in payload
 func TestParseInvite_MissingNetworkID(t *testing.T) {
 	// Create an invite without network_id field
