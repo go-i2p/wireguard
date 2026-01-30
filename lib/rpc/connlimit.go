@@ -2,10 +2,11 @@
 package rpc
 
 import (
-	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
+
+	apperrors "github.com/go-i2p/wireguard/lib/errors"
 )
 
 // Connection limit constants
@@ -14,10 +15,10 @@ const (
 	DefaultMaxConnections = 100
 )
 
-// Connection limit errors
+// Connection limit errors - alias to centralized errors for backward compatibility.
 var (
 	// ErrTooManyConnections is returned when the connection limit is reached.
-	ErrTooManyConnections = errors.New("too many connections")
+	ErrTooManyConnections = apperrors.ErrRPCTooManyConnections
 )
 
 // ConnectionLimiter manages concurrent connection limits.

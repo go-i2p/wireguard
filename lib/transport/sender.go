@@ -3,8 +3,9 @@
 package transport
 
 import (
-	"errors"
 	"sync"
+
+	apperrors "github.com/go-i2p/wireguard/lib/errors"
 
 	"github.com/go-i2p/i2pkeys"
 	"github.com/go-i2p/wireguard/i2pbind"
@@ -66,7 +67,7 @@ func (s *Sender) SendTo(nodeID string, data []byte) error {
 
 	if !ok {
 		log.WithField("nodeID", nodeID).Warn("peer not registered for sending")
-		return errors.New("peer not registered for sending")
+		return apperrors.ErrPeerNotRegistered
 	}
 
 	return s.sendToDest(t, i2pDest, data)
@@ -86,21 +87,21 @@ func (s *Sender) SendToDest(i2pDest string, data []byte) error {
 func (s *Sender) sendToDest(t *Transport, i2pDest string, data []byte) error {
 	if t == nil || !t.IsOpen() {
 		log.Warn("cannot send: transport not open")
-		return errors.New("transport not open")
+		return apperrors.ErrTransportNotOpen
 	}
 
 	// Get the underlying bind
 	bind := t.Bind()
 	if bind == nil {
 		log.Warn("cannot send: transport bind not available")
-		return errors.New("transport bind not available")
+		return apperrors.ErrBindNotAvailable
 	}
 
 	// Cast to I2PBind to access Send
 	i2pBind, ok := bind.(*i2pbind.I2PBind)
 	if !ok {
 		log.Warn("cannot send: transport is not I2P bind")
-		return errors.New("transport is not I2P bind")
+		return apperrors.ErrBindNotI2P
 	}
 
 	// Parse the destination to an endpoint
@@ -168,7 +169,7 @@ func (s *Sender) LocalDestination() (i2pkeys.I2PAddr, error) {
 	s.mu.RUnlock()
 
 	if t == nil {
-		return "", errors.New("transport not available")
+		return "", apperrors.ErrTransportNotOpen
 	}
 	return t.LocalDestination()
 }

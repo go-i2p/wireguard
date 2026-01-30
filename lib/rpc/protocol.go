@@ -8,31 +8,34 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	apperrors "github.com/go-i2p/wireguard/lib/errors"
 )
 
 // Protocol version for compatibility checking.
 const ProtocolVersion = "1.0"
 
 // Standard error codes following JSON-RPC 2.0 conventions.
+// These are exported aliases to the centralized error codes in lib/errors.
 const (
 	// Parse error - invalid JSON
-	ErrCodeParse = -32700
+	ErrCodeParse = apperrors.CodeParseError
 	// Invalid request - not a valid Request object
-	ErrCodeInvalidRequest = -32600
+	ErrCodeInvalidRequest = apperrors.CodeInvalidRequest
 	// Method not found
-	ErrCodeMethodNotFound = -32601
+	ErrCodeMethodNotFound = apperrors.CodeMethodNotFound
 	// Invalid params
-	ErrCodeInvalidParams = -32602
+	ErrCodeInvalidParams = apperrors.CodeInvalidParams
 	// Internal error
-	ErrCodeInternal = -32603
+	ErrCodeInternal = apperrors.CodeInternal
 	// Authentication required
-	ErrCodeAuthRequired = -32001
+	ErrCodeAuthRequired = apperrors.CodeAuthRequired
 	// Permission denied
-	ErrCodePermissionDenied = -32002
+	ErrCodePermissionDenied = apperrors.CodePermissionDenied
 	// Not found (generic)
-	ErrCodeNotFound = -32003
+	ErrCodeNotFound = apperrors.CodeNotFound
 	// Rate limit exceeded
-	ErrCodeRateLimited = -32004
+	ErrCodeRateLimited = apperrors.CodeRateLimited
 )
 
 // Request represents a JSON-RPC request.

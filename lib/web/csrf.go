@@ -5,10 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"sync"
 	"time"
+
+	apperrors "github.com/go-i2p/wireguard/lib/errors"
 )
 
 // CSRF configuration constants
@@ -29,16 +30,16 @@ const (
 	CSRFTokenExpiry = 12 * time.Hour
 )
 
-// CSRF errors
+// CSRF errors - aliases to centralized errors for backward compatibility.
 var (
 	// ErrCSRFTokenMissing indicates no CSRF token was provided
-	ErrCSRFTokenMissing = errors.New("csrf: token missing")
+	ErrCSRFTokenMissing = apperrors.ErrCSRFTokenMissing
 
 	// ErrCSRFTokenInvalid indicates the token didn't match
-	ErrCSRFTokenInvalid = errors.New("csrf: token invalid")
+	ErrCSRFTokenInvalid = apperrors.ErrCSRFTokenInvalid
 
 	// ErrCSRFTokenExpired indicates the token has expired
-	ErrCSRFTokenExpired = errors.New("csrf: token expired")
+	ErrCSRFTokenExpired = apperrors.ErrCSRFTokenExpired
 )
 
 // CSRFToken represents a CSRF token with metadata.

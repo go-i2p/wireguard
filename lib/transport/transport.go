@@ -4,8 +4,9 @@
 package transport
 
 import (
-	"errors"
 	"sync"
+
+	apperrors "github.com/go-i2p/wireguard/lib/errors"
 
 	"github.com/go-i2p/i2pkeys"
 	"github.com/go-i2p/wireguard/i2pbind"
@@ -101,7 +102,7 @@ func (t *Transport) Open() error {
 
 	if t.isOpen {
 		log.Warn("transport already open")
-		return errors.New("transport already open")
+		return apperrors.ErrTransportAlreadyOpen
 	}
 
 	// Create the underlying I2P bind
@@ -194,7 +195,7 @@ func (t *Transport) LocalDestination() (i2pkeys.I2PAddr, error) {
 	defer t.mu.RUnlock()
 
 	if !t.isOpen || t.bind == nil {
-		return "", errors.New("transport not open")
+		return "", apperrors.ErrTransportNotOpen
 	}
 
 	return t.bind.LocalDestination()
@@ -215,7 +216,7 @@ func (t *Transport) AddPeer(i2pDest, wgPubKey string) error {
 
 	if !t.isOpen {
 		log.Warn("cannot add peer: transport not open")
-		return errors.New("transport not open")
+		return apperrors.ErrTransportNotOpen
 	}
 
 	t.peers[i2pDest] = &TrackedPeer{
@@ -306,7 +307,7 @@ func (t *Transport) ParseEndpoint(i2pDest string) (conn.Endpoint, error) {
 	t.mu.RUnlock()
 
 	if bind == nil {
-		return nil, errors.New("transport not open")
+		return nil, apperrors.ErrTransportNotOpen
 	}
 
 	return bind.ParseEndpoint(i2pDest)
