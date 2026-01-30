@@ -297,3 +297,82 @@ func TestInvite_CustomOptions(t *testing.T) {
 		t.Errorf("expiry time off by more than 1 second")
 	}
 }
+
+func TestNewInvite_UnlimitedUses(t *testing.T) {
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatalf("NewIdentity failed: %v", err)
+	}
+
+	id.SetI2PDest("test.b32.i2p")
+	id.SetNetworkID("test-network")
+
+	// MaxUses=0 should mean unlimited uses
+	opts := InviteOptions{
+		Expiry:  24 * time.Hour,
+		MaxUses: 0,
+	}
+
+	inv, err := NewInvite(id, opts)
+	if err != nil {
+		t.Fatalf("NewInvite failed: %v", err)
+	}
+
+	// MaxUses should remain 0 (unlimited)
+	if inv.MaxUses != 0 {
+		t.Errorf("MaxUses should be 0 (unlimited), got %d", inv.MaxUses)
+	}
+
+	// RemainingUses should return -1 for unlimited
+	if inv.RemainingUses() != -1 {
+		t.Errorf("RemainingUses should be -1 (unlimited), got %d", inv.RemainingUses())
+	}
+
+	// Should be able to use many times without exhaustion
+	for i := 0; i < 100; i++ {
+		if err := inv.Use(); err != nil {
+			t.Fatalf("Use() failed on iteration %d: %v", i, err)
+		}
+	}
+
+	// Still not exhausted
+	if err := inv.Validate(); err != nil {
+		t.Errorf("Validate should pass for unlimited invite, got: %v", err)
+	}
+
+	// UsedCount should track usage
+	if inv.UsedCount != 100 {
+		t.Errorf("UsedCount should be 100, got %d", inv.UsedCount)
+	}
+
+	// RemainingUses should still be -1 (unlimited)
+	if inv.RemainingUses() != -1 {
+		t.Errorf("RemainingUses should still be -1 (unlimited), got %d", inv.RemainingUses())
+	}
+}
+
+func TestNewInvite_NegativeMaxUsesDefaultsToOne(t *testing.T) {
+	id, err := NewIdentity()
+	if err != nil {
+		t.Fatalf("NewIdentity failed: %v", err)
+	}
+
+	id.SetI2PDest("test.b32.i2p")
+	id.SetNetworkID("test-network")
+
+	// Negative MaxUses should default to 1
+	opts := InviteOptions{
+		Expiry:  24 * time.Hour,
+		MaxUses: -5,
+	}
+
+	inv, err := NewInvite(id, opts)
+	if err != nil {
+		t.Fatalf("NewInvite failed: %v", err)
+	}
+
+	// Should default to 1, not stay negative
+	if inv.MaxUses != DefaultMaxUses {
+		t.Errorf("MaxUses should default to %d for negative input, got %d", DefaultMaxUses, inv.MaxUses)
+	}
+}

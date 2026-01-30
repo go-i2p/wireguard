@@ -172,6 +172,8 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 	if expiry <= 0 {
 		expiry = 24 * time.Hour
 	}
+	// Note: maxUses=0 means unlimited uses (passed through intentionally)
+	// Only convert negative values to the default of 1
 	if maxUses < 0 {
 		maxUses = 1
 	}

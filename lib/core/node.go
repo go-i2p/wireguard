@@ -1247,7 +1247,8 @@ func (n *Node) CreateInvite(expiry time.Duration, maxUses int) (*rpc.InviteCreat
 	if opts.Expiry <= 0 {
 		opts.Expiry = identity.DefaultInviteExpiry
 	}
-	if opts.MaxUses <= 0 {
+	// Note: MaxUses=0 means unlimited uses, only default negative values
+	if opts.MaxUses < 0 {
 		opts.MaxUses = identity.DefaultMaxUses
 	}
 

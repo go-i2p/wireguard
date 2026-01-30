@@ -101,7 +101,8 @@ func NewInvite(id *Identity, opts InviteOptions) (*Invite, error) {
 	if opts.Expiry <= 0 {
 		opts.Expiry = DefaultInviteExpiry
 	}
-	if opts.MaxUses <= 0 {
+	// Note: MaxUses=0 means unlimited uses, only default negative values
+	if opts.MaxUses < 0 {
 		opts.MaxUses = DefaultMaxUses
 	}
 
