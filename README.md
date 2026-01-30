@@ -272,6 +272,53 @@ go build -ldflags "-X github.com/go-i2p/wireguard/version.Version=1.0.0 \
     -X github.com/go-i2p/wireguard/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
+## Logging Configuration
+
+This library uses the [`github.com/go-i2p/logger`](https://github.com/go-i2p/logger) package for structured logging. Log output is controlled via environment variables:
+
+### Environment Variables
+
+| Variable | Values | Description |
+|----------|--------|-------------|
+| `DEBUG_I2P` | `debug`, `warn`, `error` | Sets the minimum log level. Default shows only errors. |
+| `WARNFAIL_I2P` | `true` | Fast-fail mode: any Warn or Error becomes Fatal, useful for testing. |
+
+### Log Levels
+
+- **Debug** - Detailed tracing information (function entry/exit, state changes, internal operations)
+- **Info** - Significant lifecycle events (startup, shutdown, connections)
+- **Warn** - Recoverable issues that may need attention
+- **Error** - Failures that prevent normal operation
+
+### Examples
+
+```bash
+# Show debug-level logging
+DEBUG_I2P=debug ./i2plan
+
+# Show warnings and above
+DEBUG_I2P=warn ./i2plan
+
+# Run tests with debug output
+DEBUG_I2P=debug go test ./...
+
+# Fast-fail on any warnings (for CI/testing)
+WARNFAIL_I2P=true go test ./...
+```
+
+### Structured Logging
+
+The logging uses structured fields for easy parsing:
+
+```go
+log.WithField("peer_id", peerID).Debug("Connecting to peer")
+log.WithFields(map[string]interface{}{
+    "node_id": nodeID,
+    "state":   state,
+}).Info("State transition")
+log.WithError(err).Error("Failed to connect")
+```
+
 ## License
 
 See [LICENSE](LICENSE) file.
