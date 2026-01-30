@@ -147,7 +147,21 @@ func (inv *Invite) Encode() (string, error) {
 // ParseInvite decodes an invite code string into an Invite.
 // Does NOT validate expiry or uses - call Validate() for that.
 func ParseInvite(code string) (*Invite, error) {
-	// Check scheme
+	data, err := decodeInviteCode(code)
+	if err != nil {
+		return nil, err
+	}
+
+	payload, err := unmarshalInvitePayload(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildInviteFromPayload(payload)
+}
+
+// decodeInviteCode extracts and decodes the base64 payload from an invite code.
+func decodeInviteCode(code string) ([]byte, error) {
 	if !strings.HasPrefix(code, InviteScheme) {
 		return nil, ErrInvalidInviteFormat
 	}
@@ -161,19 +175,28 @@ func ParseInvite(code string) (*Invite, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid base64", ErrInvalidInviteFormat)
 	}
+	return data, nil
+}
 
-	var payload struct {
-		I2PDest   string    `json:"d"`
-		AuthToken []byte    `json:"t"`
-		NetworkID string    `json:"n"`
-		ExpiresAt time.Time `json:"e"`
-	}
+// invitePayload is the wire format for invite codes.
+type invitePayload struct {
+	I2PDest   string    `json:"d"`
+	AuthToken []byte    `json:"t"`
+	NetworkID string    `json:"n"`
+	ExpiresAt time.Time `json:"e"`
+}
 
+// unmarshalInvitePayload parses JSON data into an invite payload.
+func unmarshalInvitePayload(data []byte) (*invitePayload, error) {
+	var payload invitePayload
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("%w: invalid JSON", ErrInvalidInviteFormat)
 	}
+	return &payload, nil
+}
 
-	// Validate required fields
+// buildInviteFromPayload validates and constructs an Invite from a payload.
+func buildInviteFromPayload(payload *invitePayload) (*Invite, error) {
 	if payload.I2PDest == "" {
 		return nil, fmt.Errorf("%w: missing I2P destination", ErrInvalidInviteFormat)
 	}
@@ -189,8 +212,6 @@ func ParseInvite(code string) (*Invite, error) {
 		AuthToken: payload.AuthToken,
 		NetworkID: payload.NetworkID,
 		ExpiresAt: payload.ExpiresAt,
-		// MaxUses and UsedCount are not in the encoded form
-		// They're tracked by the inviter
 		MaxUses:   1,
 		UsedCount: 0,
 	}, nil

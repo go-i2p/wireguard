@@ -169,48 +169,58 @@ func (m RoutesModel) RenderRouteDetail() string {
 	}
 
 	var b strings.Builder
-
-	// Title
 	b.WriteString(styles.Bold.Render("Route Details"))
 	b.WriteString("\n\n")
 
-	// Route type indicator
+	m.renderRouteType(&b, route)
+	m.renderCoreInfo(&b, route)
+	m.renderRelayInfo(&b, route)
+	m.renderKeyInfo(&b, route)
+	m.renderTimestamps(&b, route)
+
+	return b.String()
+}
+
+// renderRouteType renders the route type indicator.
+func (m RoutesModel) renderRouteType(b *strings.Builder, route *rpc.RouteInfo) {
 	routeType := "Direct"
-	if route.HopCount > 0 {
-		routeType = fmt.Sprintf("Relayed (%d hops)", route.HopCount)
-	}
 	typeStyle := styles.Success
 	if route.HopCount > 0 {
+		routeType = fmt.Sprintf("Relayed (%d hops)", route.HopCount)
 		typeStyle = styles.Warning
 	}
 	b.WriteString(fmt.Sprintf("  Type:        %s\n", typeStyle.Render(routeType)))
+}
 
-	// Core info
+// renderCoreInfo renders the core route information.
+func (m RoutesModel) renderCoreInfo(b *strings.Builder, route *rpc.RouteInfo) {
 	b.WriteString(fmt.Sprintf("  Tunnel IP:   %s\n", route.TunnelIP))
 	b.WriteString(fmt.Sprintf("  Node ID:     %s\n", route.NodeID))
+}
 
-	// Relay info
+// renderRelayInfo renders relay information if present.
+func (m RoutesModel) renderRelayInfo(b *strings.Builder, route *rpc.RouteInfo) {
 	if route.ViaNodeID != "" {
 		b.WriteString(fmt.Sprintf("  Via Node:    %s\n", route.ViaNodeID))
 	}
+}
 
-	// WireGuard key
+// renderKeyInfo renders WireGuard key and I2P destination.
+func (m RoutesModel) renderKeyInfo(b *strings.Builder, route *rpc.RouteInfo) {
 	if route.WGPublicKey != "" {
 		b.WriteString(fmt.Sprintf("  WG PubKey:   %s\n", truncate(route.WGPublicKey, 44)))
 	}
-
-	// I2P destination
 	if route.I2PDest != "" {
 		b.WriteString(fmt.Sprintf("  I2P Dest:    %s\n", route.I2PDest))
 	}
+}
 
-	// Timestamps
+// renderTimestamps renders route timestamp information.
+func (m RoutesModel) renderTimestamps(b *strings.Builder, route *rpc.RouteInfo) {
 	b.WriteString("\n")
 	b.WriteString(styles.Muted.Render("  Timestamps:\n"))
 	if route.CreatedAt != "" {
 		b.WriteString(fmt.Sprintf("    Created:   %s\n", route.CreatedAt))
 	}
 	b.WriteString(fmt.Sprintf("    Last Seen: %s\n", route.LastSeen))
-
-	return b.String()
 }

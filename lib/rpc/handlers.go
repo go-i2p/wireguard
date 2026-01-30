@@ -197,27 +197,9 @@ func (h *Handlers) InviteCreate(ctx context.Context, params json.RawMessage) (an
 		return nil, ErrInternal("invites not available")
 	}
 
-	var p InviteCreateParams
-	if params != nil {
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, ErrInvalidParams(err.Error())
-		}
-	}
-
-	// Parse expiry
-	expiry := 24 * time.Hour
-	if p.Expiry != "" {
-		d, err := time.ParseDuration(p.Expiry)
-		if err != nil {
-			return nil, ErrInvalidParams("invalid expiry duration: " + err.Error())
-		}
-		expiry = d
-	}
-
-	// Default max uses
-	maxUses := 1
-	if p.MaxUses > 0 {
-		maxUses = p.MaxUses
+	expiry, maxUses, rpcErr := h.parseInviteCreateParams(params)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
 
 	result, err := h.invite.CreateInvite(expiry, maxUses)
@@ -226,6 +208,32 @@ func (h *Handlers) InviteCreate(ctx context.Context, params json.RawMessage) (an
 	}
 
 	return result, nil
+}
+
+// parseInviteCreateParams extracts and validates invite creation parameters.
+func (h *Handlers) parseInviteCreateParams(params json.RawMessage) (time.Duration, int, *Error) {
+	var p InviteCreateParams
+	if params != nil {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return 0, 0, ErrInvalidParams(err.Error())
+		}
+	}
+
+	expiry := 24 * time.Hour
+	if p.Expiry != "" {
+		d, err := time.ParseDuration(p.Expiry)
+		if err != nil {
+			return 0, 0, ErrInvalidParams("invalid expiry duration: " + err.Error())
+		}
+		expiry = d
+	}
+
+	maxUses := 1
+	if p.MaxUses > 0 {
+		maxUses = p.MaxUses
+	}
+
+	return expiry, maxUses, nil
 }
 
 // InviteAccept accepts an invite code.

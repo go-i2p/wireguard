@@ -267,53 +267,58 @@ func AllocateTunnelIP(publicKey wgtypes.Key) netip.Addr {
 // AllocateTunnelIPWithSubnet derives a tunnel IP within the given subnet.
 func AllocateTunnelIPWithSubnet(publicKey wgtypes.Key, subnet netip.Prefix) netip.Addr {
 	hash := sha256.Sum256(publicKey[:])
-
-	// Get the base address
 	base := subnet.Addr().As4()
-
-	// Calculate how many bits are for the host
 	hostBits := 32 - subnet.Bits()
+
 	if hostBits <= 0 {
 		return subnet.Addr()
 	}
 
-	// Use hash bytes for host portion
-	// For a /16, we have 16 host bits = 2 bytes
+	result := applyHashToHostPortion(base, hash, hostBits)
+	result = sanitizeLastOctet(result)
+	result = applyNetworkMask(result, base, subnet)
+
+	return netip.AddrFrom4(result)
+}
+
+// applyHashToHostPortion applies hash bytes to the host portion of the address.
+func applyHashToHostPortion(base [4]byte, hash [32]byte, hostBits int) [4]byte {
+	result := base
 	hostBytes := (hostBits + 7) / 8
 
-	// Create the result address
-	result := base
-
-	// Apply hash to host portion
 	for i := 0; i < hostBytes && i < len(hash); i++ {
 		byteIdx := 4 - hostBytes + i
 		if byteIdx >= 0 && byteIdx < 4 {
 			result[byteIdx] = hash[i]
 		}
 	}
+	return result
+}
 
-	// Ensure we don't get .0 or .255 for the last octet (network/broadcast)
-	if result[3] == 0 {
-		result[3] = 1
-	} else if result[3] == 255 {
-		result[3] = 254
+// sanitizeLastOctet ensures the last octet is not 0 or 255 (network/broadcast).
+func sanitizeLastOctet(addr [4]byte) [4]byte {
+	if addr[3] == 0 {
+		addr[3] = 1
+	} else if addr[3] == 255 {
+		addr[3] = 254
 	}
+	return addr
+}
 
-	// Keep the network portion from the original subnet
+// applyNetworkMask preserves the network portion from the subnet.
+func applyNetworkMask(result, base [4]byte, subnet netip.Prefix) [4]byte {
 	maskBytes := subnet.Bits() / 8
 	for i := 0; i < maskBytes; i++ {
 		result[i] = base[i]
 	}
 
-	// Handle partial byte masking
 	if subnet.Bits()%8 != 0 {
 		maskBits := subnet.Bits() % 8
 		mask := byte(0xFF << (8 - maskBits))
 		idx := maskBytes
 		result[idx] = (base[idx] & mask) | (result[idx] & ^mask)
 	}
-
-	return netip.AddrFrom4(result)
+	return result
 }
 
 // ValidateTunnelIP checks if an IP is valid for the mesh subnet.

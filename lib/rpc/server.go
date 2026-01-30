@@ -179,14 +179,30 @@ func (s *Server) startTCPListener(ctx context.Context, address string) error {
 }
 
 func (s *Server) Start(ctx context.Context, cfg ServerConfig) error {
+	if err := s.validateAndSetRunning(); err != nil {
+		return err
+	}
+
+	if err := s.startListeners(ctx, cfg); err != nil {
+		return err
+	}
+
+	return s.validateListenersConfigured()
+}
+
+// validateAndSetRunning checks if the server is already running and sets the running flag.
+func (s *Server) validateAndSetRunning() error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.running {
-		s.mu.Unlock()
 		return errors.New("server already running")
 	}
 	s.running = true
-	s.mu.Unlock()
+	return nil
+}
 
+// startListeners starts Unix and TCP listeners based on configuration.
+func (s *Server) startListeners(ctx context.Context, cfg ServerConfig) error {
 	if cfg.UnixSocketPath != "" {
 		if err := s.startUnixListener(ctx, cfg.UnixSocketPath); err != nil {
 			return err
@@ -201,11 +217,14 @@ func (s *Server) Start(ctx context.Context, cfg ServerConfig) error {
 			return err
 		}
 	}
+	return nil
+}
 
+// validateListenersConfigured ensures at least one listener is configured.
+func (s *Server) validateListenersConfigured() error {
 	if s.unixListener == nil && s.tcpListener == nil {
 		return errors.New("no listeners configured")
 	}
-
 	return nil
 }
 
@@ -216,23 +235,36 @@ func (s *Server) acceptLoop(ctx context.Context, listener net.Listener, network 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				if !errors.Is(err, net.ErrClosed) {
-					s.logger.Error("accept error", "network", network, "error", err)
-				}
+			if s.handleAcceptError(ctx, network, err) {
 				return
 			}
+			continue
 		}
 
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.handleConnection(ctx, conn, network)
-		}()
+		s.spawnConnectionHandler(ctx, conn, network)
 	}
+}
+
+// handleAcceptError processes accept errors and returns true if the loop should exit.
+func (s *Server) handleAcceptError(ctx context.Context, network string, err error) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		if !errors.Is(err, net.ErrClosed) {
+			s.logger.Error("accept error", "network", network, "error", err)
+		}
+		return true
+	}
+}
+
+// spawnConnectionHandler starts a goroutine to handle a connection.
+func (s *Server) spawnConnectionHandler(ctx context.Context, conn net.Conn, network string) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.handleConnection(ctx, conn, network)
+	}()
 }
 
 // handleConnection handles a single client connection.

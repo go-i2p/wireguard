@@ -1145,43 +1145,61 @@ func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersCo
 // connectToDiscoveredPeer attempts to connect to a peer discovered via gossip.
 // Uses the network's discovery token for authentication.
 func (n *Node) connectToDiscoveredPeer(peerInfo mesh.PeerInfo) {
-	n.mu.RLock()
-	pm := n.peers
-	trans := n.trans
-	sender := n.sender
-	id := n.identity
-	n.mu.RUnlock()
-
-	if pm == nil || trans == nil || id == nil || sender == nil {
-		n.logger.Warn("cannot connect to discovered peer: node not fully initialized")
+	pm, trans, sender, id := n.getConnectionComponents()
+	if !n.validateConnectionComponents(pm, trans, sender, id) {
 		return
 	}
 
-	// Check if already connected or pending
-	if peer, ok := pm.GetPeer(peerInfo.NodeID); ok {
-		if peer.State == mesh.PeerStateConnected || peer.State == mesh.PeerStatePending {
-			n.logger.Debug("peer already connected or pending",
-				"node_id", peerInfo.NodeID,
-				"state", peer.State)
-			return
-		}
+	if n.isPeerAlreadyConnectedOrPending(pm, peerInfo.NodeID) {
+		return
 	}
 
+	n.initiateDiscoveredPeerHandshake(pm, trans, sender, id, peerInfo)
+}
+
+// getConnectionComponents retrieves the components needed for peer connection.
+func (n *Node) getConnectionComponents() (*mesh.PeerManager, *transport.Transport, *transport.Sender, *identity.Identity) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.peers, n.trans, n.sender, n.identity
+}
+
+// validateConnectionComponents checks if all required components are initialized.
+func (n *Node) validateConnectionComponents(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender, id *identity.Identity) bool {
+	if pm == nil || trans == nil || id == nil || sender == nil {
+		n.logger.Warn("cannot connect to discovered peer: node not fully initialized")
+		return false
+	}
+	return true
+}
+
+// isPeerAlreadyConnectedOrPending checks if a peer is already connected or pending connection.
+func (n *Node) isPeerAlreadyConnectedOrPending(pm *mesh.PeerManager, nodeID string) bool {
+	if peer, ok := pm.GetPeer(nodeID); ok {
+		if peer.State == mesh.PeerStateConnected || peer.State == mesh.PeerStatePending {
+			n.logger.Debug("peer already connected or pending",
+				"node_id", nodeID,
+				"state", peer.State)
+			return true
+		}
+	}
+	return false
+}
+
+// initiateDiscoveredPeerHandshake performs the handshake sequence with a discovered peer.
+func (n *Node) initiateDiscoveredPeerHandshake(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender, id *identity.Identity, peerInfo mesh.PeerInfo) {
 	n.logger.Info("auto-connecting to discovered peer",
 		"node_id", peerInfo.NodeID,
 		"i2p_dest", truncateDest(peerInfo.I2PDest))
 
-	// Add peer to transport tracking
 	if err := trans.AddPeer(peerInfo.I2PDest, peerInfo.NodeID); err != nil {
 		n.logger.Warn("failed to track discovered peer", "error", err)
 		return
 	}
 
-	// Use the network discovery token for authentication
 	discoveryToken := identity.DeriveDiscoveryToken(id.NetworkID())
 	handshakeInit := pm.CreateHandshakeInit(discoveryToken)
 
-	// Parse remote endpoint
 	endpoint, err := trans.ParseEndpoint(peerInfo.I2PDest)
 	if err != nil {
 		trans.RemovePeer(peerInfo.I2PDest)
@@ -1189,10 +1207,13 @@ func (n *Node) connectToDiscoveredPeer(peerInfo mesh.PeerInfo) {
 		return
 	}
 
-	// Update transport with endpoint
 	trans.SetPeerEndpoint(peerInfo.I2PDest, endpoint)
 
-	// Encode and send the handshake init message
+	n.sendDiscoveredPeerHandshake(sender, trans, peerInfo, handshakeInit)
+}
+
+// sendDiscoveredPeerHandshake encodes and sends a handshake to a discovered peer.
+func (n *Node) sendDiscoveredPeerHandshake(sender *transport.Sender, trans *transport.Transport, peerInfo mesh.PeerInfo, handshakeInit *mesh.HandshakeInit) {
 	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
 	if err != nil {
 		trans.RemovePeer(peerInfo.I2PDest)
@@ -1200,12 +1221,10 @@ func (n *Node) connectToDiscoveredPeer(peerInfo mesh.PeerInfo) {
 		return
 	}
 
-	// Send directly to the peer's I2P destination
 	if err := sender.SendToDest(peerInfo.I2PDest, handshakeData); err != nil {
 		n.logger.Warn("failed to send handshake to discovered peer",
 			"error", err,
 			"node_id", peerInfo.NodeID)
-		// Don't remove peer - retry may succeed later
 	} else {
 		n.logger.Info("handshake sent to discovered peer",
 			"node_id", peerInfo.NodeID)
@@ -1215,54 +1234,75 @@ func (n *Node) connectToDiscoveredPeer(peerInfo mesh.PeerInfo) {
 // attemptPeerReconnect attempts to reconnect to a previously connected peer.
 // This is called by the reconnect manager when a peer is due for retry.
 func (n *Node) attemptPeerReconnect(nodeID, i2pDest string, authToken []byte) error {
-	n.mu.RLock()
-	pm := n.peers
-	trans := n.trans
-	sender := n.sender
-	n.mu.RUnlock()
+	pm, trans, sender := n.getReconnectComponents()
+	if err := n.validateReconnectComponents(pm, trans, sender); err != nil {
+		return err
+	}
 
+	if n.isPeerAlreadyReconnected(pm, nodeID) {
+		return nil
+	}
+
+	return n.performReconnectHandshake(pm, trans, sender, nodeID, i2pDest, authToken)
+}
+
+// getReconnectComponents retrieves the components needed for peer reconnection.
+func (n *Node) getReconnectComponents() (*mesh.PeerManager, *transport.Transport, *transport.Sender) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.peers, n.trans, n.sender
+}
+
+// validateReconnectComponents checks if all required components are initialized for reconnection.
+func (n *Node) validateReconnectComponents(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender) error {
 	if pm == nil || trans == nil || sender == nil {
 		return fmt.Errorf("node not fully initialized")
 	}
+	return nil
+}
 
-	// Check if already connected
+// isPeerAlreadyReconnected checks if a peer is already connected.
+func (n *Node) isPeerAlreadyReconnected(pm *mesh.PeerManager, nodeID string) bool {
 	if peer, ok := pm.GetPeer(nodeID); ok {
 		if peer.State == mesh.PeerStateConnected {
 			n.logger.Debug("peer already reconnected", "node_id", nodeID)
-			return nil // Success - already connected
+			return true
 		}
 	}
+	return false
+}
 
+// performReconnectHandshake executes the reconnection handshake sequence.
+func (n *Node) performReconnectHandshake(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender, nodeID, i2pDest string, authToken []byte) error {
 	n.logger.Info("attempting peer reconnection",
 		"node_id", nodeID,
 		"i2p_dest", truncateDest(i2pDest))
 
-	// Add peer to transport tracking
 	if err := trans.AddPeer(i2pDest, nodeID); err != nil {
 		return fmt.Errorf("failed to track peer: %w", err)
 	}
 
-	// Create handshake init with the auth token
 	handshakeInit := pm.CreateHandshakeInit(authToken)
 
-	// Parse remote endpoint
 	endpoint, err := trans.ParseEndpoint(i2pDest)
 	if err != nil {
 		trans.RemovePeer(i2pDest)
 		return fmt.Errorf("failed to parse endpoint: %w", err)
 	}
 
-	// Update transport with endpoint
 	trans.SetPeerEndpoint(i2pDest, endpoint)
 
-	// Encode and send the handshake init message
+	return n.sendReconnectHandshake(sender, trans, nodeID, i2pDest, handshakeInit)
+}
+
+// sendReconnectHandshake encodes and sends a handshake for reconnection.
+func (n *Node) sendReconnectHandshake(sender *transport.Sender, trans *transport.Transport, nodeID, i2pDest string, handshakeInit *mesh.HandshakeInit) error {
 	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
 	if err != nil {
 		trans.RemovePeer(i2pDest)
 		return fmt.Errorf("failed to encode handshake: %w", err)
 	}
 
-	// Send directly to the peer's I2P destination
 	if err := sender.SendToDest(i2pDest, handshakeData); err != nil {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}

@@ -417,7 +417,16 @@ func (bl *BanList) load() error {
 		return err
 	}
 
-	for _, entry := range bld.Bans {
+	bl.loadBanEntries(bld.Bans)
+	bl.loadStrikes(bld.Strikes)
+
+	bl.logger.Info("loaded ban list", "bans", len(bl.bans))
+	return nil
+}
+
+// loadBanEntries populates the ban maps from loaded entries.
+func (bl *BanList) loadBanEntries(entries []*BanEntry) {
+	for _, entry := range entries {
 		if !entry.IsExpired() {
 			bl.bans[entry.NodeID] = entry
 			if entry.I2PDest != "" {
@@ -425,13 +434,13 @@ func (bl *BanList) load() error {
 			}
 		}
 	}
+}
 
-	if bld.Strikes != nil {
-		bl.strikes = bld.Strikes
+// loadStrikes restores the strike tracking map.
+func (bl *BanList) loadStrikes(strikes map[string]int) {
+	if strikes != nil {
+		bl.strikes = strikes
 	}
-
-	bl.logger.Info("loaded ban list", "bans", len(bl.bans))
-	return nil
 }
 
 // saveLocked saves the ban list to disk. Must be called with lock held.

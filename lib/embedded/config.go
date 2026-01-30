@@ -175,7 +175,12 @@ func DefaultConfig() Config {
 // applyDefaults fills in zero values with defaults.
 func (c *Config) applyDefaults() {
 	defaults := DefaultConfig()
+	c.applyStringDefaults(&defaults)
+	c.applyIntDefaults(&defaults)
+}
 
+// applyStringDefaults applies default values for string configuration fields.
+func (c *Config) applyStringDefaults(defaults *Config) {
 	if c.NodeName == "" {
 		c.NodeName = defaults.NodeName
 	}
@@ -188,17 +193,21 @@ func (c *Config) applyDefaults() {
 	if c.TunnelSubnet == "" {
 		c.TunnelSubnet = defaults.TunnelSubnet
 	}
-	if c.TunnelLength == 0 {
-		c.TunnelLength = defaults.TunnelLength
-	}
-	if c.MaxPeers == 0 {
-		c.MaxPeers = defaults.MaxPeers
-	}
 	if c.RPCSocket == "" {
 		c.RPCSocket = defaults.RPCSocket
 	}
 	if c.WebListenAddr == "" {
 		c.WebListenAddr = defaults.WebListenAddr
+	}
+}
+
+// applyIntDefaults applies default values for integer configuration fields.
+func (c *Config) applyIntDefaults(defaults *Config) {
+	if c.TunnelLength == 0 {
+		c.TunnelLength = defaults.TunnelLength
+	}
+	if c.MaxPeers == 0 {
+		c.MaxPeers = defaults.MaxPeers
 	}
 	if c.EventBufferSize == 0 {
 		c.EventBufferSize = defaults.EventBufferSize

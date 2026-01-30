@@ -127,17 +127,27 @@ func (kl *KeyedLimiter) cleanupLoop() {
 		case <-kl.stopCh:
 			return
 		case <-ticker.C:
-			kl.mu.Lock()
-			now := time.Now()
-			for key, limiter := range kl.limiters {
-				limiter.mu.Lock()
-				// Remove if idle and at full capacity
-				if now.Sub(limiter.lastTime) > kl.cleanup && limiter.tokens >= limiter.capacity {
-					delete(kl.limiters, key)
-				}
-				limiter.mu.Unlock()
-			}
-			kl.mu.Unlock()
+			kl.removeIdleLimiters()
 		}
 	}
+}
+
+// removeIdleLimiters removes limiters that have been idle and are at full capacity.
+func (kl *KeyedLimiter) removeIdleLimiters() {
+	kl.mu.Lock()
+	defer kl.mu.Unlock()
+
+	now := time.Now()
+	for key, limiter := range kl.limiters {
+		if kl.isLimiterIdle(limiter, now) {
+			delete(kl.limiters, key)
+		}
+	}
+}
+
+// isLimiterIdle checks if a limiter is idle and at full capacity.
+func (kl *KeyedLimiter) isLimiterIdle(limiter *Limiter, now time.Time) bool {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	return now.Sub(limiter.lastTime) > kl.cleanup && limiter.tokens >= limiter.capacity
 }
