@@ -14,9 +14,11 @@ package i2pbind
 
 import (
 	"errors"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-i2p/i2pkeys"
 	"github.com/go-i2p/onramp"
@@ -118,6 +120,9 @@ type I2PBind struct {
 
 	// State
 	closed bool
+
+	// Tracking for handler ordering warning
+	messagesReceived atomic.Bool
 }
 
 // NewI2PBind creates a new I2P Bind with default settings
@@ -149,10 +154,16 @@ func NewI2PBindWithOptions(name, samAddr string, options []string) *I2PBind {
 // SetMeshHandler sets the callback for handling mesh protocol messages.
 // When a non-WireGuard packet is received (e.g., gossip or handshake messages),
 // the handler will be called with the raw message data and sender address.
-// This must be called before Open() to ensure no messages are dropped.
+// This should be called before Open() to ensure no messages are dropped.
+// A warning is logged if called after messages have already been received.
 func (b *I2PBind) SetMeshHandler(handler MeshMessageHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.messagesReceived.Load() {
+		slog.Warn("i2pbind: SetMeshHandler called after messages received, earlier mesh messages may have been dropped")
+	}
+
 	b.meshHandler = handler
 }
 
@@ -242,6 +253,9 @@ func (b *I2PBind) makeReceiveFunc() conn.ReceiveFunc {
 			if err != nil {
 				return 0, err
 			}
+
+			// Mark that we've received messages (for handler ordering warning)
+			b.messagesReceived.Store(true)
 
 			i2pAddr, err := parseI2PAddress(addr)
 			if err != nil {

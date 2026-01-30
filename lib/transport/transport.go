@@ -125,8 +125,10 @@ func (t *Transport) Open() error {
 }
 
 // SetMeshHandler sets the callback for handling mesh protocol messages.
-// This must be called after Open() but before the transport starts receiving.
 // Non-WireGuard messages (gossip, handshake, etc.) will be routed to this handler.
+// For best results, call this before the transport starts receiving (i.e., before
+// the WireGuard device is created). If called after messages have been received,
+// a warning will be logged by the underlying bind.
 func (t *Transport) SetMeshHandler(handler i2pbind.MeshMessageHandler) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

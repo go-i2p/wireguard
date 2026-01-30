@@ -1540,8 +1540,8 @@ func (n *Node) buildInviteResult(invite *identity.Invite, key string) (*rpc.Invi
 }
 
 // handleTokenUsed is called when an auth token is successfully used to
-// authenticate a peer. It marks the corresponding invite as used and
-// persists the change, enforcing MaxUses limits.
+// authenticate a peer. It atomically marks the corresponding invite as used
+// and persists the change, enforcing MaxUses limits.
 func (n *Node) handleTokenUsed(token []byte) {
 	n.mu.RLock()
 	invStore := n.inviteStore
@@ -1551,22 +1551,20 @@ func (n *Node) handleTokenUsed(token []byte) {
 		return
 	}
 
-	// Find the invite with this token and mark it as used
 	tokenKey := fmt.Sprintf("%x", token)
-	inv, found := invStore.GetGenerated(tokenKey)
+
+	// Atomically mark the invite as used - this is safe for concurrent calls.
+	// UseGenerated handles the race condition where two peers might try to
+	// use the same single-use invite simultaneously.
+	remainingUses, found := invStore.UseGenerated(tokenKey)
 	if !found {
 		n.logger.Debug("token used but no matching invite found (may be discovery token)")
 		return
 	}
-
-	// Mark the invite as used
-	if err := inv.Use(); err != nil {
-		n.logger.Debug("invite already exhausted", "error", err)
+	if remainingUses < 0 {
+		n.logger.Debug("invite already exhausted or invalid")
 		return
 	}
-
-	// Update the invite in the store with the new usage count
-	invStore.UpdateGenerated(tokenKey, inv)
 
 	// Persist the change
 	if err := invStore.Save(); err != nil {
@@ -1574,15 +1572,15 @@ func (n *Node) handleTokenUsed(token []byte) {
 	} else {
 		n.logger.Info("invite usage recorded",
 			"token_prefix", tokenKey[:16]+"...",
-			"uses_remaining", inv.RemainingUses())
+			"uses_remaining", remainingUses)
 	}
 
 	// If the invite is now exhausted, remove the token from
 	// valid tokens to prevent further handshake attempts
-	if inv.RemainingUses() <= 0 {
+	if remainingUses <= 0 {
 		n.logger.Info("invite exhausted, removing token",
 			"token_prefix", tokenKey[:16]+"...")
-		n.peers.RemoveToken(inv.AuthToken)
+		n.peers.RemoveToken(token)
 	}
 }
 

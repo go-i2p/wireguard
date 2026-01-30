@@ -4,8 +4,10 @@ package mesh
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"log/slog"
-	"math/rand"
+	mrand "math/rand"
 	"net/netip"
 	"sync"
 	"time"
@@ -75,8 +77,9 @@ type GossipEngine struct {
 	// Callback for peer discovery
 	onPeerDiscovered func(info PeerInfo)
 
-	// Local random source to avoid global rand mutex contention
-	rng *rand.Rand
+	// Local random source seeded with crypto/rand to avoid both
+	// global rand mutex contention and predictable sequences.
+	rng *mrand.Rand
 
 	// State
 	running bool
@@ -109,9 +112,14 @@ func NewGossipEngine(cfg GossipEngineConfig) *GossipEngine {
 		logger = slog.Default()
 	}
 
-	// Create a local random source seeded with current time to avoid
-	// global rand mutex contention during peer selection
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// Create a local random source seeded with cryptographic randomness
+	// to avoid both global rand mutex contention and predictable sequences.
+	var seed int64
+	if err := binary.Read(rand.Reader, binary.LittleEndian, &seed); err != nil {
+		// Fallback to time-based seed if crypto/rand fails (extremely rare)
+		seed = time.Now().UnixNano()
+	}
+	rng := mrand.New(mrand.NewSource(seed))
 
 	return &GossipEngine{
 		config:       config,

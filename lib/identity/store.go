@@ -124,6 +124,36 @@ func (s *InviteStore) UpdateGenerated(key string, inv *Invite) {
 	}
 }
 
+// UseGenerated atomically marks a generated invite as used.
+// Returns the remaining uses after the operation, or -1 if the invite
+// was not found or already exhausted. This method is safe for concurrent
+// calls - only one caller will successfully use an invite with 1 remaining use.
+func (s *InviteStore) UseGenerated(key string) (remainingUses int, found bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	inv, ok := s.Generated[key]
+	if !ok {
+		return -1, false
+	}
+
+	// Check if invite is still valid
+	if err := inv.Validate(); err != nil {
+		return -1, true // Found but invalid (expired or exhausted)
+	}
+
+	// Atomically increment usage count
+	inv.UsedCount++
+	remaining := inv.RemainingUses()
+
+	// If exhausted, remove from generated (caller can still save)
+	if remaining <= 0 {
+		delete(s.Generated, key)
+	}
+
+	return remaining, true
+}
+
 // AddPending adds a pending invite (one we received).
 // Uses the network ID as the key.
 func (s *InviteStore) AddPending(inv *Invite) {
