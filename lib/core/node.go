@@ -1574,11 +1574,12 @@ func (n *Node) handleTokenUsed(token []byte) {
 			"uses_remaining", inv.RemainingUses())
 	}
 
-	// If the invite is now exhausted, optionally remove the token from
+	// If the invite is now exhausted, remove the token from
 	// valid tokens to prevent further handshake attempts
 	if inv.RemainingUses() <= 0 {
-		n.logger.Info("invite exhausted, all uses consumed",
+		n.logger.Info("invite exhausted, removing token",
 			"token_prefix", tokenKey[:16]+"...")
+		n.peers.RemoveToken(inv.AuthToken)
 	}
 }
 

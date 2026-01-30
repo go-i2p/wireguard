@@ -20,6 +20,10 @@ const (
 	// DefaultMaxUses is the default maximum uses for an invite.
 	DefaultMaxUses = 1
 
+	// UnlimitedUses can be used for MaxUses to create an unlimited-use invite.
+	// This must be explicitly set; zero values default to DefaultMaxUses.
+	UnlimitedUses = -1
+
 	// AuthTokenLength is the length of the auth token in bytes.
 	AuthTokenLength = 32
 )
@@ -101,8 +105,9 @@ func NewInvite(id *Identity, opts InviteOptions) (*Invite, error) {
 	if opts.Expiry <= 0 {
 		opts.Expiry = DefaultInviteExpiry
 	}
-	// Note: MaxUses=0 means unlimited uses, only default negative values
-	if opts.MaxUses < 0 {
+	// UnlimitedUses (-1) is the explicit way to request unlimited uses.
+	// Zero or unset MaxUses defaults to single-use for security.
+	if opts.MaxUses == 0 {
 		opts.MaxUses = DefaultMaxUses
 	}
 

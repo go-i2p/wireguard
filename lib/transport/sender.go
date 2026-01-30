@@ -107,7 +107,7 @@ func (s *Sender) sendToDest(t *Transport, i2pDest string, data []byte) error {
 	return i2pBind.Send([][]byte{data}, endpoint)
 }
 
-// Broadcast sends a message to all registered peers.
+// Broadcast sends a message to all registered peers in parallel.
 // Returns the first error encountered, but attempts to send to all peers.
 func (s *Sender) Broadcast(data []byte) error {
 	s.mu.RLock()
@@ -122,13 +122,28 @@ func (s *Sender) Broadcast(data []byte) error {
 		return nil // No peers to broadcast to
 	}
 
-	var firstErr error
+	// Send to all peers in parallel for better performance
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(destinations))
+
 	for _, dest := range destinations {
-		if err := s.sendToDest(t, dest, data); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		wg.Add(1)
+		go func(d string) {
+			defer wg.Done()
+			if err := s.sendToDest(t, d, data); err != nil {
+				errCh <- err
+			}
+		}(dest)
 	}
-	return firstErr
+
+	wg.Wait()
+	close(errCh)
+
+	// Return first error if any
+	for err := range errCh {
+		return err
+	}
+	return nil
 }
 
 // LocalDestination returns our I2P destination for peer exchange.

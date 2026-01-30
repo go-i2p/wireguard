@@ -145,9 +145,11 @@ func (kl *KeyedLimiter) removeIdleLimiters() {
 	}
 }
 
-// isLimiterIdle checks if a limiter is idle and at full capacity.
+// isLimiterIdle checks if a limiter has been idle longer than the cleanup duration.
+// We only check idle time, not token capacity, to ensure depleted limiters from
+// inactive keys are eventually cleaned up (preventing memory leaks).
 func (kl *KeyedLimiter) isLimiterIdle(limiter *Limiter, now time.Time) bool {
 	limiter.mu.Lock()
 	defer limiter.mu.Unlock()
-	return now.Sub(limiter.lastTime) > kl.cleanup && limiter.tokens >= limiter.capacity
+	return now.Sub(limiter.lastTime) > kl.cleanup
 }

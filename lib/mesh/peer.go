@@ -168,6 +168,26 @@ func (pm *PeerManager) AddValidToken(token []byte) {
 	pm.validTokens = append(pm.validTokens, token)
 }
 
+// RemoveToken removes a token from the valid tokens list.
+// This should be called when an invite is exhausted to prevent further
+// handshake attempts with that token.
+func (pm *PeerManager) RemoveToken(token []byte) {
+	if len(token) == 0 {
+		return
+	}
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	for i, t := range pm.validTokens {
+		if subtle.ConstantTimeCompare(t, token) == 1 {
+			// Remove by swapping with last element and truncating
+			pm.validTokens[i] = pm.validTokens[len(pm.validTokens)-1]
+			pm.validTokens = pm.validTokens[:len(pm.validTokens)-1]
+			return
+		}
+	}
+}
+
 // SetCallbacks sets the peer state change callbacks.
 func (pm *PeerManager) SetCallbacks(onConnected, onDisconnected func(*Peer)) {
 	pm.mu.Lock()

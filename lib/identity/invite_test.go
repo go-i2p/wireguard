@@ -307,10 +307,10 @@ func TestNewInvite_UnlimitedUses(t *testing.T) {
 	id.SetI2PDest("test.b32.i2p")
 	id.SetNetworkID("test-network")
 
-	// MaxUses=0 should mean unlimited uses
+	// UnlimitedUses (-1) should mean unlimited uses
 	opts := InviteOptions{
 		Expiry:  24 * time.Hour,
-		MaxUses: 0,
+		MaxUses: UnlimitedUses,
 	}
 
 	inv, err := NewInvite(id, opts)
@@ -318,9 +318,9 @@ func TestNewInvite_UnlimitedUses(t *testing.T) {
 		t.Fatalf("NewInvite failed: %v", err)
 	}
 
-	// MaxUses should remain 0 (unlimited)
-	if inv.MaxUses != 0 {
-		t.Errorf("MaxUses should be 0 (unlimited), got %d", inv.MaxUses)
+	// MaxUses should be -1 (UnlimitedUses)
+	if inv.MaxUses != UnlimitedUses {
+		t.Errorf("MaxUses should be %d (unlimited), got %d", UnlimitedUses, inv.MaxUses)
 	}
 
 	// RemainingUses should return -1 for unlimited

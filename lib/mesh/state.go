@@ -159,6 +159,12 @@ func (sm *StateManager) saveLocked() error {
 }
 
 // gatherStateLocked collects state from dependencies.
+// Note on lock ordering: This method calls PeerManager.ListPeers() and
+// RoutingTable.ListRoutes() while holding sm.mu. Those methods acquire their
+// own RLocks internally. This is safe because:
+// 1. We never hold dependency locks while acquiring sm.mu (no circular wait)
+// 2. Dependencies use RLock (multiple readers allowed)
+// 3. Load() only reads files, never acquires dependency locks
 func (sm *StateManager) gatherStateLocked() {
 	// Gather peers
 	if sm.peerManager != nil {
