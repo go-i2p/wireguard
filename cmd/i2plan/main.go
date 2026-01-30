@@ -53,15 +53,25 @@ func main() {
 	os.Exit(run())
 }
 
-func run() int {
-	// Determine default config path
+// cliFlags holds parsed command-line flags.
+type cliFlags struct {
+	configPath  string
+	nodeName    string
+	dataDir     string
+	samAddr     string
+	verbose     bool
+	showVersion bool
+	homeDir     string
+}
+
+// parseFlags parses command-line flags and returns the configuration.
+func parseFlags() *cliFlags {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		homeDir = "."
 	}
 	defaultConfigPath := filepath.Join(homeDir, ".i2plan", "config.toml")
 
-	// Parse command-line flags
 	configPath := flag.String("config", defaultConfigPath, "Path to configuration file")
 	nodeName := flag.String("name", "", "Node name (overrides config)")
 	dataDir := flag.String("data-dir", "", "Data directory (overrides config)")
@@ -82,65 +92,63 @@ func run() int {
 
 	flag.Parse()
 
-	// Handle version flag
-	if *showVersion {
-		fmt.Printf("i2plan version %s\n", Version)
-		return 0
+	return &cliFlags{
+		configPath:  *configPath,
+		nodeName:    *nodeName,
+		dataDir:     *dataDir,
+		samAddr:     *samAddr,
+		verbose:     *verbose,
+		showVersion: *showVersion,
+		homeDir:     homeDir,
 	}
+}
 
-	// Set up logging
+// createLogger creates a structured logger with the specified verbosity.
+func createLogger(verbose bool) *slog.Logger {
 	logLevel := slog.LevelInfo
-	if *verbose {
+	if verbose {
 		logLevel = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: logLevel,
 	}))
+}
 
-	// Check for RPC subcommand
+// handleSubcommand checks for and handles subcommands (rpc, tui, web).
+// Returns exit code and true if a subcommand was handled, or 0 and false otherwise.
+func handleSubcommand(flags *cliFlags, logger *slog.Logger) (int, bool) {
 	args := flag.Args()
-	if len(args) > 0 && args[0] == "rpc" {
-		// Determine data directory for RPC socket
-		rpcDataDir := *dataDir
-		if rpcDataDir == "" {
-			rpcDataDir = filepath.Join(homeDir, ".i2plan")
-		}
-		return handleRPC(args[1:], logger, rpcDataDir)
+	if len(args) == 0 {
+		return 0, false
 	}
 
-	// Check for TUI subcommand
-	if len(args) > 0 && args[0] == "tui" {
-		// Determine data directory for RPC socket
-		tuiDataDir := *dataDir
-		if tuiDataDir == "" {
-			tuiDataDir = filepath.Join(homeDir, ".i2plan")
-		}
-		return handleTUI(logger, tuiDataDir)
+	dataDir := flags.dataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(flags.homeDir, ".i2plan")
 	}
 
-	// Check for Web subcommand
-	if len(args) > 0 && args[0] == "web" {
-		// Determine data directory for RPC socket
-		webDataDir := *dataDir
-		if webDataDir == "" {
-			webDataDir = filepath.Join(homeDir, ".i2plan")
-		}
-		return handleWeb(logger, webDataDir)
+	switch args[0] {
+	case "rpc":
+		return handleRPC(args[1:], logger, dataDir), true
+	case "tui":
+		return handleTUI(logger, dataDir), true
+	case "web":
+		return handleWeb(logger, dataDir), true
+	default:
+		return 0, false
 	}
+}
 
-	// Build embedded VPN configuration
-	// Start with defaults, then apply config file, then CLI overrides
+// buildVPNConfig creates the VPN configuration from config file and CLI flags.
+func buildVPNConfig(flags *cliFlags, logger *slog.Logger) (*embedded.Config, error) {
 	vpnConfig := embedded.DefaultConfig()
 	vpnConfig.Logger = logger
 
-	// Load configuration file for additional settings
-	cfg, err := core.LoadConfig(*configPath)
+	cfg, err := core.LoadConfig(flags.configPath)
 	if err != nil {
-		logger.Error("failed to load config", "error", err)
-		return 1
+		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Apply config file values
 	vpnConfig.NodeName = cfg.Node.Name
 	vpnConfig.DataDir = cfg.Node.DataDir
 	vpnConfig.SAMAddress = cfg.I2P.SAMAddress
@@ -152,33 +160,34 @@ func run() int {
 	vpnConfig.EnableWeb = cfg.Web.Enabled
 	vpnConfig.WebListenAddr = cfg.Web.Listen
 
-	// Apply command-line overrides
-	if *nodeName != "" {
-		vpnConfig.NodeName = *nodeName
+	if flags.nodeName != "" {
+		vpnConfig.NodeName = flags.nodeName
 	}
-	if *dataDir != "" {
-		vpnConfig.DataDir = *dataDir
+	if flags.dataDir != "" {
+		vpnConfig.DataDir = flags.dataDir
 	}
-	if *samAddr != "" {
-		vpnConfig.SAMAddress = *samAddr
+	if flags.samAddr != "" {
+		vpnConfig.SAMAddress = flags.samAddr
 	}
 
-	// Create the embedded VPN
-	vpn, err := embedded.New(vpnConfig)
+	return &vpnConfig, nil
+}
+
+// runVPN starts the VPN and waits for shutdown signal.
+func runVPN(vpnConfig *embedded.Config, logger *slog.Logger) int {
+	vpn, err := embedded.New(*vpnConfig)
 	if err != nil {
 		logger.Error("failed to create VPN", "error", err)
 		return 1
 	}
 	defer vpn.Close()
 
-	// Create a context that is cancelled on SIGINT/SIGTERM
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start the VPN
 	if err := vpn.Start(ctx); err != nil {
 		logger.Error("failed to start VPN", "error", err)
 		return 1
@@ -186,7 +195,6 @@ func run() int {
 
 	logger.Info("i2plan started", "name", vpnConfig.NodeName, "version", Version)
 
-	// Wait for shutdown signal
 	select {
 	case sig := <-sigChan:
 		logger.Info("received signal, shutting down", "signal", sig)
@@ -194,10 +202,8 @@ func run() int {
 		logger.Info("VPN stopped unexpectedly")
 	}
 
-	// Graceful shutdown
 	cancel()
 
-	// Create a new context for shutdown with reasonable timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
@@ -208,6 +214,29 @@ func run() int {
 
 	logger.Info("i2plan stopped")
 	return 0
+}
+
+func run() int {
+	flags := parseFlags()
+
+	if flags.showVersion {
+		fmt.Printf("i2plan version %s\n", Version)
+		return 0
+	}
+
+	logger := createLogger(flags.verbose)
+
+	if exitCode, handled := handleSubcommand(flags, logger); handled {
+		return exitCode
+	}
+
+	vpnConfig, err := buildVPNConfig(flags, logger)
+	if err != nil {
+		logger.Error("configuration error", "error", err)
+		return 1
+	}
+
+	return runVPN(vpnConfig, logger)
 }
 
 // handleRPC handles the "rpc" subcommand.

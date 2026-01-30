@@ -121,44 +121,17 @@ func LoadIdentity(path string) (*Identity, error) {
 		return nil, fmt.Errorf("parsing identity file: %w", err)
 	}
 
-	// Parse WireGuard private key
-	privateKey, err := wgtypes.ParseKey(p.PrivateKey)
+	privateKey, err := parseWireGuardKey(p)
 	if err != nil {
-		return nil, fmt.Errorf("parsing WireGuard private key: %w", err)
+		return nil, err
 	}
 
-	// Verify public key matches
+	signingKey, verifyingKey, err := parseSigningKeys(p)
+	if err != nil {
+		return nil, err
+	}
+
 	derivedPublicKey := privateKey.PublicKey()
-	if p.PublicKey != derivedPublicKey.String() {
-		return nil, errors.New("WireGuard public key mismatch in identity file")
-	}
-
-	// Parse Ed25519 signing key
-	signingKeyBytes, err := hex.DecodeString(p.SigningKey)
-	if err != nil {
-		return nil, fmt.Errorf("parsing signing key: %w", err)
-	}
-	if len(signingKeyBytes) != ed25519.PrivateKeySize {
-		return nil, errors.New("invalid signing key size")
-	}
-	signingKey := ed25519.PrivateKey(signingKeyBytes)
-
-	// Parse Ed25519 verifying key
-	verifyingKeyBytes, err := hex.DecodeString(p.VerifyingKey)
-	if err != nil {
-		return nil, fmt.Errorf("parsing verifying key: %w", err)
-	}
-	if len(verifyingKeyBytes) != ed25519.PublicKeySize {
-		return nil, errors.New("invalid verifying key size")
-	}
-	verifyingKey := ed25519.PublicKey(verifyingKeyBytes)
-
-	// Verify Ed25519 keys match
-	if !verifyingKey.Equal(signingKey.Public()) {
-		return nil, errors.New("Ed25519 key mismatch in identity file")
-	}
-
-	// Verify node ID matches
 	derivedNodeID := deriveNodeID(derivedPublicKey)
 	if p.NodeID != derivedNodeID {
 		return nil, errors.New("node ID mismatch in identity file")
@@ -174,6 +147,48 @@ func LoadIdentity(path string) (*Identity, error) {
 		networkID:    p.NetworkID,
 		createdAt:    p.CreatedAt,
 	}, nil
+}
+
+// parseWireGuardKey parses and validates the WireGuard private key from persisted identity.
+func parseWireGuardKey(p persistedIdentity) (wgtypes.Key, error) {
+	privateKey, err := wgtypes.ParseKey(p.PrivateKey)
+	if err != nil {
+		return wgtypes.Key{}, fmt.Errorf("parsing WireGuard private key: %w", err)
+	}
+
+	derivedPublicKey := privateKey.PublicKey()
+	if p.PublicKey != derivedPublicKey.String() {
+		return wgtypes.Key{}, errors.New("WireGuard public key mismatch in identity file")
+	}
+
+	return privateKey, nil
+}
+
+// parseSigningKeys parses and validates the Ed25519 signing keys from persisted identity.
+func parseSigningKeys(p persistedIdentity) (ed25519.PrivateKey, ed25519.PublicKey, error) {
+	signingKeyBytes, err := hex.DecodeString(p.SigningKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing signing key: %w", err)
+	}
+	if len(signingKeyBytes) != ed25519.PrivateKeySize {
+		return nil, nil, errors.New("invalid signing key size")
+	}
+	signingKey := ed25519.PrivateKey(signingKeyBytes)
+
+	verifyingKeyBytes, err := hex.DecodeString(p.VerifyingKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing verifying key: %w", err)
+	}
+	if len(verifyingKeyBytes) != ed25519.PublicKeySize {
+		return nil, nil, errors.New("invalid verifying key size")
+	}
+	verifyingKey := ed25519.PublicKey(verifyingKeyBytes)
+
+	if !verifyingKey.Equal(signingKey.Public()) {
+		return nil, nil, errors.New("Ed25519 key mismatch in identity file")
+	}
+
+	return signingKey, verifyingKey, nil
 }
 
 // Save persists the identity to a JSON file.

@@ -218,54 +218,66 @@ func (hm *HealthMonitor) checkHealth() {
 	previousState := hm.state
 	hm.mu.Unlock()
 
-	// Try to connect to SAM
 	healthy := hm.probeSAM()
 
 	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
 	if healthy {
-		hm.consecutiveFails = 0
-		hm.lastHealthy = time.Now()
-
-		if hm.state != HealthStateHealthy {
-			hm.state = HealthStateHealthy
-			hm.logger.Info("I2P SAM connection healthy")
-
-			// Trigger callback if we recovered
-			if previousState == HealthStateUnhealthy || previousState == HealthStateReconnecting {
-				if hm.onHealthy != nil {
-					go hm.onHealthy()
-				}
-			}
-		}
+		hm.handleHealthyState(previousState)
 	} else {
-		hm.consecutiveFails++
+		hm.handleUnhealthyState()
+	}
+}
 
-		if hm.state == HealthStateHealthy {
-			hm.state = HealthStateUnhealthy
-			hm.logger.Warn("I2P SAM connection unhealthy",
-				"consecutive_fails", hm.consecutiveFails)
+// handleHealthyState processes a healthy SAM connection check result.
+func (hm *HealthMonitor) handleHealthyState(previousState HealthState) {
+	hm.consecutiveFails = 0
+	hm.lastHealthy = time.Now()
 
-			if hm.onUnhealthy != nil {
-				go hm.onUnhealthy()
-			}
-		}
+	if hm.state == HealthStateHealthy {
+		return
+	}
 
-		// Attempt reconnection after consecutive failures
-		if hm.consecutiveFails >= 2 && hm.onReconnect != nil {
-			hm.state = HealthStateReconnecting
-			reconnector := hm.onReconnect
-			hm.mu.Unlock()
+	hm.state = HealthStateHealthy
+	hm.logger.Info("I2P SAM connection healthy")
 
-			hm.logger.Info("attempting to reconnect to I2P",
-				"consecutive_fails", hm.consecutiveFails)
+	if (previousState == HealthStateUnhealthy || previousState == HealthStateReconnecting) && hm.onHealthy != nil {
+		go hm.onHealthy()
+	}
+}
 
-			if err := reconnector(); err != nil {
-				hm.logger.Error("reconnection failed", "error", err)
-			}
-			return
+// handleUnhealthyState processes an unhealthy SAM connection check result.
+func (hm *HealthMonitor) handleUnhealthyState() {
+	hm.consecutiveFails++
+
+	if hm.state == HealthStateHealthy {
+		hm.state = HealthStateUnhealthy
+		hm.logger.Warn("I2P SAM connection unhealthy", "consecutive_fails", hm.consecutiveFails)
+
+		if hm.onUnhealthy != nil {
+			go hm.onUnhealthy()
 		}
 	}
+
+	if hm.consecutiveFails >= 2 && hm.onReconnect != nil {
+		hm.state = HealthStateReconnecting
+		hm.attemptReconnection()
+	}
+}
+
+// attemptReconnection attempts to reconnect to the I2P SAM bridge.
+func (hm *HealthMonitor) attemptReconnection() {
+	reconnector := hm.onReconnect
 	hm.mu.Unlock()
+
+	hm.logger.Info("attempting to reconnect to I2P", "consecutive_fails", hm.consecutiveFails)
+
+	if err := reconnector(); err != nil {
+		hm.logger.Error("reconnection failed", "error", err)
+	}
+
+	hm.mu.Lock()
 }
 
 // probeSAM attempts to connect to the SAM bridge to verify it's running.

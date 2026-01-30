@@ -232,57 +232,71 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn, network st
 	s.logger.Debug("new connection", "network", network, "remote", remoteAddr)
 
 	reader := bufio.NewReaderSize(conn, 64*1024)
-	authenticated := s.authToken == nil // No auth required if no token configured
+	authenticated := s.authToken == nil
 
 	for {
-		select {
-		case <-ctx.Done():
+		if s.isContextCancelled(ctx) {
 			return
-		default:
 		}
 
-		// Set read timeout
-		conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-
-		// Read line (JSON-RPC over newline-delimited JSON)
-		line, err := reader.ReadBytes('\n')
+		req, err := s.readRequest(conn, reader, remoteAddr)
 		if err != nil {
-			if err != io.EOF && !errors.Is(err, net.ErrClosed) {
-				s.logger.Debug("read error", "remote", remoteAddr, "error", err)
-			}
 			return
 		}
-
-		// Parse request
-		var req Request
-		if err := json.Unmarshal(line, &req); err != nil {
-			s.sendResponse(conn, NewErrorResponse(nil, NewError(ErrCodeParse, "parse error", err.Error())))
+		if req == nil {
 			continue
 		}
 
-		// Validate request
-		if err := ValidateRequest(&req); err != nil {
-			s.sendResponse(conn, NewErrorResponse(req.ID, NewError(ErrCodeInvalidRequest, "invalid request", err.Error())))
-			continue
-		}
-
-		// Handle authentication
 		if req.Method == "auth" {
-			resp := s.handleAuth(&req, &authenticated)
+			resp := s.handleAuth(req, &authenticated)
 			s.sendResponse(conn, resp)
 			continue
 		}
 
-		// Check authentication (skip for TCP with auth token, always allow Unix sockets)
 		if !authenticated && network == "tcp" {
 			s.sendResponse(conn, NewErrorResponse(req.ID, ErrAuthRequired()))
 			continue
 		}
 
-		// Dispatch to handler
-		resp := s.dispatch(ctx, &req)
+		resp := s.dispatch(ctx, req)
 		s.sendResponse(conn, resp)
 	}
+}
+
+// isContextCancelled checks if the context has been cancelled.
+func (s *Server) isContextCancelled(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// readRequest reads and parses a JSON-RPC request from the connection.
+func (s *Server) readRequest(conn net.Conn, reader *bufio.Reader, remoteAddr string) (*Request, error) {
+	conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		if err != io.EOF && !errors.Is(err, net.ErrClosed) {
+			s.logger.Debug("read error", "remote", remoteAddr, "error", err)
+		}
+		return nil, err
+	}
+
+	var req Request
+	if err := json.Unmarshal(line, &req); err != nil {
+		s.sendResponse(conn, NewErrorResponse(nil, NewError(ErrCodeParse, "parse error", err.Error())))
+		return nil, nil
+	}
+
+	if err := ValidateRequest(&req); err != nil {
+		s.sendResponse(conn, NewErrorResponse(req.ID, NewError(ErrCodeInvalidRequest, "invalid request", err.Error())))
+		return nil, nil
+	}
+
+	return &req, nil
 }
 
 // handleAuth handles the "auth" method.

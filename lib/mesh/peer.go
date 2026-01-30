@@ -185,86 +185,43 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		"from_node", init.NodeID,
 		"i2p_dest", truncateDest(init.I2PDest))
 
-	// Check if peer is banned
-	if pm.banList != nil {
-		if pm.banList.IsBanned(init.NodeID) {
-			pm.logger.Warn("rejected handshake from banned peer",
-				"node_id", init.NodeID)
-			return pm.rejectHandshake("banned"), nil
-		}
-		if pm.banList.IsBannedByDest(init.I2PDest) {
-			pm.logger.Warn("rejected handshake from banned I2P dest",
-				"i2p_dest", truncateDest(init.I2PDest))
-			return pm.rejectHandshake("banned"), nil
-		}
+	if resp := pm.checkBanStatus(init); resp != nil {
+		return resp, nil
 	}
 
-	// Validate network ID
 	if init.NetworkID != pm.networkID {
 		return pm.rejectHandshake("network ID mismatch"), nil
 	}
 
-	// Validate auth token and track which token was used
 	matchedToken, validToken := pm.validateToken(init.AuthToken)
 	if !validToken {
-		// Record a strike for invalid tokens
 		if pm.banList != nil {
 			pm.banList.RecordStrike(init.NodeID, BanReasonHandshakeFailures, "invalid auth token")
 		}
 		return pm.rejectHandshake("invalid auth token"), nil
 	}
 
-	// Parse WireGuard public key
-	pubKey, err := wgtypes.ParseKey(init.WGPublicKey)
+	pubKey, claimedIP, err := pm.parseHandshakeCredentials(init)
 	if err != nil {
-		return pm.rejectHandshake("invalid WG public key"), nil
+		return pm.rejectHandshake(err.Error()), nil
 	}
 
-	// Validate tunnel IP
-	claimedIP, err := netip.ParseAddr(init.TunnelIP)
-	if err != nil {
-		return pm.rejectHandshake("invalid tunnel IP"), nil
+	if resp := pm.checkTunnelIPCollision(init, claimedIP); resp != nil {
+		return resp, nil
 	}
 
-	// Verify tunnel IP matches what we'd derive from the public key
-	expectedIP := AllocateTunnelIP(pubKey)
-	if claimedIP != expectedIP {
-		pm.logger.Warn("tunnel IP mismatch",
-			"claimed", claimedIP,
-			"expected", expectedIP)
-		return pm.rejectHandshake("tunnel IP does not match public key"), nil
-	}
-
-	// Check for IP collision in routing table
-	// This prevents two different nodes from claiming the same tunnel IP
-	if pm.routingTable != nil {
-		if existingRoute, ok := pm.routingTable.GetRoute(claimedIP); ok {
-			if existingRoute.NodeID != init.NodeID {
-				pm.logger.Warn("tunnel IP collision detected",
-					"claimed_ip", claimedIP,
-					"new_node", init.NodeID,
-					"existing_node", existingRoute.NodeID)
-				return pm.rejectHandshake("tunnel IP already in use by another node"), nil
-			}
-		}
-	}
-
-	// Check if we already know this peer
 	if existing, ok := pm.peers[init.NodeID]; ok {
 		if existing.State == PeerStateConnected {
-			// Already connected, update last seen
 			existing.LastSeen = time.Now()
 			pm.logger.Info("peer already connected", "node_id", init.NodeID)
 		}
 	}
 
-	// Check peer limit
 	if len(pm.peers) >= pm.maxPeers {
 		return pm.rejectHandshake("max peers reached"), nil
 	}
 
-	// Create or update peer with the token that authenticated them
-	peer := &Peer{
+	pm.peers[init.NodeID] = &Peer{
 		NodeID:      init.NodeID,
 		I2PDest:     init.I2PDest,
 		WGPublicKey: pubKey,
@@ -273,9 +230,7 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		LastSeen:    time.Now(),
 		AuthToken:   matchedToken,
 	}
-	pm.peers[init.NodeID] = peer
 
-	// Build response
 	return &HandshakeResponse{
 		I2PDest:     pm.i2pDest,
 		WGPublicKey: pm.wgPublicKey.String(),
@@ -284,6 +239,68 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		NodeID:      pm.nodeID,
 		Accepted:    true,
 	}, nil
+}
+
+// checkBanStatus verifies the peer is not banned by node ID or I2P destination.
+func (pm *PeerManager) checkBanStatus(init *HandshakeInit) *HandshakeResponse {
+	if pm.banList == nil {
+		return nil
+	}
+
+	if pm.banList.IsBanned(init.NodeID) {
+		pm.logger.Warn("rejected handshake from banned peer", "node_id", init.NodeID)
+		return pm.rejectHandshake("banned")
+	}
+
+	if pm.banList.IsBannedByDest(init.I2PDest) {
+		pm.logger.Warn("rejected handshake from banned I2P dest", "i2p_dest", truncateDest(init.I2PDest))
+		return pm.rejectHandshake("banned")
+	}
+
+	return nil
+}
+
+// parseHandshakeCredentials validates and parses WireGuard public key and tunnel IP.
+func (pm *PeerManager) parseHandshakeCredentials(init *HandshakeInit) (wgtypes.Key, netip.Addr, error) {
+	pubKey, err := wgtypes.ParseKey(init.WGPublicKey)
+	if err != nil {
+		return wgtypes.Key{}, netip.Addr{}, errors.New("invalid WG public key")
+	}
+
+	claimedIP, err := netip.ParseAddr(init.TunnelIP)
+	if err != nil {
+		return wgtypes.Key{}, netip.Addr{}, errors.New("invalid tunnel IP")
+	}
+
+	expectedIP := AllocateTunnelIP(pubKey)
+	if claimedIP != expectedIP {
+		pm.logger.Warn("tunnel IP mismatch", "claimed", claimedIP, "expected", expectedIP)
+		return wgtypes.Key{}, netip.Addr{}, errors.New("tunnel IP does not match public key")
+	}
+
+	return pubKey, claimedIP, nil
+}
+
+// checkTunnelIPCollision verifies the tunnel IP is not already in use by another node.
+func (pm *PeerManager) checkTunnelIPCollision(init *HandshakeInit, claimedIP netip.Addr) *HandshakeResponse {
+	if pm.routingTable == nil {
+		return nil
+	}
+
+	existingRoute, ok := pm.routingTable.GetRoute(claimedIP)
+	if !ok {
+		return nil
+	}
+
+	if existingRoute.NodeID != init.NodeID {
+		pm.logger.Warn("tunnel IP collision detected",
+			"claimed_ip", claimedIP,
+			"new_node", init.NodeID,
+			"existing_node", existingRoute.NodeID)
+		return pm.rejectHandshake("tunnel IP already in use by another node")
+	}
+
+	return nil
 }
 
 // HandleHandshakeResponse processes a handshake response.

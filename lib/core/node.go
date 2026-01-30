@@ -477,27 +477,56 @@ func (n *Node) initDevice() error {
 
 // initMesh initializes mesh networking components.
 func (n *Node) initMesh(ctx context.Context) error {
-	// Parse subnet for routing table
+	// Initialize routing table
+	if err := n.initRoutingTable(); err != nil {
+		return err
+	}
+
+	// Initialize ban list
+	n.initBanList()
+
+	// Initialize peer manager
+	n.initPeerManager()
+
+	// Initialize state and reconnect managers
+	n.initStateManagement()
+
+	// Configure peer callbacks for sender and WireGuard device
+	n.configurePeerCallbacks()
+
+	// Initialize gossip engine
+	if err := n.initGossipEngine(ctx); err != nil {
+		return err
+	}
+
+	// Start background services
+	if err := n.startMeshServices(ctx); err != nil {
+		return err
+	}
+
+	n.logger.Info("mesh networking initialized")
+	return nil
+}
+
+// initRoutingTable creates and initializes the routing table with persisted routes.
+func (n *Node) initRoutingTable() error {
 	subnet, err := netip.ParsePrefix(n.config.Mesh.TunnelSubnet)
 	if err != nil {
 		return fmt.Errorf("parsing tunnel subnet: %w", err)
 	}
 
-	// Create routing table
 	routesPath := filepath.Join(n.config.Node.DataDir, "routes.json")
 	n.routing = mesh.NewRoutingTable(mesh.RoutingTableConfig{
 		Subnet:   subnet,
 		FilePath: routesPath,
 	})
 
-	// Load persisted routes from disk (if any exist)
 	if err := n.routing.Load(); err != nil {
 		n.logger.Debug("no persisted routes to load", "error", err)
 	} else {
 		n.logger.Info("loaded persisted routes", "count", n.routing.RouteCount())
 	}
 
-	// Add our own route
 	_ = n.routing.AddRoute(&mesh.RouteEntry{
 		TunnelIP:    n.tunnelIP,
 		WGPublicKey: n.identity.PublicKey().String(),
@@ -508,14 +537,20 @@ func (n *Node) initMesh(ctx context.Context) error {
 		HopCount:    0,
 	})
 
-	// Create ban list
+	return nil
+}
+
+// initBanList creates and configures the ban list for peer management.
+func (n *Node) initBanList() {
 	banListPath := filepath.Join(n.config.Node.DataDir, "banlist.json")
 	n.banList = mesh.NewBanList(mesh.BanListConfig{
 		PersistPath: banListPath,
 		Logger:      n.logger.With("component", "banlist"),
 	})
+}
 
-	// Create peer manager
+// initPeerManager creates and configures the peer manager.
+func (n *Node) initPeerManager() {
 	n.peers = mesh.NewPeerManager(mesh.PeerManagerConfig{
 		NodeID:       n.identity.NodeID(),
 		I2PDest:      n.identity.I2PDest(),
@@ -527,8 +562,10 @@ func (n *Node) initMesh(ctx context.Context) error {
 		BanList:      n.banList,
 		RoutingTable: n.routing,
 	})
+}
 
-	// Create state manager for persistence across restarts
+// initStateManagement creates state manager and reconnect manager for persistence.
+func (n *Node) initStateManagement() {
 	statePath := filepath.Join(n.config.Node.DataDir, mesh.StateFileName)
 	n.stateManager = mesh.NewStateManager(mesh.StateManagerConfig{
 		Path:         statePath,
@@ -537,80 +574,76 @@ func (n *Node) initMesh(ctx context.Context) error {
 		RoutingTable: n.routing,
 	})
 
-	// Load persisted state (if any exists)
 	if err := n.stateManager.Load(); err != nil {
 		n.logger.Debug("no persisted state to load", "error", err)
 	} else {
 		n.logger.Info("loaded persisted state")
 	}
 
-	// Create reconnection manager for automatic peer reconnection
 	n.reconnectManager = mesh.NewReconnectManager(mesh.ReconnectConfig{
 		InitialDelay:   5 * time.Second,
 		MaxDelay:       5 * time.Minute,
 		Multiplier:     2.0,
-		MaxRetries:     0, // unlimited
+		MaxRetries:     0,
 		JitterFraction: 0.2,
 		CheckInterval:  10 * time.Second,
 		Logger:         n.logger.With("component", "reconnect"),
 	})
+}
 
-	// Wire up peer connection callbacks to register/unregister peers with the sender
-	// and to configure the WireGuard device with peer information.
-	// This is essential for both gossip messaging and actual VPN traffic routing.
+// configurePeerCallbacks sets up callbacks for peer connection and disconnection events.
+func (n *Node) configurePeerCallbacks() {
 	n.peers.SetCallbacks(
-		func(peer *mesh.Peer) {
-			// Peer connected - register with sender so gossip can reach them
-			n.sender.RegisterPeer(peer.NodeID, peer.I2PDest)
-			n.logger.Debug("registered peer with sender",
-				"node_id", peer.NodeID,
-				"i2p_dest", peer.I2PDest[:32]+"...")
-
-			// Configure WireGuard device with the peer's information
-			// This enables actual VPN traffic to flow between peers
-			allowedIP := netip.PrefixFrom(peer.TunnelIP, 32)
-			if err := n.device.AddPeer(peer.WGPublicKey, []netip.Prefix{allowedIP}, peer.I2PDest); err != nil {
-				n.logger.Error("failed to add WireGuard peer",
-					"node_id", peer.NodeID,
-					"error", err)
-			} else {
-				n.logger.Info("added WireGuard peer",
-					"node_id", peer.NodeID,
-					"tunnel_ip", peer.TunnelIP,
-					"wg_pubkey", peer.WGPublicKey.String()[:8]+"...")
-			}
-		},
-		func(peer *mesh.Peer) {
-			// Peer disconnected - unregister from sender
-			n.sender.UnregisterPeer(peer.NodeID)
-			n.logger.Debug("unregistered peer from sender", "node_id", peer.NodeID)
-
-			// Remove peer from WireGuard device
-			if err := n.device.RemovePeer(peer.WGPublicKey); err != nil {
-				n.logger.Error("failed to remove WireGuard peer",
-					"node_id", peer.NodeID,
-					"error", err)
-			} else {
-				n.logger.Debug("removed WireGuard peer", "node_id", peer.NodeID)
-			}
-
-			// Queue peer for automatic reconnection (with nil auth token for network discovery)
-			if n.reconnectManager != nil {
-				n.reconnectManager.Add(peer.NodeID, peer.I2PDest, nil)
-				n.logger.Debug("queued peer for reconnection", "node_id", peer.NodeID)
-			}
-		},
+		func(peer *mesh.Peer) { n.handlePeerConnected(peer) },
+		func(peer *mesh.Peer) { n.handlePeerDisconnected(peer) },
 	)
 
-	// Set up token usage tracking callback.
-	// When a peer successfully authenticates using an invite token, this callback
-	// marks the corresponding invite as used and persists the change.
-	// This enforces the MaxUses limit on invites.
 	n.peers.SetTokenUsedCallback(func(token []byte) {
 		n.handleTokenUsed(token)
 	})
+}
 
-	// Create gossip engine with defaults, then override from config
+// handlePeerConnected registers a peer with the sender and WireGuard device.
+func (n *Node) handlePeerConnected(peer *mesh.Peer) {
+	n.sender.RegisterPeer(peer.NodeID, peer.I2PDest)
+	n.logger.Debug("registered peer with sender",
+		"node_id", peer.NodeID,
+		"i2p_dest", peer.I2PDest[:32]+"...")
+
+	allowedIP := netip.PrefixFrom(peer.TunnelIP, 32)
+	if err := n.device.AddPeer(peer.WGPublicKey, []netip.Prefix{allowedIP}, peer.I2PDest); err != nil {
+		n.logger.Error("failed to add WireGuard peer",
+			"node_id", peer.NodeID,
+			"error", err)
+	} else {
+		n.logger.Info("added WireGuard peer",
+			"node_id", peer.NodeID,
+			"tunnel_ip", peer.TunnelIP,
+			"wg_pubkey", peer.WGPublicKey.String()[:8]+"...")
+	}
+}
+
+// handlePeerDisconnected unregisters a peer and queues reconnection.
+func (n *Node) handlePeerDisconnected(peer *mesh.Peer) {
+	n.sender.UnregisterPeer(peer.NodeID)
+	n.logger.Debug("unregistered peer from sender", "node_id", peer.NodeID)
+
+	if err := n.device.RemovePeer(peer.WGPublicKey); err != nil {
+		n.logger.Error("failed to remove WireGuard peer",
+			"node_id", peer.NodeID,
+			"error", err)
+	} else {
+		n.logger.Debug("removed WireGuard peer", "node_id", peer.NodeID)
+	}
+
+	if n.reconnectManager != nil {
+		n.reconnectManager.Add(peer.NodeID, peer.I2PDest, nil)
+		n.logger.Debug("queued peer for reconnection", "node_id", peer.NodeID)
+	}
+}
+
+// initGossipEngine creates and configures the gossip engine for mesh networking.
+func (n *Node) initGossipEngine(ctx context.Context) error {
 	gossipConfig := mesh.DefaultGossipConfig()
 	gossipConfig.HeartbeatInterval = n.config.Mesh.HeartbeatInterval
 	gossipConfig.PeerTimeout = n.config.Mesh.PeerTimeout
@@ -628,70 +661,85 @@ func (n *Node) initMesh(ctx context.Context) error {
 		NetworkID:    n.identity.NetworkID(),
 	})
 
-	// Wire up transport to route mesh protocol messages to gossip engine.
-	// The transport demultiplexes incoming I2P datagrams: WireGuard packets go to
-	// the WireGuard device, while mesh messages (JSON) are routed here.
 	n.trans.SetMeshHandler(func(data []byte, from i2pkeys.I2PAddr) {
-		var msg mesh.Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			n.logger.Debug("failed to parse mesh message", "error", err, "from", from.Base32()[:16]+"...")
-			return
-		}
-		if err := n.gossip.HandleMessage(&msg); err != nil {
-			n.logger.Debug("failed to handle mesh message",
-				"type", msg.Type,
-				"error", err,
-				"from", from.Base32()[:16]+"...")
-		}
+		n.handleMeshMessage(data, from)
 	})
 
-	// Set up discovery callback for auto-connecting to gossip-discovered peers
 	n.gossip.SetDiscoveryCallback(func(peerInfo mesh.PeerInfo) {
-		// Run connection attempt in background to avoid blocking gossip processing
 		go n.connectToDiscoveredPeer(peerInfo)
 	})
 
-	// Add network discovery token to valid tokens for accepting connections
-	// from peers discovered via gossip
 	if networkID := n.identity.NetworkID(); networkID != "" {
 		discoveryToken := identity.DeriveDiscoveryToken(networkID)
 		n.peers.AddValidToken(discoveryToken)
 		n.logger.Debug("added network discovery token for auto-connect")
 	}
 
-	// Start gossip engine
+	return nil
+}
+
+// handleMeshMessage parses and routes incoming mesh protocol messages.
+func (n *Node) handleMeshMessage(data []byte, from i2pkeys.I2PAddr) {
+	var msg mesh.Message
+	if err := json.Unmarshal(data, &msg); err != nil {
+		n.logger.Debug("failed to parse mesh message", "error", err, "from", from.Base32()[:16]+"...")
+		return
+	}
+	if err := n.gossip.HandleMessage(&msg); err != nil {
+		n.logger.Debug("failed to handle mesh message",
+			"type", msg.Type,
+			"error", err,
+			"from", from.Base32()[:16]+"...")
+	}
+}
+
+// startMeshServices starts all mesh-related background services.
+func (n *Node) startMeshServices(ctx context.Context) error {
 	if err := n.gossip.Start(ctx); err != nil {
 		return fmt.Errorf("starting gossip engine: %w", err)
 	}
 
-	// Start ban list cleanup loop
 	if err := n.banList.Start(ctx); err != nil {
 		return fmt.Errorf("starting ban list cleanup: %w", err)
 	}
 
-	// Set up reconnection handler and start reconnect manager
-	if n.reconnectManager != nil {
-		n.reconnectManager.SetReconnectHandler(func(nodeID, i2pDest string, authToken []byte) error {
-			// Use network discovery token if no auth token provided
-			if authToken == nil {
-				if networkID := n.identity.NetworkID(); networkID != "" {
-					authToken = identity.DeriveDiscoveryToken(networkID)
-				}
-			}
-			// Attempt to reconnect via handshake
-			return n.attemptPeerReconnect(nodeID, i2pDest, authToken)
-		})
-		if err := n.reconnectManager.Start(ctx); err != nil {
-			return fmt.Errorf("starting reconnect manager: %w", err)
-		}
+	n.configureReconnectManager(ctx)
+	n.startStateManager()
+	n.startInviteCleanup(ctx)
+	n.startHealthMonitor(ctx)
+
+	return nil
+}
+
+// configureReconnectManager sets up the reconnection handler and starts the manager.
+func (n *Node) configureReconnectManager(ctx context.Context) {
+	if n.reconnectManager == nil {
+		return
 	}
 
-	// Start state manager for periodic state saving
+	n.reconnectManager.SetReconnectHandler(func(nodeID, i2pDest string, authToken []byte) error {
+		if authToken == nil {
+			if networkID := n.identity.NetworkID(); networkID != "" {
+				authToken = identity.DeriveDiscoveryToken(networkID)
+			}
+		}
+		return n.attemptPeerReconnect(nodeID, i2pDest, authToken)
+	})
+
+	if err := n.reconnectManager.Start(ctx); err != nil {
+		n.logger.Warn("failed to start reconnect manager", "error", err)
+	}
+}
+
+// startStateManager starts the state manager for periodic state saving.
+func (n *Node) startStateManager() {
 	if n.stateManager != nil {
 		n.stateManager.Start()
 	}
+}
 
-	// Start invite store cleanup loop (clean expired invites hourly)
+// startInviteCleanup starts a background goroutine to clean expired invites.
+func (n *Node) startInviteCleanup(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
@@ -706,21 +754,23 @@ func (n *Node) initMesh(ctx context.Context) error {
 			}
 		}
 	}()
+}
 
-	// Start health monitor for SAM connection
-	if n.healthMonitor != nil {
-		n.healthMonitor.SetCallbacks(
-			func() { n.logger.Warn("I2P SAM connection unhealthy") },
-			func() { n.logger.Info("I2P SAM connection healthy") },
-			nil, // No automatic reconnect handler for now
-		)
-		if err := n.healthMonitor.Start(ctx); err != nil {
-			n.logger.Warn("failed to start health monitor", "error", err)
-		}
+// startHealthMonitor configures and starts the SAM connection health monitor.
+func (n *Node) startHealthMonitor(ctx context.Context) {
+	if n.healthMonitor == nil {
+		return
 	}
 
-	n.logger.Info("mesh networking initialized")
-	return nil
+	n.healthMonitor.SetCallbacks(
+		func() { n.logger.Warn("I2P SAM connection unhealthy") },
+		func() { n.logger.Info("I2P SAM connection healthy") },
+		nil,
+	)
+
+	if err := n.healthMonitor.Start(ctx); err != nil {
+		n.logger.Warn("failed to start health monitor", "error", err)
+	}
 }
 
 // initInterfaces starts RPC and Web interfaces if enabled.
@@ -789,7 +839,15 @@ func (n *Node) initInterfaces(ctx context.Context) error {
 
 // cleanup shuts down all components in reverse order.
 func (n *Node) cleanup() {
-	// Stop web server
+	n.cleanupInterfaces()
+	n.cleanupMeshServices()
+	n.cleanupPersistence()
+	n.cleanupDevice()
+	n.cleanupTransport()
+}
+
+// cleanupInterfaces stops web and RPC servers.
+func (n *Node) cleanupInterfaces() {
 	if n.webServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = n.webServer.Stop(ctx)
@@ -797,26 +855,32 @@ func (n *Node) cleanup() {
 		n.webServer = nil
 	}
 
-	// Stop RPC server
 	if n.rpcServer != nil {
 		_ = n.rpcServer.Stop()
 		n.rpcServer = nil
 	}
+}
 
-	// Stop gossip engine - notify peers before stopping
+// cleanupMeshServices stops gossip, reconnect, and ban list services.
+func (n *Node) cleanupMeshServices() {
 	if n.gossip != nil {
 		n.gossip.AnnounceLeave("node shutting down")
 		n.gossip.Stop()
 		n.gossip = nil
 	}
 
-	// Stop reconnect manager
 	if n.reconnectManager != nil {
 		n.reconnectManager.Stop()
 		n.reconnectManager = nil
 	}
 
-	// Save state and stop state manager
+	if n.banList != nil {
+		n.banList.Stop()
+	}
+}
+
+// cleanupPersistence saves state and routing table before shutdown.
+func (n *Node) cleanupPersistence() {
 	if n.stateManager != nil {
 		if err := n.stateManager.Save(); err != nil {
 			n.logger.Warn("failed to save state", "error", err)
@@ -827,7 +891,6 @@ func (n *Node) cleanup() {
 		n.stateManager = nil
 	}
 
-	// Save routing table before shutdown
 	if n.routing != nil {
 		if err := n.routing.Save(); err != nil {
 			n.logger.Warn("failed to save routing table", "error", err)
@@ -835,52 +898,51 @@ func (n *Node) cleanup() {
 			n.logger.Debug("saved routing table", "count", n.routing.RouteCount())
 		}
 	}
+}
 
-	// Stop ban list cleanup loop
-	if n.banList != nil {
-		n.banList.Stop()
-		// Note: banList is not set to nil as it may still be queried
+// cleanupDevice closes the WireGuard device with a two-phase timeout.
+func (n *Node) cleanupDevice() {
+	if n.device == nil {
+		return
 	}
 
-	// Close device (may block, use configurable timeout)
-	if n.device != nil {
-		shutdownTimeout := n.config.Mesh.ShutdownTimeout
-		if shutdownTimeout < time.Second {
-			shutdownTimeout = DefaultShutdownTimeout
-		}
-		// First phase timeout is 40% of total, second phase is 60%
-		warnTimeout := shutdownTimeout * 2 / 5
-		remainingTimeout := shutdownTimeout - warnTimeout
+	shutdownTimeout := n.config.Mesh.ShutdownTimeout
+	if shutdownTimeout < time.Second {
+		shutdownTimeout = DefaultShutdownTimeout
+	}
 
-		done := make(chan struct{})
-		go func() {
-			n.device.Close()
-			close(done)
-		}()
-		// Use two-phase timeout: warn early, then error if still blocked
+	warnTimeout := shutdownTimeout * 2 / 5
+	remainingTimeout := shutdownTimeout - warnTimeout
+
+	done := make(chan struct{})
+	go func() {
+		n.device.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		n.logger.Debug("device closed successfully")
+	case <-time.After(warnTimeout):
+		n.logger.Warn("device close taking longer than expected, continuing wait")
 		select {
 		case <-done:
-			n.logger.Debug("device closed successfully")
-		case <-time.After(warnTimeout):
-			n.logger.Warn("device close taking longer than expected, continuing wait")
-			select {
-			case <-done:
-				n.logger.Debug("device closed after extended wait")
-			case <-time.After(remainingTimeout):
-				n.logger.Error("device close timed out after configured timeout, continuing cleanup (resources may leak)",
-					"timeout", shutdownTimeout.String())
-			}
+			n.logger.Debug("device closed after extended wait")
+		case <-time.After(remainingTimeout):
+			n.logger.Error("device close timed out after configured timeout, continuing cleanup (resources may leak)",
+				"timeout", shutdownTimeout.String())
 		}
-		n.device = nil
 	}
+	n.device = nil
+}
 
-	// Close transport
+// cleanupTransport closes the I2P transport and health monitor.
+func (n *Node) cleanupTransport() {
 	if n.trans != nil {
 		_ = n.trans.Close()
 		n.trans = nil
 	}
 
-	// Stop health monitor
 	if n.healthMonitor != nil {
 		n.healthMonitor.Stop()
 		n.healthMonitor = nil

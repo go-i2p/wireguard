@@ -227,41 +227,8 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	checks := make(map[string]string)
 	overallStatus := "healthy"
 
-	// Check RPC connection
-	status, err := s.rpcClient.Status(ctx)
-	if err != nil {
-		checks["rpc"] = "unhealthy: " + err.Error()
-		overallStatus = "unhealthy"
-	} else {
-		checks["rpc"] = "healthy"
-		if status != nil {
-			checks["node"] = "healthy"
-			if status.NodeID != "" {
-				checks["identity"] = "configured"
-			}
-		}
-	}
-
-	// Check peer connectivity
-	peers, err := s.rpcClient.PeersList(ctx)
-	if err != nil {
-		checks["peers"] = "unknown"
-	} else if peers.Total == 0 {
-		checks["peers"] = "no_peers"
-	} else {
-		connectedCount := 0
-		for _, p := range peers.Peers {
-			if p.State == "Connected" {
-				connectedCount++
-			}
-		}
-		if connectedCount > 0 {
-			checks["peers"] = "connected"
-		} else {
-			checks["peers"] = "disconnected"
-			// Don't mark as unhealthy - having no connected peers is not a failure
-		}
-	}
+	s.checkRPCHealth(ctx, checks, &overallStatus)
+	s.checkPeerHealth(ctx, checks)
 
 	resp := HealthResponse{
 		Status:    overallStatus,
@@ -275,6 +242,51 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, httpStatus, resp)
+}
+
+// checkRPCHealth verifies the RPC connection and node status.
+func (s *Server) checkRPCHealth(ctx context.Context, checks map[string]string, overallStatus *string) {
+	status, err := s.rpcClient.Status(ctx)
+	if err != nil {
+		checks["rpc"] = "unhealthy: " + err.Error()
+		*overallStatus = "unhealthy"
+		return
+	}
+
+	checks["rpc"] = "healthy"
+	if status != nil {
+		checks["node"] = "healthy"
+		if status.NodeID != "" {
+			checks["identity"] = "configured"
+		}
+	}
+}
+
+// checkPeerHealth checks peer connectivity status.
+func (s *Server) checkPeerHealth(ctx context.Context, checks map[string]string) {
+	peers, err := s.rpcClient.PeersList(ctx)
+	if err != nil {
+		checks["peers"] = "unknown"
+		return
+	}
+
+	if peers.Total == 0 {
+		checks["peers"] = "no_peers"
+		return
+	}
+
+	connectedCount := 0
+	for _, p := range peers.Peers {
+		if p.State == "Connected" {
+			connectedCount++
+		}
+	}
+
+	if connectedCount > 0 {
+		checks["peers"] = "connected"
+	} else {
+		checks["peers"] = "disconnected"
+	}
 }
 
 // handleAPILiveness returns a simple liveness probe response.

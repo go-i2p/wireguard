@@ -41,22 +41,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		cfg.Timeout = 30 * time.Second
 	}
 
-	var conn net.Conn
-	var err error
-
-	// Try Unix socket first, then TCP
-	if cfg.UnixSocketPath != "" {
-		conn, err = net.DialTimeout("unix", cfg.UnixSocketPath, cfg.Timeout)
-		if err != nil {
-			return nil, fmt.Errorf("connect unix: %w", err)
-		}
-	} else if cfg.TCPAddress != "" {
-		conn, err = net.DialTimeout("tcp", cfg.TCPAddress, cfg.Timeout)
-		if err != nil {
-			return nil, fmt.Errorf("connect tcp: %w", err)
-		}
-	} else {
-		return nil, errors.New("no connection address specified")
+	conn, err := dialConnection(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	c := &Client{
@@ -65,29 +52,11 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		timeout: cfg.Timeout,
 	}
 
-	// Load auth token
-	if cfg.AuthToken != "" {
-		token, err := hex.DecodeString(cfg.AuthToken)
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("invalid auth token: %w", err)
-		}
-		c.authToken = token
-	} else if cfg.AuthFile != "" {
-		data, err := os.ReadFile(cfg.AuthFile)
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("reading auth file: %w", err)
-		}
-		token, err := hex.DecodeString(string(data))
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("invalid auth token in file: %w", err)
-		}
-		c.authToken = token
+	if err := c.loadAuthToken(cfg); err != nil {
+		conn.Close()
+		return nil, err
 	}
 
-	// Authenticate if we have a token
 	if c.authToken != nil {
 		if err := c.authenticate(); err != nil {
 			conn.Close()
@@ -96,6 +65,53 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 
 	return c, nil
+}
+
+// dialConnection establishes a connection using Unix socket or TCP.
+func dialConnection(cfg ClientConfig) (net.Conn, error) {
+	if cfg.UnixSocketPath != "" {
+		conn, err := net.DialTimeout("unix", cfg.UnixSocketPath, cfg.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("connect unix: %w", err)
+		}
+		return conn, nil
+	}
+
+	if cfg.TCPAddress != "" {
+		conn, err := net.DialTimeout("tcp", cfg.TCPAddress, cfg.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("connect tcp: %w", err)
+		}
+		return conn, nil
+	}
+
+	return nil, errors.New("no connection address specified")
+}
+
+// loadAuthToken loads the authentication token from config or file.
+func (c *Client) loadAuthToken(cfg ClientConfig) error {
+	if cfg.AuthToken != "" {
+		token, err := hex.DecodeString(cfg.AuthToken)
+		if err != nil {
+			return fmt.Errorf("invalid auth token: %w", err)
+		}
+		c.authToken = token
+		return nil
+	}
+
+	if cfg.AuthFile != "" {
+		data, err := os.ReadFile(cfg.AuthFile)
+		if err != nil {
+			return fmt.Errorf("reading auth file: %w", err)
+		}
+		token, err := hex.DecodeString(string(data))
+		if err != nil {
+			return fmt.Errorf("invalid auth token in file: %w", err)
+		}
+		c.authToken = token
+	}
+
+	return nil
 }
 
 // authenticate sends the auth token to the server.
@@ -116,8 +132,30 @@ func (c *Client) authenticate() error {
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {
 	c.requestID++
 
-	// Build request
-	req := Request{
+	req, err := c.buildRequest(method, params)
+	if err != nil {
+		return err
+	}
+
+	if err := c.sendRequest(req); err != nil {
+		return err
+	}
+
+	resp, err := c.readResponse()
+	if err != nil {
+		return err
+	}
+
+	if resp.Error != nil {
+		return resp.Error
+	}
+
+	return c.unmarshalResult(resp, result)
+}
+
+// buildRequest creates a JSON-RPC request.
+func (c *Client) buildRequest(method string, params any) (*Request, error) {
+	req := &Request{
 		JSONRPC: "2.0",
 		Method:  method,
 		ID:      json.RawMessage(fmt.Sprintf("%d", c.requestID)),
@@ -126,12 +164,16 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 	if params != nil {
 		data, err := json.Marshal(params)
 		if err != nil {
-			return fmt.Errorf("marshal params: %w", err)
+			return nil, fmt.Errorf("marshal params: %w", err)
 		}
 		req.Params = data
 	}
 
-	// Send request
+	return req, nil
+}
+
+// sendRequest sends a JSON-RPC request to the server.
+func (c *Client) sendRequest(req *Request) error {
 	reqData, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
@@ -143,33 +185,38 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 		return fmt.Errorf("write request: %w", err)
 	}
 
-	// Read response
+	return nil
+}
+
+// readResponse reads and parses a JSON-RPC response from the server.
+func (c *Client) readResponse() (*Response, error) {
 	c.conn.SetReadDeadline(time.Now().Add(c.timeout))
 	respData, err := c.reader.ReadBytes('\n')
 	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	// Parse response
 	var resp Response
 	if err := json.Unmarshal(respData, &resp); err != nil {
-		return fmt.Errorf("unmarshal response: %w", err)
+		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	// Check for error
-	if resp.Error != nil {
-		return resp.Error
+	return &resp, nil
+}
+
+// unmarshalResult unmarshals the response result into the provided destination.
+func (c *Client) unmarshalResult(resp *Response, result any) error {
+	if result == nil || resp.Result == nil {
+		return nil
 	}
 
-	// Unmarshal result if requested
-	if result != nil && resp.Result != nil {
-		resultData, err := json.Marshal(resp.Result)
-		if err != nil {
-			return fmt.Errorf("re-marshal result: %w", err)
-		}
-		if err := json.Unmarshal(resultData, result); err != nil {
-			return fmt.Errorf("unmarshal result: %w", err)
-		}
+	resultData, err := json.Marshal(resp.Result)
+	if err != nil {
+		return fmt.Errorf("re-marshal result: %w", err)
+	}
+
+	if err := json.Unmarshal(resultData, result); err != nil {
+		return fmt.Errorf("unmarshal result: %w", err)
 	}
 
 	return nil
