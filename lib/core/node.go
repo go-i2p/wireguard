@@ -775,65 +775,77 @@ func (n *Node) startHealthMonitor(ctx context.Context) {
 
 // initInterfaces starts RPC and Web interfaces if enabled.
 func (n *Node) initInterfaces(ctx context.Context) error {
-	// Start RPC server if enabled
 	if n.config.RPC.Enabled {
-		socketPath := filepath.Join(n.config.Node.DataDir, n.config.RPC.Socket)
-		authPath := filepath.Join(n.config.Node.DataDir, "rpc.auth")
-
-		var err error
-		n.rpcServer, err = rpc.NewServer(rpc.ServerConfig{
-			AuthFile: authPath,
-			Logger:   n.logger.With("component", "rpc"),
-		})
-		if err != nil {
-			return fmt.Errorf("creating RPC server: %w", err)
+		if err := n.initRPCServer(ctx); err != nil {
+			return err
 		}
-
-		// Register handlers
-		handlers := rpc.NewHandlers(rpc.HandlersConfig{
-			Node:   n,
-			Peers:  n,
-			Invite: n,
-			Routes: n,
-			Config: n,
-			Bans:   n,
-		})
-		handlers.RegisterAll(n.rpcServer)
-
-		// Start the server
-		if err := n.rpcServer.Start(ctx, rpc.ServerConfig{
-			UnixSocketPath: socketPath,
-			TCPAddress:     n.config.RPC.TCPAddress,
-		}); err != nil {
-			return fmt.Errorf("starting RPC server: %w", err)
-		}
-
-		n.logger.Info("RPC server started", "socket", socketPath)
 	}
 
-	// Start Web server if enabled
 	if n.config.Web.Enabled && n.config.RPC.Enabled {
-		socketPath := filepath.Join(n.config.Node.DataDir, n.config.RPC.Socket)
-		authPath := filepath.Join(n.config.Node.DataDir, "rpc.auth")
-
-		var err error
-		n.webServer, err = web.New(web.Config{
-			ListenAddr:    n.config.Web.Listen,
-			RPCSocketPath: socketPath,
-			RPCAuthFile:   authPath,
-			Logger:        n.logger.With("component", "web"),
-		})
-		if err != nil {
-			return fmt.Errorf("creating web server: %w", err)
+		if err := n.initWebServer(); err != nil {
+			return err
 		}
-
-		if err := n.webServer.Start(); err != nil {
-			return fmt.Errorf("starting web server: %w", err)
-		}
-
-		n.logger.Info("web server started", "listen", n.config.Web.Listen)
 	}
 
+	return nil
+}
+
+// initRPCServer creates and starts the RPC server.
+func (n *Node) initRPCServer(ctx context.Context) error {
+	socketPath := filepath.Join(n.config.Node.DataDir, n.config.RPC.Socket)
+	authPath := filepath.Join(n.config.Node.DataDir, "rpc.auth")
+
+	var err error
+	n.rpcServer, err = rpc.NewServer(rpc.ServerConfig{
+		AuthFile: authPath,
+		Logger:   n.logger.With("component", "rpc"),
+	})
+	if err != nil {
+		return fmt.Errorf("creating RPC server: %w", err)
+	}
+
+	handlers := rpc.NewHandlers(rpc.HandlersConfig{
+		Node:   n,
+		Peers:  n,
+		Invite: n,
+		Routes: n,
+		Config: n,
+		Bans:   n,
+	})
+	handlers.RegisterAll(n.rpcServer)
+
+	if err := n.rpcServer.Start(ctx, rpc.ServerConfig{
+		UnixSocketPath: socketPath,
+		TCPAddress:     n.config.RPC.TCPAddress,
+	}); err != nil {
+		return fmt.Errorf("starting RPC server: %w", err)
+	}
+
+	n.logger.Info("RPC server started", "socket", socketPath)
+	return nil
+}
+
+// initWebServer creates and starts the Web server.
+func (n *Node) initWebServer() error {
+	socketPath := filepath.Join(n.config.Node.DataDir, n.config.RPC.Socket)
+	authPath := filepath.Join(n.config.Node.DataDir, "rpc.auth")
+
+	var err error
+	n.webServer, err = web.New(web.Config{
+		ListenAddr:    n.config.Web.Listen,
+		RPCSocketPath: socketPath,
+		RPCAuthFile:   authPath,
+		Logger:        n.logger.With("component", "web"),
+	})
+	if err != nil {
+		return fmt.Errorf("creating web server: %w", err)
+	}
+
+	if err := n.webServer.Start(); err != nil {
+		return fmt.Errorf("starting web server: %w", err)
+	}
+
+	n.logger.Info("web server started", "listen", n.config.Web.Listen)
 	return nil
 }
 
@@ -1068,24 +1080,45 @@ func (n *Node) ListPeers() []rpc.PeerInfo {
 
 // ConnectPeer connects to a peer using an invite code.
 func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersConnectResult, error) {
-	n.mu.RLock()
-	pm := n.peers
-	trans := n.trans
-	sender := n.sender
-	id := n.identity
-	n.mu.RUnlock()
-
-	if pm == nil || trans == nil || id == nil || sender == nil {
-		return nil, errors.New("node not fully initialized")
+	pm, trans, sender, id := n.getConnectionComponents()
+	if err := n.validateConnectPeerComponents(pm, trans, sender, id); err != nil {
+		return nil, err
 	}
 
-	// Parse the invite code
+	invite, err := n.parseAndValidateInvite(inviteCode)
+	if err != nil {
+		return nil, err
+	}
+
+	handshakeInit, err := n.setupPeerConnection(pm, trans, invite)
+	if err != nil {
+		return nil, err
+	}
+
+	n.sendConnectPeerHandshake(sender, trans, invite, handshakeInit)
+
+	return &rpc.PeersConnectResult{
+		NodeID:   "pending",
+		TunnelIP: handshakeInit.TunnelIP,
+		Message:  fmt.Sprintf("Handshake sent to %s...", invite.I2PDest[:32]),
+	}, nil
+}
+
+// validateConnectPeerComponents checks if all required components are initialized.
+func (n *Node) validateConnectPeerComponents(pm *mesh.PeerManager, trans *transport.Transport, sender *transport.Sender, id *identity.Identity) error {
+	if pm == nil || trans == nil || id == nil || sender == nil {
+		return errors.New("node not fully initialized")
+	}
+	return nil
+}
+
+// parseAndValidateInvite parses and validates an invite code.
+func (n *Node) parseAndValidateInvite(inviteCode string) (*identity.Invite, error) {
 	invite, err := identity.ParseInvite(inviteCode)
 	if err != nil {
 		return nil, fmt.Errorf("invalid invite code: %w", err)
 	}
 
-	// Validate invite hasn't expired
 	if err := invite.Validate(); err != nil {
 		return nil, fmt.Errorf("invite validation failed: %w", err)
 	}
@@ -1094,52 +1127,49 @@ func (n *Node) ConnectPeer(ctx context.Context, inviteCode string) (*rpc.PeersCo
 		"i2p_dest", invite.I2PDest[:32]+"...",
 		"network_id", invite.NetworkID)
 
-	// Add peer to transport tracking
+	return invite, nil
+}
+
+// setupPeerConnection sets up transport tracking and creates handshake init.
+func (n *Node) setupPeerConnection(pm *mesh.PeerManager, trans *transport.Transport, invite *identity.Invite) (*mesh.HandshakeInit, error) {
 	if err := trans.AddPeer(invite.I2PDest, ""); err != nil {
 		return nil, fmt.Errorf("failed to track peer: %w", err)
 	}
 
-	// Create handshake init with the invite's auth token
 	handshakeInit := pm.CreateHandshakeInit(invite.AuthToken)
 
-	// Parse remote endpoint
 	endpoint, err := trans.ParseEndpoint(invite.I2PDest)
 	if err != nil {
 		trans.RemovePeer(invite.I2PDest)
 		return nil, fmt.Errorf("failed to parse peer endpoint: %w", err)
 	}
 
-	// Update transport with endpoint
 	trans.SetPeerEndpoint(invite.I2PDest, endpoint)
 
 	n.logger.Info("handshake initiated",
 		"our_node_id", handshakeInit.NodeID,
 		"our_tunnel_ip", handshakeInit.TunnelIP)
 
-	// Encode and send the handshake init message
+	return handshakeInit, nil
+}
+
+// sendConnectPeerHandshake encodes and sends the handshake init message.
+func (n *Node) sendConnectPeerHandshake(sender *transport.Sender, trans *transport.Transport, invite *identity.Invite, handshakeInit *mesh.HandshakeInit) {
 	handshakeData, err := mesh.EncodeMessage(mesh.MsgHandshakeInit, handshakeInit)
 	if err != nil {
 		trans.RemovePeer(invite.I2PDest)
-		return nil, fmt.Errorf("encoding handshake: %w", err)
+		n.logger.Warn("failed to encode handshake", "error", err)
+		return
 	}
 
-	// Send directly to the peer's I2P destination
 	if err := sender.SendToDest(invite.I2PDest, handshakeData); err != nil {
 		n.logger.Warn("failed to send handshake init",
 			"error", err,
 			"dest", invite.I2PDest[:32]+"...")
-		// Don't fail completely - the connection may still succeed
-		// as the gossip layer may retry or find an alternative route
 	} else {
 		n.logger.Info("handshake init sent successfully",
 			"dest", invite.I2PDest[:32]+"...")
 	}
-
-	return &rpc.PeersConnectResult{
-		NodeID:   "pending",
-		TunnelIP: handshakeInit.TunnelIP,
-		Message:  fmt.Sprintf("Handshake sent to %s...", invite.I2PDest[:32]),
-	}, nil
 }
 
 // connectToDiscoveredPeer attempts to connect to a peer discovered via gossip.
@@ -1745,59 +1775,81 @@ func (n *Node) SetConfig(key string, value any) (any, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.config == nil {
-		return nil, errors.New("configuration not available")
+	if err := n.validateSetConfigPrereqs(key); err != nil {
+		return nil, err
 	}
 
-	if key == "" {
-		return nil, errors.New("key is required")
-	}
-
-	var oldValue any
-
-	switch key {
-	// Node config
-	case "node.name":
-		oldValue = n.config.Node.Name
-		if s, ok := value.(string); ok {
-			n.config.Node.Name = s
-		} else {
-			return nil, errors.New("node.name must be a string")
-		}
-
-	// Mesh config (runtime adjustable)
-	case "mesh.max_peers":
-		oldValue = n.config.Mesh.MaxPeers
-		switch v := value.(type) {
-		case int:
-			n.config.Mesh.MaxPeers = v
-		case float64:
-			n.config.Mesh.MaxPeers = int(v)
-		default:
-			return nil, errors.New("mesh.max_peers must be an integer")
-		}
-
-	// RPC config
-	case "rpc.tcp_address":
-		oldValue = n.config.RPC.TCPAddress
-		if s, ok := value.(string); ok {
-			n.config.RPC.TCPAddress = s
-		} else {
-			return nil, errors.New("rpc.tcp_address must be a string")
-		}
-
-	// Read-only configs
-	case "node.data_dir", "i2p.sam_address", "i2p.tunnel_length",
-		"mesh.tunnel_subnet", "mesh.heartbeat_interval", "mesh.peer_timeout",
-		"rpc.enabled", "rpc.socket", "web.enabled", "web.listen":
-		return nil, fmt.Errorf("config key %s is read-only at runtime", key)
-
-	default:
-		return nil, fmt.Errorf("unknown config key: %s", key)
+	oldValue, err := n.applyConfigValue(key, value)
+	if err != nil {
+		return nil, err
 	}
 
 	n.logger.Info("configuration updated", "key", key, "old_value", oldValue, "new_value", value)
 	return oldValue, nil
+}
+
+// validateSetConfigPrereqs checks if configuration can be modified.
+func (n *Node) validateSetConfigPrereqs(key string) error {
+	if n.config == nil {
+		return errors.New("configuration not available")
+	}
+	if key == "" {
+		return errors.New("key is required")
+	}
+	return nil
+}
+
+// applyConfigValue applies a configuration value and returns the old value.
+func (n *Node) applyConfigValue(key string, value any) (any, error) {
+	switch key {
+	case "node.name":
+		return n.setNodeName(value)
+	case "mesh.max_peers":
+		return n.setMeshMaxPeers(value)
+	case "rpc.tcp_address":
+		return n.setRPCTCPAddress(value)
+	case "node.data_dir", "i2p.sam_address", "i2p.tunnel_length",
+		"mesh.tunnel_subnet", "mesh.heartbeat_interval", "mesh.peer_timeout",
+		"rpc.enabled", "rpc.socket", "web.enabled", "web.listen":
+		return nil, fmt.Errorf("config key %s is read-only at runtime", key)
+	default:
+		return nil, fmt.Errorf("unknown config key: %s", key)
+	}
+}
+
+// setNodeName sets the node name configuration.
+func (n *Node) setNodeName(value any) (any, error) {
+	oldValue := n.config.Node.Name
+	if s, ok := value.(string); ok {
+		n.config.Node.Name = s
+		return oldValue, nil
+	}
+	return nil, errors.New("node.name must be a string")
+}
+
+// setMeshMaxPeers sets the mesh max peers configuration.
+func (n *Node) setMeshMaxPeers(value any) (any, error) {
+	oldValue := n.config.Mesh.MaxPeers
+	switch v := value.(type) {
+	case int:
+		n.config.Mesh.MaxPeers = v
+		return oldValue, nil
+	case float64:
+		n.config.Mesh.MaxPeers = int(v)
+		return oldValue, nil
+	default:
+		return nil, errors.New("mesh.max_peers must be an integer")
+	}
+}
+
+// setRPCTCPAddress sets the RPC TCP address configuration.
+func (n *Node) setRPCTCPAddress(value any) (any, error) {
+	oldValue := n.config.RPC.TCPAddress
+	if s, ok := value.(string); ok {
+		n.config.RPC.TCPAddress = s
+		return oldValue, nil
+	}
+	return nil, errors.New("rpc.tcp_address must be a string")
 }
 
 // truncateDest shortens an I2P destination for logging.
