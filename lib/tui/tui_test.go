@@ -12,6 +12,10 @@ func fakeKeyMsg(key string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 }
 
+func fakeKeyMsgWithType(t tea.KeyType) tea.KeyMsg {
+	return tea.KeyMsg{Type: t}
+}
+
 func TestTabString(t *testing.T) {
 	tests := []struct {
 		tab      Tab
