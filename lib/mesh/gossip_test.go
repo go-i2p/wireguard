@@ -487,6 +487,56 @@ func TestGossipEngine_AnnounceLeave(t *testing.T) {
 	}
 }
 
+func TestGossipEngine_AnnouncePresence(t *testing.T) {
+	sender := newMockSender()
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+
+	ge := NewGossipEngine(GossipEngineConfig{
+		Sender:      sender,
+		NodeID:      "my-node",
+		NetworkID:   "test-network",
+		WGPublicKey: key.PublicKey().String(),
+		TunnelIP:    ip.String(),
+		I2PDest:     "test.b32.i2p",
+	})
+
+	// AnnouncePresence should do nothing when not running
+	ge.AnnouncePresence()
+	if sender.getBroadcastCount() != 0 {
+		t.Errorf("AnnouncePresence() when not running should not broadcast, got %d", sender.getBroadcastCount())
+	}
+
+	// Start the engine
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := ge.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer ge.Stop()
+
+	// Clear any broadcasts from Start
+	sender.mu.Lock()
+	sender.broadcasts = nil
+	sender.mu.Unlock()
+
+	// Now AnnouncePresence should work
+	ge.AnnouncePresence()
+	if sender.getBroadcastCount() != 1 {
+		t.Errorf("AnnouncePresence() broadcast count = %d, want 1", sender.getBroadcastCount())
+	}
+
+	// Verify the message content
+	data := sender.broadcasts[0]
+	msg, err := DecodeMessage(data)
+	if err != nil {
+		t.Fatalf("DecodeMessage() error = %v", err)
+	}
+	if msg.Type != MsgPeerAnnounce {
+		t.Errorf("Message type = %v, want MsgPeerAnnounce", msg.Type)
+	}
+}
+
 func TestGossipEngine_SelectRandomPeers(t *testing.T) {
 	key, _ := wgtypes.GeneratePrivateKey()
 	ip := AllocateTunnelIP(key.PublicKey())

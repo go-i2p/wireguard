@@ -98,6 +98,7 @@ type PeerManager struct {
 	// Configuration
 	maxPeers        int
 	handshakeTimout time.Duration
+	subnet          netip.Prefix // Tunnel subnet for IP allocation
 }
 
 // PeerManagerConfig configures the PeerManager.
@@ -111,6 +112,7 @@ type PeerManagerConfig struct {
 	Logger       *slog.Logger
 	BanList      *BanList
 	RoutingTable *RoutingTable
+	Subnet       netip.Prefix // Tunnel subnet for IP allocation validation
 }
 
 // NewPeerManager creates a new PeerManager.
@@ -125,6 +127,12 @@ func NewPeerManager(cfg PeerManagerConfig) *PeerManager {
 		maxPeers = 50
 	}
 
+	// Use configured subnet or fall back to default
+	subnet := cfg.Subnet
+	if !subnet.IsValid() {
+		subnet = TunnelSubnet
+	}
+
 	return &PeerManager{
 		peers:           make(map[string]*Peer),
 		logger:          logger,
@@ -137,6 +145,7 @@ func NewPeerManager(cfg PeerManagerConfig) *PeerManager {
 		routingTable:    cfg.RoutingTable,
 		maxPeers:        maxPeers,
 		handshakeTimout: 30 * time.Second,
+		subnet:          subnet,
 	}
 }
 
@@ -291,9 +300,9 @@ func (pm *PeerManager) parseHandshakeCredentials(init *HandshakeInit) (wgtypes.K
 		return wgtypes.Key{}, netip.Addr{}, errors.New("invalid tunnel IP")
 	}
 
-	expectedIP := AllocateTunnelIP(pubKey)
+	expectedIP := AllocateTunnelIPWithSubnet(pubKey, pm.subnet)
 	if claimedIP != expectedIP {
-		pm.logger.Warn("tunnel IP mismatch", "claimed", claimedIP, "expected", expectedIP)
+		pm.logger.Warn("tunnel IP mismatch", "claimed", claimedIP, "expected", expectedIP, "subnet", pm.subnet)
 		return wgtypes.Key{}, netip.Addr{}, errors.New("tunnel IP does not match public key")
 	}
 
@@ -348,8 +357,8 @@ func (pm *PeerManager) HandleHandshakeResponse(resp *HandshakeResponse) error {
 		return fmt.Errorf("invalid tunnel IP: %w", err)
 	}
 
-	// Verify tunnel IP matches public key
-	expectedIP := AllocateTunnelIP(pubKey)
+	// Verify tunnel IP matches public key using configured subnet
+	expectedIP := AllocateTunnelIPWithSubnet(pubKey, pm.subnet)
 	if tunnelIP != expectedIP {
 		return errors.New("tunnel IP does not match public key")
 	}

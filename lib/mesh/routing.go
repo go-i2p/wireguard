@@ -186,6 +186,11 @@ func (rt *RoutingTable) RouteCount() int {
 	return len(rt.routes)
 }
 
+// Subnet returns the configured subnet for the routing table.
+func (rt *RoutingTable) Subnet() netip.Prefix {
+	return rt.subnet
+}
+
 // HasCollision checks if adding a route for the given key would cause a collision.
 func (rt *RoutingTable) HasCollision(publicKey wgtypes.Key, nodeID string) bool {
 	ip := AllocateTunnelIPWithSubnet(publicKey, rt.subnet)

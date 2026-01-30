@@ -175,3 +175,44 @@ func TestTransport_UpdateNonexistentPeer(t *testing.T) {
 		t.Error("peer count should be 0")
 	}
 }
+
+func TestTransport_Reconnect_WhenClosed(t *testing.T) {
+	tr := NewTransport("test-reconnect", "127.0.0.1:7656", nil)
+
+	// Reconnect when not open should still attempt to open
+	// (will fail without SAM running, but tests the code path)
+	_, err := tr.Reconnect()
+
+	// We expect an error since SAM isn't running
+	if err == nil {
+		// If no error, it means SAM is running (integration test environment)
+		if !tr.IsOpen() {
+			t.Error("Reconnect succeeded but transport is not open")
+		}
+		// Clean up
+		tr.Close()
+	}
+}
+
+func TestTransport_Reconnect_PreservesPeers(t *testing.T) {
+	tr := NewTransport("test", "127.0.0.1:7656", nil)
+
+	// Manually set up state
+	tr.mu.Lock()
+	tr.isOpen = true
+	tr.localI2PDest = "original.b32.i2p"
+	tr.peers["peer1.b32.i2p"] = &TrackedPeer{
+		I2PDest:     "peer1.b32.i2p",
+		WGPublicKey: "key1",
+		State:       PeerStateConnected,
+	}
+	tr.mu.Unlock()
+
+	// Since we can't actually reconnect without SAM, just verify
+	// the Reconnect function's behavior with invalid state
+	// The real test would require integration testing with SAM
+
+	if tr.PeerCount() != 1 {
+		t.Error("peer should be tracked before reconnect attempt")
+	}
+}

@@ -617,6 +617,7 @@ func (n *Node) initPeerManager() {
 		Logger:       n.logger.With("component", "peers"),
 		BanList:      n.banList,
 		RoutingTable: n.routing,
+		Subnet:       n.routing.Subnet(),
 	})
 }
 
@@ -821,12 +822,39 @@ func (n *Node) startHealthMonitor(ctx context.Context) {
 	n.healthMonitor.SetCallbacks(
 		func() { n.logger.Warn("I2P SAM connection unhealthy") },
 		func() { n.logger.Info("I2P SAM connection healthy") },
-		nil,
+		n.handleI2PReconnect,
 	)
 
 	if err := n.healthMonitor.Start(ctx); err != nil {
 		n.logger.Warn("failed to start health monitor", "error", err)
 	}
+}
+
+// handleI2PReconnect attempts to reconnect the I2P transport when SAM becomes available.
+// The I2P identity is persistent (keys stored by tunnel name), so the same destination
+// is restored after reconnection.
+func (n *Node) handleI2PReconnect() error {
+	n.logger.Info("attempting I2P transport reconnection")
+
+	// Attempt to reconnect the transport
+	dest, err := n.trans.Reconnect()
+	if err != nil {
+		n.logger.Error("I2P transport reconnection failed", "error", err)
+		return err
+	}
+
+	n.logger.Info("I2P transport reconnected", "dest", dest[:32]+"...")
+
+	// Re-register mesh handler with reconnected transport
+	n.trans.SetMeshHandler(n.handleMeshMessage)
+
+	// Re-announce our presence to the network
+	if n.gossip != nil {
+		n.gossip.AnnouncePresence()
+		n.logger.Info("re-announced presence to mesh network after reconnect")
+	}
+
+	return nil
 }
 
 // initInterfaces starts RPC and Web interfaces if enabled.

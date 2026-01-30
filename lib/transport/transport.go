@@ -296,3 +296,44 @@ func (t *Transport) ParseEndpoint(i2pDest string) (conn.Endpoint, error) {
 
 	return bind.ParseEndpoint(i2pDest)
 }
+
+// Reconnect attempts to close and reopen the I2P transport.
+// The I2P identity is persistent (keys are stored by tunnel name via onramp),
+// so the same I2P destination will be restored after reconnection.
+// Returns the local destination address on success.
+func (t *Transport) Reconnect() (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Close existing session if open
+	if t.isOpen && t.bind != nil {
+		t.bind.Close()
+		t.bind = nil
+		t.isOpen = false
+		t.localI2PDest = ""
+	}
+
+	// Create new I2P bind
+	t.bind = i2pbind.NewI2PBindWithOptions(t.name, t.samAddr, t.options)
+
+	// Open the bind to start new I2P session
+	_, _, err := t.bind.Open(0)
+	if err != nil {
+		t.bind = nil
+		return "", err
+	}
+
+	// Get our new local I2P address
+	localAddr, err := t.bind.LocalAddress()
+	if err != nil {
+		t.bind.Close()
+		t.bind = nil
+		return "", err
+	}
+
+	t.localI2PDest = localAddr
+	t.isOpen = true
+	// Note: peers map is preserved - caller may want to re-establish connections
+
+	return localAddr, nil
+}

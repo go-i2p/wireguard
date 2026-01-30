@@ -272,6 +272,19 @@ func (g *GossipEngine) IsRunning() bool {
 	return g.running
 }
 
+// AnnouncePresence broadcasts our presence to all connected peers.
+// This can be called after transport reconnection to re-announce to the mesh.
+func (g *GossipEngine) AnnouncePresence() {
+	g.mu.RLock()
+	if !g.running {
+		g.mu.RUnlock()
+		return
+	}
+	g.mu.RUnlock()
+
+	g.sendAnnouncement()
+}
+
 // heartbeatLoop periodically announces our presence.
 func (g *GossipEngine) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(g.config.HeartbeatInterval)
