@@ -1,6 +1,7 @@
 package i2pbind
 
 import (
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -314,4 +315,438 @@ func TestDstToBytesFormat(t *testing.T) {
 			break
 		}
 	}
+}
+
+// TestSetMeshHandler tests the mesh handler registration
+func TestSetMeshHandler(t *testing.T) {
+	bind := NewI2PBind("test-tunnel")
+
+	called := false
+	handler := func(data []byte, from i2pkeys.I2PAddr) {
+		called = true
+	}
+
+	bind.SetMeshHandler(handler)
+
+	if bind.meshHandler == nil {
+		t.Error("Mesh handler should be set")
+	}
+
+	// Verify handler can be called
+	bind.meshHandler([]byte("test"), getTestAddress())
+	if !called {
+		t.Error("Mesh handler was not called")
+	}
+}
+
+// TestSetMeshHandler_AfterMessages tests the warning path when handler is set after messages received
+func TestSetMeshHandler_AfterMessages(t *testing.T) {
+	bind := NewI2PBind("test-tunnel")
+
+	// Simulate messages received
+	bind.messagesReceived.Store(true)
+
+	handler := func(data []byte, from i2pkeys.I2PAddr) {}
+
+	// This should log a warning but still set the handler
+	bind.SetMeshHandler(handler)
+
+	if bind.meshHandler == nil {
+		t.Error("Mesh handler should be set even after messages received")
+	}
+}
+
+// TestParseI2PAddress tests the helper function for parsing network addresses
+func TestParseI2PAddress(t *testing.T) {
+	addr := getTestAddress()
+
+	tests := []struct {
+		name    string
+		addr    i2pkeys.I2PAddr
+		wantErr bool
+	}{
+		{
+			name:    "valid I2P address",
+			addr:    addr,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseI2PAddress(tt.addr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseI2PAddress() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && result != tt.addr {
+				t.Error("parseI2PAddress() returned wrong address")
+			}
+		})
+	}
+}
+
+// TestIsMeshProtocolMessage tests the mesh message detection
+func TestIsMeshProtocolMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{
+			name: "JSON message starting with {",
+			data: []byte(`{"type":"test"}`),
+			want: true,
+		},
+		{
+			name: "WireGuard message type 1",
+			data: []byte{0x01, 0x00, 0x00, 0x00},
+			want: false,
+		},
+		{
+			name: "WireGuard message type 2",
+			data: []byte{0x02, 0x00, 0x00, 0x00},
+			want: false,
+		},
+		{
+			name: "empty message",
+			data: []byte{},
+			want: false,
+		},
+		{
+			name: "random binary data",
+			data: []byte{0xff, 0xfe, 0xfd, 0xfc},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isMeshProtocolMessage(tt.data); got != tt.want {
+				t.Errorf("isMeshProtocolMessage() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHandleMeshMessage tests the mesh message dispatch
+func TestHandleMeshMessage(t *testing.T) {
+	bind := NewI2PBind("test-tunnel")
+	addr := getTestAddress()
+
+	t.Run("nil handler", func(t *testing.T) {
+		// Should not panic with nil handler
+		bind.handleMeshMessage([]byte("test"), 4, addr, nil)
+	})
+
+	t.Run("with handler", func(t *testing.T) {
+		done := make(chan struct{})
+		var receivedData []byte
+		var receivedAddr i2pkeys.I2PAddr
+
+		handler := func(data []byte, from i2pkeys.I2PAddr) {
+			receivedData = data
+			receivedAddr = from
+			close(done)
+		}
+
+		data := []byte("test message")
+		bind.handleMeshMessage(data, len(data), addr, handler)
+
+		// Wait for goroutine to complete
+		<-done
+
+		if string(receivedData) != string(data) {
+			t.Errorf("Handler received wrong data: got %s, want %s", receivedData, data)
+		}
+		if receivedAddr != addr {
+			t.Error("Handler received wrong address")
+		}
+	})
+}
+
+// TestParseEndpoint tests endpoint parsing with various formats
+func TestParseEndpoint(t *testing.T) {
+	bind := NewI2PBind("test-tunnel")
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "valid full destination",
+			input:   testI2PDestination,
+			wantErr: false,
+		},
+		{
+			name:    "empty string",
+			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "invalid format",
+			input:   "not-a-valid-address",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ep, err := bind.ParseEndpoint(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseEndpoint() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && ep == nil {
+				t.Error("ParseEndpoint() returned nil endpoint")
+			}
+			if !tt.wantErr {
+				i2pEp, ok := ep.(*I2PEndpoint)
+				if !ok {
+					t.Error("ParseEndpoint() did not return *I2PEndpoint")
+				}
+				if i2pEp == nil {
+					t.Error("ParseEndpoint() returned nil I2PEndpoint")
+				}
+			}
+		})
+	}
+}
+
+// TestI2PBind_SendNotOpen tests Send on closed bind
+func TestI2PBind_SendNotOpen(t *testing.T) {
+	bind := NewI2PBind("test-tunnel")
+	addr := getTestAddress()
+	ep := NewI2PEndpoint(addr)
+
+	// Send should fail when bind is not open
+	err := bind.Send([][]byte{[]byte("test")}, ep)
+	if err == nil {
+		t.Error("Send should return error when bind is not open")
+	}
+}
+
+// mockEndpoint is a test endpoint that is not *I2PEndpoint
+type mockEndpoint struct{}
+
+func (m *mockEndpoint) ClearSrc()           {}
+func (m *mockEndpoint) SrcToString() string { return "" }
+func (m *mockEndpoint) DstToString() string { return "" }
+func (m *mockEndpoint) DstToBytes() []byte  { return nil }
+func (m *mockEndpoint) DstIP() netip.Addr   { return netip.Addr{} }
+func (m *mockEndpoint) SrcIP() netip.Addr   { return netip.Addr{} }
+
+// TestI2PBind_SendWrongEndpointType tests Send with wrong endpoint type
+func TestI2PBind_SendWrongEndpointType(t *testing.T) {
+	bind := NewI2PBind("test-tunnel")
+
+	// Create a mock endpoint that is not *I2PEndpoint
+	err := bind.Send([][]byte{[]byte("test")}, &mockEndpoint{})
+	if err == nil {
+		t.Error("Send should return error with wrong endpoint type")
+	}
+}
+
+// TestI2PBind_Integration tests Open, Send, and Close with real SAM
+func TestI2PBind_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	bind := NewI2PBind("test-tunnel-integration")
+
+	// Test Open
+	recvFuncs, port, err := bind.Open(0)
+	if err != nil {
+		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)
+	}
+	defer bind.Close()
+
+	if len(recvFuncs) != 1 {
+		t.Errorf("Expected 1 receive function, got %d", len(recvFuncs))
+	}
+
+	if port != 0 {
+		t.Errorf("Expected port 0 for I2P, got %d", port)
+	}
+
+	// Test LocalAddress
+	localAddr, err := bind.LocalAddress()
+	if err != nil {
+		t.Fatalf("LocalAddress() failed: %v", err)
+	}
+	if localAddr == "" {
+		t.Error("LocalAddress() returned empty string")
+	}
+	if !strings.HasSuffix(localAddr, ".b32.i2p") {
+		t.Errorf("LocalAddress() should end with .b32.i2p, got: %s", localAddr)
+	}
+
+	// Test LocalDestination
+	localDest, err := bind.LocalDestination()
+	if err != nil {
+		t.Fatalf("LocalDestination() failed: %v", err)
+	}
+	if localDest == "" {
+		t.Error("LocalDestination() returned empty")
+	}
+
+	// Test ParseEndpoint with our local destination (not base32 address)
+	ep, err := bind.ParseEndpoint(string(localDest))
+	if err != nil {
+		t.Fatalf("ParseEndpoint() failed: %v", err)
+	}
+
+	// Test Send - send a message to ourselves
+	testData := []byte("test message")
+	bufs := [][]byte{testData}
+	err = bind.Send(bufs, ep)
+	if err != nil {
+		t.Errorf("Send() failed: %v", err)
+	}
+
+	// Test that Open fails when already open
+	_, _, err = bind.Open(0)
+	if err == nil {
+		t.Error("Open() should fail when already open")
+	}
+
+	// Test Close
+	err = bind.Close()
+	if err != nil {
+		t.Errorf("Close() failed: %v", err)
+	}
+
+	// Test that operations fail after close
+	_, err = bind.LocalAddress()
+	if err == nil {
+		t.Error("LocalAddress() should fail after Close()")
+	}
+
+	err = bind.Send(bufs, ep)
+	if err == nil {
+		t.Error("Send() should fail after Close()")
+	}
+}
+
+// TestI2PBind_SendOversizePacket tests sending packets larger than max size
+func TestI2PBind_SendOversizePacket(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	bind := NewI2PBind("test-tunnel-oversize")
+	_, _, err := bind.Open(0)
+	if err != nil {
+		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)
+	}
+	defer bind.Close()
+
+	localDest, _ := bind.LocalDestination()
+	ep, _ := bind.ParseEndpoint(string(localDest))
+
+	// Create a packet larger than MaxI2PDatagramSize
+	oversizePacket := make([]byte, MaxI2PDatagramSize+1)
+	bufs := [][]byte{oversizePacket}
+
+	err = bind.Send(bufs, ep)
+	if err == nil {
+		t.Error("Send() should fail with oversize packet")
+	}
+}
+
+// TestI2PBind_ReceiveFunc tests the receive function with mesh handler
+func TestI2PBind_ReceiveFunc(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Create sender bind
+	sender := NewI2PBind("test-sender")
+	recvFuncs, _, err := sender.Open(0)
+	if err != nil {
+		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)
+	}
+	defer sender.Close()
+
+	if len(recvFuncs) != 1 {
+		t.Fatalf("Expected 1 receive function, got %d", len(recvFuncs))
+	}
+
+	// Create receiver bind with mesh handler
+	receiver := NewI2PBind("test-receiver")
+
+	meshReceived := make(chan []byte, 1)
+	receiver.SetMeshHandler(func(data []byte, from i2pkeys.I2PAddr) {
+		meshReceived <- data
+	})
+
+	_, _, err = receiver.Open(0)
+	if err != nil {
+		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)
+	}
+	defer receiver.Close()
+
+	// Get receiver's full destination (not base32 address)
+	receiverDest, err := receiver.LocalDestination()
+	if err != nil {
+		t.Fatalf("Failed to get receiver destination: %v", err)
+	}
+
+	// Parse receiver endpoint using full destination
+	receiverEp, err := sender.ParseEndpoint(string(receiverDest))
+	if err != nil {
+		t.Fatalf("Failed to parse receiver endpoint: %v", err)
+	}
+
+	// Send a mesh message (JSON starting with '{')
+	meshMsg := []byte(`{"type":"test","data":"hello"}`)
+	err = sender.Send([][]byte{meshMsg}, receiverEp)
+	if err != nil {
+		t.Fatalf("Failed to send mesh message: %v", err)
+	}
+
+	t.Log("Integration test completed - mesh message sent (may not be received in test timeframe)")
+}
+
+// TestI2PBind_CloseCleansUp tests that Close properly cleans up resources
+func TestI2PBind_CloseCleansUp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	bind := NewI2PBind("test-cleanup")
+	_, _, err := bind.Open(0)
+	if err != nil {
+		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)
+	}
+
+	// Verify resources are set
+	bind.mu.Lock()
+	hasGarlic := bind.garlic != nil
+	hasPacketConn := bind.packetConn != nil
+	bind.mu.Unlock()
+
+	if !hasGarlic || !hasPacketConn {
+		t.Fatal("Resources not initialized after Open()")
+	}
+
+	// Close and verify cleanup
+	err = bind.Close()
+	if err != nil {
+		t.Errorf("Close() failed: %v", err)
+	}
+
+	bind.mu.Lock()
+	if bind.garlic != nil {
+		t.Error("garlic should be nil after Close()")
+	}
+	if bind.packetConn != nil {
+		t.Error("packetConn should be nil after Close()")
+	}
+	if !bind.closed {
+		t.Error("closed flag should be true after Close()")
+	}
+	bind.mu.Unlock()
 }
