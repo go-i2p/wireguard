@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -243,7 +242,7 @@ func TestPooledClient_MultipleHandlers(t *testing.T) {
 	// Create pooled client
 	config := DefaultPooledClientConfig()
 	config.UnixSocketPath = socketPath
-	config.AuthToken = hex.EncodeToString([]byte(srv.AuthToken()))
+	config.AuthFile = authFile // Use auth file instead of token
 	config.PoolSize = 3
 
 	client, err := NewPooledClient(config)
@@ -345,9 +344,9 @@ func TestPooledClient_Close(t *testing.T) {
 		t.Errorf("Close() error = %v", err)
 	}
 
-	// Try closing again (should be idempotent)
+	// Try closing again (should error since pool is closed)
 	err = client.Close()
-	if err != nil {
-		t.Errorf("Second Close() error = %v", err)
+	if err == nil {
+		t.Error("Second Close() expected error, got nil")
 	}
 }
