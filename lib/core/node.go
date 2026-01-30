@@ -918,26 +918,51 @@ func (n *Node) initWebServer() error {
 	return nil
 }
 
-// cleanup shuts down all components in reverse order.
+// cleanup shuts down all components in reverse order with progress logging.
 func (n *Node) cleanup() {
+	log.Info("cleanup phase 1/5: stopping interfaces")
 	n.cleanupInterfaces()
+	log.Info("cleanup phase 2/5: stopping mesh services")
 	n.cleanupMeshServices()
+	log.Info("cleanup phase 3/5: persisting state")
 	n.cleanupPersistence()
+	log.Info("cleanup phase 4/5: closing device")
 	n.cleanupDevice()
+	log.Info("cleanup phase 5/5: closing transport")
 	n.cleanupTransport()
+	log.Info("cleanup complete")
 }
 
-// cleanupInterfaces stops web and RPC servers.
+// getDrainTimeout returns the configured drain timeout or default.
+func (n *Node) getDrainTimeout() time.Duration {
+	timeout := n.config.Mesh.DrainTimeout
+	if timeout < time.Second {
+		return DefaultDrainTimeout
+	}
+	return timeout
+}
+
+// cleanupInterfaces stops web and RPC servers with request draining.
 func (n *Node) cleanupInterfaces() {
+	drainTimeout := n.getDrainTimeout()
+
 	if n.webServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = n.webServer.Stop(ctx)
+		log.Debug("stopping web server, draining requests", "timeout", drainTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+		if err := n.webServer.Stop(ctx); err != nil {
+			log.Warn("web server shutdown interrupted", "error", err)
+		}
 		cancel()
 		n.webServer = nil
 	}
 
 	if n.rpcServer != nil {
-		_ = n.rpcServer.Stop()
+		log.Debug("stopping RPC server, draining requests", "timeout", drainTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+		if err := n.rpcServer.StopWithContext(ctx); err != nil {
+			log.Warn("RPC server shutdown interrupted", "error", err)
+		}
+		cancel()
 		n.rpcServer = nil
 	}
 }
@@ -945,17 +970,21 @@ func (n *Node) cleanupInterfaces() {
 // cleanupMeshServices stops gossip, reconnect, and ban list services.
 func (n *Node) cleanupMeshServices() {
 	if n.gossip != nil {
+		log.Debug("sending leave announcement to peers")
 		n.gossip.AnnounceLeave("node shutting down")
+		log.Debug("stopping gossip engine")
 		n.gossip.Stop()
 		n.gossip = nil
 	}
 
 	if n.reconnectManager != nil {
+		log.Debug("stopping reconnect manager")
 		n.reconnectManager.Stop()
 		n.reconnectManager = nil
 	}
 
 	if n.banList != nil {
+		log.Debug("stopping ban list manager")
 		n.banList.Stop()
 	}
 }

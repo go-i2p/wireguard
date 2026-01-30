@@ -26,6 +26,7 @@ const (
 	DefaultPeerTimeout       = 5 * time.Minute
 	DefaultMaxPeers          = 50
 	DefaultShutdownTimeout   = 5 * time.Second
+	DefaultDrainTimeout      = 10 * time.Second
 	DefaultRPCSocket         = "rpc.sock"
 	DefaultWebListen         = "127.0.0.1:8080"
 )
@@ -70,6 +71,9 @@ type MeshConfig struct {
 	// ShutdownTimeout is the maximum time to wait for graceful device shutdown.
 	// In production environments with slow I2P sessions, you may need to increase this.
 	ShutdownTimeout time.Duration `toml:"shutdown_timeout"`
+	// DrainTimeout is the maximum time to wait for in-flight requests to complete
+	// during shutdown. This applies to RPC and Web servers.
+	DrainTimeout time.Duration `toml:"drain_timeout"`
 }
 
 // RPCConfig contains RPC server settings.
@@ -113,6 +117,7 @@ func DefaultConfig() *Config {
 			PeerTimeout:       DefaultPeerTimeout,
 			MaxPeers:          DefaultMaxPeers,
 			ShutdownTimeout:   DefaultShutdownTimeout,
+			DrainTimeout:      DefaultDrainTimeout,
 		},
 		RPC: RPCConfig{
 			Enabled: true,

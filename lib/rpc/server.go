@@ -436,7 +436,15 @@ func (s *Server) sendResponse(conn net.Conn, resp *Response) {
 }
 
 // Stop stops the RPC server.
+// Deprecated: Use StopWithContext for graceful shutdown with request draining.
 func (s *Server) Stop() error {
+	return s.StopWithContext(context.Background())
+}
+
+// StopWithContext gracefully stops the RPC server.
+// It closes listeners to stop accepting new connections, then waits for
+// in-flight requests to complete or the context to be cancelled.
+func (s *Server) StopWithContext(ctx context.Context) error {
 	s.mu.Lock()
 	if !s.running {
 		s.mu.Unlock()
@@ -445,7 +453,9 @@ func (s *Server) Stop() error {
 	s.running = false
 	s.mu.Unlock()
 
-	// Close listeners
+	log.Info("stopping RPC server, draining in-flight requests")
+
+	// Close listeners to stop accepting new connections
 	if s.unixListener != nil {
 		s.unixListener.Close()
 	}
@@ -453,10 +463,21 @@ func (s *Server) Stop() error {
 		s.tcpListener.Close()
 	}
 
-	// Wait for all handlers to finish
-	s.wg.Wait()
+	// Wait for all handlers to finish or context to cancel
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
 
-	log.Info("RPC server stopped")
+	select {
+	case <-done:
+		log.Info("RPC server stopped, all requests drained")
+	case <-ctx.Done():
+		log.Warn("RPC server shutdown timeout, some requests may be interrupted")
+		return ctx.Err()
+	}
+
 	return nil
 }
 
