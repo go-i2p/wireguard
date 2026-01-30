@@ -14,7 +14,19 @@ import (
 )
 
 func main() {
-	// Create VPN with minimal configuration
+	vpn := createVPN()
+	defer vpn.Close()
+
+	go handleEvents(vpn)
+
+	startVPN(vpn)
+	printStatus(vpn)
+	tryCreateInvite(vpn)
+	waitForShutdown()
+}
+
+// createVPN creates and returns a new VPN instance.
+func createVPN() *embedded.VPN {
 	vpn, err := embedded.New(embedded.Config{
 		NodeName: "example-vpn",
 		DataDir:  "./vpn-data",
@@ -22,55 +34,68 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create VPN: %v", err)
 	}
-	defer vpn.Close()
+	return vpn
+}
 
-	// Start listening for events
-	go func() {
-		for event := range vpn.Events() {
-			switch event.Type {
-			case embedded.EventStarted:
-				fmt.Println("🟢 VPN started")
-			case embedded.EventStopped:
-				fmt.Println("🔴 VPN stopped")
-			case embedded.EventPeerConnected:
-				if event.Peer != nil {
-					fmt.Printf("👤 Peer connected: %s (%s)\n", event.Peer.NodeID, event.Peer.TunnelIP)
-				}
-			case embedded.EventPeerDisconnected:
-				if event.Peer != nil {
-					fmt.Printf("👤 Peer disconnected: %s\n", event.Peer.NodeID)
-				}
-			case embedded.EventError:
-				fmt.Printf("⚠️  Error: %v\n", event.Error)
-			default:
-				fmt.Printf("📢 Event: %s - %s\n", event.Type, event.Message)
-			}
+// handleEvents processes VPN events in the background.
+func handleEvents(vpn *embedded.VPN) {
+	for event := range vpn.Events() {
+		handleEvent(event)
+	}
+}
+
+// handleEvent processes a single VPN event.
+func handleEvent(event embedded.Event) {
+	switch event.Type {
+	case embedded.EventStarted:
+		fmt.Println("🟢 VPN started")
+	case embedded.EventStopped:
+		fmt.Println("🔴 VPN stopped")
+	case embedded.EventPeerConnected:
+		if event.Peer != nil {
+			fmt.Printf("👤 Peer connected: %s (%s)\n", event.Peer.NodeID, event.Peer.TunnelIP)
 		}
-	}()
+	case embedded.EventPeerDisconnected:
+		if event.Peer != nil {
+			fmt.Printf("👤 Peer disconnected: %s\n", event.Peer.NodeID)
+		}
+	case embedded.EventError:
+		fmt.Printf("⚠️  Error: %v\n", event.Error)
+	default:
+		fmt.Printf("📢 Event: %s - %s\n", event.Type, event.Message)
+	}
+}
 
-	// Start the VPN
+// startVPN starts the VPN service.
+func startVPN(vpn *embedded.VPN) {
 	ctx := context.Background()
 	if err := vpn.Start(ctx); err != nil {
 		log.Fatalf("Failed to start VPN: %v", err)
 	}
+}
 
-	// Print status
+// printStatus prints the current VPN status.
+func printStatus(vpn *embedded.VPN) {
 	status := vpn.Status()
 	fmt.Printf("\n=== VPN Status ===\n")
 	fmt.Printf("State:     %s\n", status.State)
 	fmt.Printf("Node:      %s\n", status.NodeName)
 	fmt.Printf("Tunnel IP: %s\n", vpn.TunnelIP())
 	fmt.Printf("I2P Addr:  %s\n", vpn.I2PAddress())
+}
 
-	// Create an invite (once mesh is implemented)
+// tryCreateInvite attempts to create an invite code.
+func tryCreateInvite(vpn *embedded.VPN) {
 	invite, err := vpn.CreateInvite(24*time.Hour, 1)
 	if err != nil {
 		fmt.Printf("Note: Invite creation pending mesh implementation: %v\n", err)
 	} else {
 		fmt.Printf("\n=== Invite Code ===\n%s\n", invite)
 	}
+}
 
-	// Wait for shutdown signal
+// waitForShutdown waits for a shutdown signal.
+func waitForShutdown() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 

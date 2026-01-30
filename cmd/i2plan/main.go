@@ -458,24 +458,42 @@ func rpcRoutesList(ctx context.Context, client *rpc.Client) int {
 		return 0
 	}
 
-	fmt.Printf("%-16s %-16s %-6s %-16s %-20s\n", "TUNNEL IP", "NODE ID", "HOPS", "VIA", "LAST SEEN")
-	fmt.Printf("%-16s %-16s %-6s %-16s %-20s\n", "---------", "-------", "----", "---", "---------")
+	printRoutesHeader()
 	for _, route := range result.Routes {
-		nodeID := route.NodeID
-		if len(nodeID) > 16 {
-			nodeID = nodeID[:13] + "..."
-		}
-		via := route.ViaNodeID
-		if via == "" {
-			via = "(direct)"
-		} else if len(via) > 16 {
-			via = via[:13] + "..."
-		}
-		fmt.Printf("%-16s %-16s %-6d %-16s %-20s\n", route.TunnelIP, nodeID, route.HopCount, via, route.LastSeen)
+		printRouteEntry(route)
 	}
 	fmt.Printf("\nTotal: %d routes\n", result.Total)
 
 	return 0
+}
+
+// printRoutesHeader prints the header row for routes table.
+func printRoutesHeader() {
+	fmt.Printf("%-16s %-16s %-6s %-16s %-20s\n", "TUNNEL IP", "NODE ID", "HOPS", "VIA", "LAST SEEN")
+	fmt.Printf("%-16s %-16s %-6s %-16s %-20s\n", "---------", "-------", "----", "---", "---------")
+}
+
+// printRouteEntry prints a single route entry formatted for display.
+func printRouteEntry(route rpc.RouteInfo) {
+	nodeID := truncateID(route.NodeID, 16)
+	via := formatViaNode(route.ViaNodeID)
+	fmt.Printf("%-16s %-16s %-6d %-16s %-20s\n", route.TunnelIP, nodeID, route.HopCount, via, route.LastSeen)
+}
+
+// truncateID shortens an ID to the specified length for display.
+func truncateID(id string, maxLen int) string {
+	if len(id) > maxLen {
+		return id[:maxLen-3] + "..."
+	}
+	return id
+}
+
+// formatViaNode formats the via node ID for display.
+func formatViaNode(viaNodeID string) string {
+	if viaNodeID == "" {
+		return "(direct)"
+	}
+	return truncateID(viaNodeID, 16)
 }
 
 func rpcConfigGet(ctx context.Context, client *rpc.Client, args []string) int {

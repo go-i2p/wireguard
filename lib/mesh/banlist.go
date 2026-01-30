@@ -88,45 +88,60 @@ type BanList struct {
 
 // NewBanList creates a new BanList.
 func NewBanList(cfg BanListConfig) *BanList {
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	strikeThreshold := cfg.StrikeThreshold
-	if strikeThreshold <= 0 {
-		strikeThreshold = 5 // Default: 5 strikes
-	}
-
-	autoBanDuration := cfg.AutoBanDuration
-	if autoBanDuration <= 0 {
-		autoBanDuration = 24 * time.Hour // Default: 24h
-	}
-
-	cleanupInterval := cfg.CleanupInterval
-	if cleanupInterval <= 0 {
-		cleanupInterval = 1 * time.Hour // Default: 1h
-	}
-
 	bl := &BanList{
 		bans:            make(map[string]*BanEntry),
 		dests:           make(map[string]string),
 		strikes:         make(map[string]int),
-		logger:          logger,
+		logger:          resolveLogger(cfg.Logger),
 		persistPath:     cfg.PersistPath,
-		strikeThreshold: strikeThreshold,
-		autoBanDuration: autoBanDuration,
-		cleanupInterval: cleanupInterval,
+		strikeThreshold: resolveStrikeThreshold(cfg.StrikeThreshold),
+		autoBanDuration: resolveAutoBanDuration(cfg.AutoBanDuration),
+		cleanupInterval: resolveCleanupInterval(cfg.CleanupInterval),
 	}
 
-	// Load persisted bans
-	if cfg.PersistPath != "" {
+	bl.loadPersistedBans()
+	return bl
+}
+
+// resolveLogger returns the provided logger or a default one.
+func resolveLogger(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.Default()
+	}
+	return logger
+}
+
+// resolveStrikeThreshold returns the provided threshold or the default.
+func resolveStrikeThreshold(threshold int) int {
+	if threshold <= 0 {
+		return 5 // Default: 5 strikes
+	}
+	return threshold
+}
+
+// resolveAutoBanDuration returns the provided duration or the default.
+func resolveAutoBanDuration(duration time.Duration) time.Duration {
+	if duration <= 0 {
+		return 24 * time.Hour // Default: 24h
+	}
+	return duration
+}
+
+// resolveCleanupInterval returns the provided interval or the default.
+func resolveCleanupInterval(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 1 * time.Hour // Default: 1h
+	}
+	return interval
+}
+
+// loadPersistedBans loads bans from disk if a persist path is configured.
+func (bl *BanList) loadPersistedBans() {
+	if bl.persistPath != "" {
 		if err := bl.load(); err != nil && !os.IsNotExist(err) {
-			logger.Warn("failed to load ban list", "error", err)
+			bl.logger.Warn("failed to load ban list", "error", err)
 		}
 	}
-
-	return bl
 }
 
 // Start begins the background cleanup loop for expired bans.

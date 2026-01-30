@@ -370,7 +370,7 @@ func (g *GossipEngine) sendAnnouncement() {
 
 // gossipPeerList shares known peers with random neighbors.
 func (g *GossipEngine) gossipPeerList() {
-	if g.sender == nil || g.peerManager == nil {
+	if !g.canGossipPeers() {
 		return
 	}
 
@@ -379,7 +379,22 @@ func (g *GossipEngine) gossipPeerList() {
 		return
 	}
 
-	// Build peer list payload
+	data, err := g.encodePeerList(peers)
+	if err != nil {
+		g.logger.Error("failed to encode peer list", "error", err)
+		return
+	}
+
+	g.sendToFanOut(data, len(peers))
+}
+
+// canGossipPeers checks if the gossip engine can share peer lists.
+func (g *GossipEngine) canGossipPeers() bool {
+	return g.sender != nil && g.peerManager != nil
+}
+
+// encodePeerList builds and encodes a peer list payload from connected peers.
+func (g *GossipEngine) encodePeerList(peers []*Peer) ([]byte, error) {
 	peerList := &PeerListPayload{
 		NetworkID: g.networkID,
 		NodeID:    g.nodeID,
@@ -396,13 +411,11 @@ func (g *GossipEngine) gossipPeerList() {
 		})
 	}
 
-	data, err := EncodeMessage(MsgPeerList, peerList)
-	if err != nil {
-		g.logger.Error("failed to encode peer list", "error", err)
-		return
-	}
+	return EncodeMessage(MsgPeerList, peerList)
+}
 
-	// Select random peers to gossip to
+// sendToFanOut sends data to random peers based on the fan-out configuration.
+func (g *GossipEngine) sendToFanOut(data []byte, peerCount int) {
 	targets := g.selectRandomPeers(g.config.FanOut)
 	for _, nodeID := range targets {
 		if err := g.sender.SendTo(nodeID, data); err != nil {
@@ -410,12 +423,12 @@ func (g *GossipEngine) gossipPeerList() {
 		}
 	}
 
-	g.logger.Debug("gossiped peer list", "peers", len(peerList.Peers), "targets", len(targets))
+	g.logger.Debug("gossiped peer list", "peers", peerCount, "targets", len(targets))
 }
 
 // syncFullState sends complete routing table to a random peer.
 func (g *GossipEngine) syncFullState() {
-	if g.sender == nil || g.routingTable == nil || g.peerManager == nil {
+	if !g.canSyncState() {
 		return
 	}
 
@@ -424,7 +437,22 @@ func (g *GossipEngine) syncFullState() {
 		return
 	}
 
-	// Build route update payload
+	data, err := g.encodeRouteUpdate(routes)
+	if err != nil {
+		g.logger.Error("failed to encode route update", "error", err)
+		return
+	}
+
+	g.sendToRandomPeer(data, len(routes))
+}
+
+// canSyncState checks if the gossip engine has the required dependencies.
+func (g *GossipEngine) canSyncState() bool {
+	return g.sender != nil && g.routingTable != nil && g.peerManager != nil
+}
+
+// encodeRouteUpdate builds and encodes a route update payload from routes.
+func (g *GossipEngine) encodeRouteUpdate(routes []*RouteEntry) ([]byte, error) {
 	update := &RouteUpdatePayload{
 		NetworkID: g.networkID,
 		NodeID:    g.nodeID,
@@ -442,19 +470,17 @@ func (g *GossipEngine) syncFullState() {
 		})
 	}
 
-	data, err := EncodeMessage(MsgRouteUpdate, update)
-	if err != nil {
-		g.logger.Error("failed to encode route update", "error", err)
-		return
-	}
+	return EncodeMessage(MsgRouteUpdate, update)
+}
 
-	// Send to one random peer for anti-entropy
+// sendToRandomPeer sends data to one random peer for anti-entropy.
+func (g *GossipEngine) sendToRandomPeer(data []byte, routeCount int) {
 	targets := g.selectRandomPeers(1)
 	for _, nodeID := range targets {
 		if err := g.sender.SendTo(nodeID, data); err != nil {
 			g.logger.Debug("failed to send route update", "target", nodeID, "error", err)
 		} else {
-			g.logger.Debug("sent anti-entropy sync", "routes", len(update.Routes), "target", nodeID)
+			g.logger.Debug("sent anti-entropy sync", "routes", routeCount, "target", nodeID)
 		}
 	}
 }

@@ -164,19 +164,41 @@ func SaveConfig(cfg *Config, path string) error {
 }
 
 // Validate checks the configuration for errors.
+// It validates node, I2P, and mesh configuration sections.
 func (c *Config) Validate() error {
+	if err := c.validateNodeConfig(); err != nil {
+		return err
+	}
+	if err := c.validateI2PConfig(); err != nil {
+		return err
+	}
+	return c.validateMeshConfig()
+}
+
+// validateNodeConfig checks the node configuration section for errors.
+func (c *Config) validateNodeConfig() error {
 	if c.Node.Name == "" {
 		return errors.New("node.name is required")
 	}
 	if c.Node.DataDir == "" {
 		return errors.New("node.data_dir is required")
 	}
+	return nil
+}
+
+// validateI2PConfig checks the I2P configuration section for errors.
+func (c *Config) validateI2PConfig() error {
 	if c.I2P.SAMAddress == "" {
 		return errors.New("i2p.sam_address is required")
 	}
 	if c.I2P.TunnelLength < 0 || c.I2P.TunnelLength > 7 {
 		return errors.New("i2p.tunnel_length must be between 0 and 7")
 	}
+	return nil
+}
+
+// validateMeshConfig checks the mesh configuration section for errors.
+func (c *Config) validateMeshConfig() error {
 	if c.Mesh.TunnelSubnet == "" {
 		return errors.New("mesh.tunnel_subnet is required")
 	}

@@ -132,42 +132,93 @@ func NewNode(cfg *Config, logger *slog.Logger) (*Node, error) {
 //
 // Start blocks until the node is fully initialized or an error occurs.
 func (n *Node) Start(ctx context.Context) error {
+	if err := n.transitionToStarting(); err != nil {
+		return err
+	}
+
+	nodeCtx, cancel := context.WithCancel(ctx)
+	n.cancel = cancel
+
+	n.logStarting()
+
+	if err := n.initializeAllComponents(nodeCtx); err != nil {
+		return err
+	}
+
+	n.transitionToRunning()
+	go n.run(nodeCtx)
+
+	return nil
+}
+
+// transitionToStarting attempts to transition the node to the starting state.
+func (n *Node) transitionToStarting() error {
 	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	if n.state != StateInitial && n.state != StateStopped {
-		n.mu.Unlock()
 		return fmt.Errorf("cannot start node in state %s", n.state)
 	}
 	oldState := n.state
 	n.state = StateStarting
 	n.done = make(chan struct{})
-	n.mu.Unlock()
 
-	n.emitStateChange(oldState, StateStarting)
+	// Must emit outside of lock in real implementation
+	go n.emitStateChange(oldState, StateStarting)
+	return nil
+}
 
-	// Create a cancellable context for the node's lifetime
-	nodeCtx, cancel := context.WithCancel(ctx)
-	n.cancel = cancel
-
+// logStarting logs the node startup information.
+func (n *Node) logStarting() {
 	n.logger.Info("starting node",
 		"name", n.config.Node.Name,
 		"data_dir", n.config.Node.DataDir,
 	)
+}
 
-	// Ensure data directory exists
+// initializeAllComponents initializes all node components in order.
+func (n *Node) initializeAllComponents(nodeCtx context.Context) error {
+	if err := n.initDataDir(); err != nil {
+		return err
+	}
+
+	if err := n.initIdentityPhase(); err != nil {
+		return err
+	}
+
+	if err := n.initTransportPhase(); err != nil {
+		return err
+	}
+
+	if err := n.initMeshPhase(nodeCtx); err != nil {
+		return err
+	}
+
+	return n.initInterfacesPhase(nodeCtx)
+}
+
+// initDataDir ensures the data directory exists.
+func (n *Node) initDataDir() error {
 	if err := n.config.EnsureDataDir(); err != nil {
 		n.transitionToStopped()
 		n.emitError(err, "failed to create data directory")
 		return fmt.Errorf("creating data directory: %w", err)
 	}
+	return nil
+}
 
-	// Phase 1: Load or generate identity
+// initIdentityPhase loads or generates identity.
+func (n *Node) initIdentityPhase() error {
 	if err := n.initIdentity(); err != nil {
 		n.transitionToStopped()
 		n.emitError(err, "failed to initialize identity")
 		return err
 	}
+	return nil
+}
 
-	// Phase 2: Open I2P transport and WireGuard device
+// initTransportPhase opens I2P transport and WireGuard device.
+func (n *Node) initTransportPhase() error {
 	if err := n.initTransport(); err != nil {
 		n.transitionToStopped()
 		n.emitError(err, "failed to initialize transport")
@@ -180,23 +231,33 @@ func (n *Node) Start(ctx context.Context) error {
 		n.emitError(err, "failed to initialize device")
 		return err
 	}
+	return nil
+}
 
-	// Phase 3: Initialize mesh components and start gossip
+// initMeshPhase initializes mesh components and starts gossip.
+func (n *Node) initMeshPhase(nodeCtx context.Context) error {
 	if err := n.initMesh(nodeCtx); err != nil {
 		n.cleanup()
 		n.transitionToStopped()
 		n.emitError(err, "failed to initialize mesh")
 		return err
 	}
+	return nil
+}
 
-	// Phase 4: Start user interfaces (RPC, Web) if enabled
+// initInterfacesPhase starts user interfaces if enabled.
+func (n *Node) initInterfacesPhase(nodeCtx context.Context) error {
 	if err := n.initInterfaces(nodeCtx); err != nil {
 		n.cleanup()
 		n.transitionToStopped()
 		n.emitError(err, "failed to initialize interfaces")
 		return err
 	}
+	return nil
+}
 
+// transitionToRunning sets the node state to running.
+func (n *Node) transitionToRunning() {
 	n.mu.Lock()
 	n.state = StateRunning
 	n.startedAt = time.Now()
@@ -204,11 +265,6 @@ func (n *Node) Start(ctx context.Context) error {
 
 	n.emitStateChange(StateStarting, StateRunning)
 	n.logger.Info("node started")
-
-	// Start the main run loop in a goroutine
-	go n.run(nodeCtx)
-
-	return nil
 }
 
 // run is the main loop that runs until the context is cancelled.
@@ -1500,55 +1556,20 @@ func (n *Node) handleTokenUsed(token []byte) {
 
 // AcceptInvite accepts an invite code and initiates connection to the inviter.
 func (n *Node) AcceptInvite(ctx context.Context, inviteCode string) (*rpc.InviteAcceptResult, error) {
-	n.mu.RLock()
-	id := n.identity
-	invStore := n.inviteStore
-	n.mu.RUnlock()
-
-	if id == nil || invStore == nil {
-		return nil, errors.New("node not fully initialized")
-	}
-
-	// Parse the invite
-	invite, err := identity.ParseInvite(inviteCode)
+	id, invStore, err := n.getIdentityAndStore()
 	if err != nil {
-		return nil, fmt.Errorf("invalid invite code: %w", err)
+		return nil, err
 	}
 
-	// Validate invite
-	if err := invite.Validate(); err != nil {
-		return nil, fmt.Errorf("invite validation failed: %w", err)
-	}
-
-	// Store as pending
-	invStore.AddPending(invite)
-	if err := invStore.Save(); err != nil {
-		n.logger.Warn("failed to persist invite store", "error", err)
-	}
-
-	// Update our network ID to match the invite
-	id.SetNetworkID(invite.NetworkID)
-
-	// Add the network discovery token for auto-connect to other peers
-	n.mu.RLock()
-	pm := n.peers
-	n.mu.RUnlock()
-	if pm != nil {
-		discoveryToken := identity.DeriveDiscoveryToken(invite.NetworkID)
-		pm.AddValidToken(discoveryToken)
-		n.logger.Debug("added network discovery token for joined network")
-	}
-
-	// Initiate connection using ConnectPeer
-	_, err = n.ConnectPeer(ctx, inviteCode)
+	invite, err := n.parseAndValidateInvite(inviteCode)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to peer: %w", err)
+		return nil, err
 	}
 
-	// Mark as accepted (connection initiated)
-	invStore.MarkAccepted(invite.NetworkID)
-	if err := invStore.Save(); err != nil {
-		n.logger.Warn("failed to persist invite store", "error", err)
+	n.storeAndUpdateInvite(invite, id, invStore)
+
+	if err := n.initiateInviteConnection(ctx, inviteCode, invite, invStore); err != nil {
+		return nil, err
 	}
 
 	n.logger.Info("invite accepted",
@@ -1561,6 +1582,52 @@ func (n *Node) AcceptInvite(ctx context.Context, inviteCode string) (*rpc.Invite
 		TunnelIP:   n.TunnelIP(),
 		Message:    "Successfully accepted invite and initiated connection",
 	}, nil
+}
+
+// getIdentityAndStore retrieves identity and invite store from the node.
+func (n *Node) getIdentityAndStore() (*identity.Identity, *identity.InviteStore, error) {
+	n.mu.RLock()
+	id := n.identity
+	invStore := n.inviteStore
+	n.mu.RUnlock()
+
+	if id == nil || invStore == nil {
+		return nil, nil, errors.New("node not fully initialized")
+	}
+	return id, invStore, nil
+}
+
+// storeAndUpdateInvite stores the invite as pending and updates network ID.
+func (n *Node) storeAndUpdateInvite(invite *identity.Invite, id *identity.Identity, invStore *identity.InviteStore) {
+	invStore.AddPending(invite)
+	if err := invStore.Save(); err != nil {
+		n.logger.Warn("failed to persist invite store", "error", err)
+	}
+
+	id.SetNetworkID(invite.NetworkID)
+
+	n.mu.RLock()
+	pm := n.peers
+	n.mu.RUnlock()
+	if pm != nil {
+		discoveryToken := identity.DeriveDiscoveryToken(invite.NetworkID)
+		pm.AddValidToken(discoveryToken)
+		n.logger.Debug("added network discovery token for joined network")
+	}
+}
+
+// initiateInviteConnection connects to the peer and marks invite as accepted.
+func (n *Node) initiateInviteConnection(ctx context.Context, inviteCode string, invite *identity.Invite, invStore *identity.InviteStore) error {
+	_, err := n.ConnectPeer(ctx, inviteCode)
+	if err != nil {
+		return fmt.Errorf("connecting to peer: %w", err)
+	}
+
+	invStore.MarkAccepted(invite.NetworkID)
+	if err := invStore.Save(); err != nil {
+		n.logger.Warn("failed to persist invite store", "error", err)
+	}
+	return nil
 }
 
 // --- RouteProvider implementation for RPC handlers ---
