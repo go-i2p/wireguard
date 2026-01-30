@@ -77,7 +77,8 @@
 //	}()
 //
 // Events are delivered on a buffered channel. If the channel fills up
-// (consumer is slow), newer events are dropped.
+// (consumer is slow), newer events are dropped. Use [VPN.DroppedEventCount]
+// to check if any events have been dropped.
 //
 // # Peer Management
 //

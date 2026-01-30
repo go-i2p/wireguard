@@ -139,7 +139,7 @@ For higher-level mesh VPN functionality, use the `lib/` packages:
 | `lib/web` | Browser-based management UI |
 | `lib/tui` | Terminal UI using BubbleTea |
 | `lib/metrics` | Prometheus exposition format metrics (lightweight, no external deps) |
-| `lib/ratelimit` | Introducer rate limiting |
+| `lib/ratelimit` | Invite acceptance rate limiting |
 
 ### Using the Embedded VPN
 
@@ -206,14 +206,13 @@ When you create the first invite on a fresh node, a new mesh network is automati
 ```go
 // Create an invite (inviter side)
 // If this is a new node, a Network ID is automatically generated
-result, err := node.CreateInvite(24*time.Hour, 1) // 24h expiry, single use
-inviteCode := result.InviteCode
+inviteCode, err := vpn.CreateInvite(24*time.Hour, 1) // 24h expiry, single use
 // Returns: i2plan://eyJpMnBfZGVzdCI6Ii4uLiIsImF1dGhfdG9rZW4iOiIuLi4ifQ==
 
 // Accept an invite (joiner side)
 // The node inherits the Network ID from the invite
 ctx := context.Background()
-_, err := node.AcceptInvite(ctx, "i2plan://...")
+err = vpn.AcceptInvite(ctx, "i2plan://...")
 ```
 
 ### CLI Commands

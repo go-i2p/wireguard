@@ -132,7 +132,7 @@ func NewI2PBindWithSAM(name, samAddr string) *I2PBind {
 
 // NewI2PBindWithOptions creates a new I2P Bind with custom SAM address and tunnel options.
 // The options parameter allows configuring I2P tunnel parameters such as:
-//   - inbound.length, outbound.length (tunnel hop count, default 3)
+//   - inbound.length, outbound.length (tunnel hop count, application default is 2)
 //   - inbound.quantity, outbound.quantity (number of tunnels)
 //   - inbound.backupQuantity, outbound.backupQuantity (backup tunnels)
 //

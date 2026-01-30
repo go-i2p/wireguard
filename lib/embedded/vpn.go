@@ -254,9 +254,17 @@ func (v *VPN) State() State {
 
 // Events returns a channel that receives VPN events.
 // The channel is buffered and may drop events if not consumed.
+// Use DroppedEventCount() to check if events have been dropped.
 // Close the VPN to close this channel.
 func (v *VPN) Events() <-chan Event {
 	return v.emitter.channel()
+}
+
+// DroppedEventCount returns the total number of events dropped due to a full buffer.
+// If this value is non-zero, the event consumer is not keeping up with event emission.
+// This can help detect missed critical events.
+func (v *VPN) DroppedEventCount() uint64 {
+	return v.emitter.droppedEvents()
 }
 
 // Done returns a channel that is closed when the VPN stops.

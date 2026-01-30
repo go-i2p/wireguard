@@ -1,6 +1,7 @@
 package embedded
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -98,9 +99,10 @@ type Event struct {
 
 // eventEmitter manages event channels and emission.
 type eventEmitter struct {
-	events     chan Event
-	bufferSize int
-	closed     bool
+	events       chan Event
+	bufferSize   int
+	closed       bool
+	droppedCount atomic.Uint64 // counts events dropped due to full buffer
 }
 
 // newEventEmitter creates a new event emitter with the given buffer size.
@@ -115,7 +117,8 @@ func newEventEmitter(bufferSize int) *eventEmitter {
 }
 
 // emit sends an event to the channel.
-// If the channel is full, the event is dropped (non-blocking).
+// If the channel is full, the event is dropped (non-blocking) and the
+// dropped counter is incremented. Use DroppedEvents() to check for drops.
 func (e *eventEmitter) emit(event Event) {
 	if e.closed {
 		return
@@ -126,7 +129,8 @@ func (e *eventEmitter) emit(event Event) {
 	select {
 	case e.events <- event:
 	default:
-		// Drop event if channel is full
+		// Drop event if channel is full and track it
+		e.droppedCount.Add(1)
 	}
 }
 
@@ -171,6 +175,12 @@ func (e *eventEmitter) emitStateChange(oldState, newState State, message string)
 // channel returns the event channel for consumers.
 func (e *eventEmitter) channel() <-chan Event {
 	return e.events
+}
+
+// droppedEvents returns the total count of events dropped due to a full buffer.
+// This can be used to detect if the consumer is not keeping up with event emission.
+func (e *eventEmitter) droppedEvents() uint64 {
+	return e.droppedCount.Load()
 }
 
 // close closes the event channel.

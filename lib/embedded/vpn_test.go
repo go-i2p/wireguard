@@ -431,3 +431,36 @@ func TestEventType_String(t *testing.T) {
 		})
 	}
 }
+
+func TestVPN_DroppedEventCount(t *testing.T) {
+	// Create VPN with minimal event buffer to force drops
+	vpn, err := New(Config{
+		DataDir:         t.TempDir(),
+		EventBufferSize: 1, // Very small buffer
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer vpn.Close()
+
+	// Initially no events are dropped
+	if count := vpn.DroppedEventCount(); count != 0 {
+		t.Errorf("expected 0 dropped events initially, got %d", count)
+	}
+
+	// Emit more events than the buffer can hold without consuming them
+	// The emitter uses non-blocking sends so events will be dropped
+	for i := 0; i < 10; i++ {
+		vpn.emitter.emitSimple(EventError, "test event")
+	}
+
+	// Should have dropped events (buffer is 1, sent 10)
+	droppedCount := vpn.DroppedEventCount()
+	if droppedCount == 0 {
+		t.Error("expected some dropped events when buffer overflows")
+	}
+	// With buffer size 1 and 10 events, at least 9 should be dropped
+	if droppedCount < 9 {
+		t.Errorf("expected at least 9 dropped events, got %d", droppedCount)
+	}
+}
