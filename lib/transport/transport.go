@@ -95,10 +95,12 @@ func NewTransport(name, samAddr string, options []string) *Transport {
 // The Transport owns the bind - use Bind() to access it for WireGuard device creation.
 // Call Close() on the Transport to clean up; do not close the bind directly.
 func (t *Transport) Open() error {
+	log.WithField("name", t.name).Debug("opening transport")
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.isOpen {
+		log.Warn("transport already open")
 		return errors.New("transport already open")
 	}
 
@@ -108,18 +110,21 @@ func (t *Transport) Open() error {
 	// Open the bind to start the I2P session
 	_, _, err := t.bind.Open(0)
 	if err != nil {
+		log.WithError(err).Error("failed to open I2P bind")
 		return err
 	}
 
 	// Get our local I2P address
 	localAddr, err := t.bind.LocalAddress()
 	if err != nil {
+		log.WithError(err).Error("failed to get local I2P address")
 		t.bind.Close()
 		return err
 	}
 
 	t.localI2PDest = localAddr
 	t.isOpen = true
+	log.WithField("localAddress", localAddr).Debug("transport opened successfully")
 
 	return nil
 }
@@ -148,10 +153,12 @@ func (t *Transport) Bind() conn.Bind {
 
 // Close shuts down the I2P transport.
 func (t *Transport) Close() error {
+	log.Debug("closing transport")
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if !t.isOpen {
+		log.Debug("transport already closed")
 		return nil
 	}
 
@@ -162,6 +169,10 @@ func (t *Transport) Close() error {
 	if t.bind != nil {
 		err := t.bind.Close()
 		t.bind = nil
+		if err != nil {
+			log.WithError(err).Warn("error closing bind")
+		}
+		log.Debug("transport closed")
 		return err
 	}
 
@@ -198,10 +209,12 @@ func (t *Transport) IsOpen() bool {
 
 // AddPeer registers a new peer with the transport.
 func (t *Transport) AddPeer(i2pDest, wgPubKey string) error {
+	log.WithField("i2pDest", i2pDest).Debug("adding peer to transport")
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if !t.isOpen {
+		log.Warn("cannot add peer: transport not open")
 		return errors.New("transport not open")
 	}
 
@@ -304,11 +317,13 @@ func (t *Transport) ParseEndpoint(i2pDest string) (conn.Endpoint, error) {
 // so the same I2P destination will be restored after reconnection.
 // Returns the local destination address on success.
 func (t *Transport) Reconnect() (string, error) {
+	log.Debug("reconnecting transport")
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	// Close existing session if open
 	if t.isOpen && t.bind != nil {
+		log.Debug("closing existing session")
 		t.bind.Close()
 		t.bind = nil
 		t.isOpen = false
@@ -321,6 +336,7 @@ func (t *Transport) Reconnect() (string, error) {
 	// Open the bind to start new I2P session
 	_, _, err := t.bind.Open(0)
 	if err != nil {
+		log.WithError(err).Error("failed to reopen bind")
 		t.bind = nil
 		return "", err
 	}
@@ -328,6 +344,7 @@ func (t *Transport) Reconnect() (string, error) {
 	// Get our new local I2P address
 	localAddr, err := t.bind.LocalAddress()
 	if err != nil {
+		log.WithError(err).Error("failed to get local address after reconnect")
 		t.bind.Close()
 		t.bind = nil
 		return "", err
@@ -335,6 +352,7 @@ func (t *Transport) Reconnect() (string, error) {
 
 	t.localI2PDest = localAddr
 	t.isOpen = true
+	log.WithField("localAddress", localAddr).Debug("transport reconnected successfully")
 	// Note: peers map is preserved - caller may want to re-establish connections
 
 	return localAddr, nil

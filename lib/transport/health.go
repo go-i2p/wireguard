@@ -3,7 +3,6 @@ package transport
 
 import (
 	"context"
-	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -19,8 +18,6 @@ type HealthConfig struct {
 	RetryDelay time.Duration
 	// MaxRetryDelay is the maximum retry delay.
 	MaxRetryDelay time.Duration
-	// Logger for health monitor operations.
-	Logger *slog.Logger
 }
 
 // DefaultHealthConfig returns sensible defaults.
@@ -66,7 +63,6 @@ func (s HealthState) String() string {
 type HealthMonitor struct {
 	mu     sync.RWMutex
 	config HealthConfig
-	logger *slog.Logger
 
 	// SAM address to monitor
 	samAddr string
@@ -93,13 +89,9 @@ func NewHealthMonitor(samAddr string, cfg HealthConfig) *HealthMonitor {
 	if cfg.CheckInterval == 0 {
 		cfg = DefaultHealthConfig()
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
 
 	return &HealthMonitor{
 		config:  cfg,
-		logger:  cfg.Logger,
 		samAddr: samAddr,
 		state:   HealthStateUnknown,
 	}
@@ -130,9 +122,7 @@ func (hm *HealthMonitor) Start(ctx context.Context) error {
 	hm.cancel = cancel
 	hm.mu.Unlock()
 
-	hm.logger.Info("starting I2P health monitor",
-		"sam_addr", hm.samAddr,
-		"check_interval", hm.config.CheckInterval)
+	log.WithField("samAddr", hm.samAddr).WithField("checkInterval", hm.config.CheckInterval).Debug("starting I2P health monitor")
 
 	hm.wg.Add(1)
 	go func() {
@@ -155,7 +145,7 @@ func (hm *HealthMonitor) Stop() {
 	hm.mu.Unlock()
 
 	hm.wg.Wait()
-	hm.logger.Info("health monitor stopped")
+	log.Debug("health monitor stopped")
 }
 
 // State returns the current health state.
@@ -240,7 +230,7 @@ func (hm *HealthMonitor) handleHealthyState(previousState HealthState) {
 	}
 
 	hm.state = HealthStateHealthy
-	hm.logger.Info("I2P SAM connection healthy")
+	log.Debug("I2P SAM connection healthy")
 
 	if (previousState == HealthStateUnhealthy || previousState == HealthStateReconnecting) && hm.onHealthy != nil {
 		go hm.onHealthy()
@@ -253,7 +243,7 @@ func (hm *HealthMonitor) handleUnhealthyState() {
 
 	if hm.state == HealthStateHealthy {
 		hm.state = HealthStateUnhealthy
-		hm.logger.Warn("I2P SAM connection unhealthy", "consecutive_fails", hm.consecutiveFails)
+		log.WithField("consecutiveFails", hm.consecutiveFails).Warn("I2P SAM connection unhealthy")
 
 		if hm.onUnhealthy != nil {
 			go hm.onUnhealthy()
@@ -271,10 +261,10 @@ func (hm *HealthMonitor) attemptReconnection() {
 	reconnector := hm.onReconnect
 	hm.mu.Unlock()
 
-	hm.logger.Info("attempting to reconnect to I2P", "consecutive_fails", hm.consecutiveFails)
+	log.WithField("consecutiveFails", hm.consecutiveFails).Debug("attempting to reconnect to I2P")
 
 	if err := reconnector(); err != nil {
-		hm.logger.Error("reconnection failed", "error", err)
+		log.WithError(err).Error("reconnection failed")
 	}
 
 	hm.mu.Lock()

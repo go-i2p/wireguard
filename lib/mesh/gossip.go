@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"log/slog"
 	mrand "math/rand"
 	"net/netip"
 	"sync"
@@ -25,8 +24,6 @@ type GossipConfig struct {
 	PeerTimeout time.Duration
 	// FanOut is how many random peers to gossip to.
 	FanOut int
-	// Logger for gossip operations.
-	Logger *slog.Logger
 }
 
 // DefaultGossipConfig returns sensible defaults for gossip.
@@ -55,7 +52,6 @@ type MessageSender interface {
 type GossipEngine struct {
 	mu     sync.RWMutex
 	config GossipConfig
-	logger *slog.Logger
 
 	// Dependencies
 	peerManager  *PeerManager
@@ -107,11 +103,6 @@ func NewGossipEngine(cfg GossipEngineConfig) *GossipEngine {
 		config = DefaultGossipConfig()
 	}
 
-	logger := config.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	// Create a local random source seeded with cryptographic randomness
 	// to avoid both global rand mutex contention and predictable sequences.
 	var seed int64
@@ -123,7 +114,6 @@ func NewGossipEngine(cfg GossipEngineConfig) *GossipEngine {
 
 	return &GossipEngine{
 		config:       config,
-		logger:       logger,
 		peerManager:  cfg.PeerManager,
 		routingTable: cfg.RoutingTable,
 		sender:       cfg.Sender,
@@ -148,7 +138,7 @@ func (g *GossipEngine) Start(ctx context.Context) error {
 
 	// Warn if no sender is configured - gossip will be local-only
 	if g.sender == nil {
-		g.logger.Warn("gossip engine starting without message sender - running in local-only mode")
+		log.Warn("gossip engine starting without message sender - running in local-only mode")
 	}
 
 	g.running = true
@@ -157,7 +147,7 @@ func (g *GossipEngine) Start(ctx context.Context) error {
 	g.cancel = cancel
 	g.mu.Unlock()
 
-	g.logger.Info("starting gossip engine",
+	log.Info("starting gossip engine",
 		"heartbeat", g.config.HeartbeatInterval,
 		"gossip", g.config.GossipInterval,
 		"fanout", g.config.FanOut)
@@ -211,7 +201,7 @@ func (g *GossipEngine) Stop() {
 	g.sendLeaveAnnouncement()
 
 	g.wg.Wait()
-	g.logger.Info("gossip engine stopped")
+	log.Info("gossip engine stopped")
 }
 
 // GracefulShutdown performs a graceful shutdown with a timeout.
@@ -240,10 +230,10 @@ func (g *GossipEngine) GracefulShutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		g.logger.Info("graceful shutdown complete")
+		log.Info("graceful shutdown complete")
 		return nil
 	case <-ctx.Done():
-		g.logger.Warn("graceful shutdown timed out")
+		log.Warn("graceful shutdown timed out")
 		return ctx.Err()
 	}
 }
@@ -262,14 +252,14 @@ func (g *GossipEngine) sendLeaveAnnouncement() {
 
 	data, err := EncodeMessage(MsgPeerLeave, leave)
 	if err != nil {
-		g.logger.Error("failed to encode leave message", "error", err)
+		log.Error("failed to encode leave message", "error", err)
 		return
 	}
 
 	if err := g.sender.Broadcast(data); err != nil {
-		g.logger.Debug("failed to broadcast leave", "error", err)
+		log.Debug("failed to broadcast leave", "error", err)
 	} else {
-		g.logger.Info("sent leave announcement to peers")
+		log.Info("sent leave announcement to peers")
 	}
 }
 
@@ -378,14 +368,14 @@ func (g *GossipEngine) sendAnnouncement() {
 
 	data, err := EncodeMessage(MsgPeerAnnounce, announce)
 	if err != nil {
-		g.logger.Error("failed to encode announcement", "error", err)
+		log.Error("failed to encode announcement", "error", err)
 		return
 	}
 
 	if err := g.sender.Broadcast(data); err != nil {
-		g.logger.Debug("failed to broadcast announcement", "error", err)
+		log.Debug("failed to broadcast announcement", "error", err)
 	} else {
-		g.logger.Debug("sent peer announcement", "peer_count", peerCount)
+		log.Debug("sent peer announcement", "peer_count", peerCount)
 	}
 }
 
@@ -402,7 +392,7 @@ func (g *GossipEngine) gossipPeerList() {
 
 	data, err := g.encodePeerList(peers)
 	if err != nil {
-		g.logger.Error("failed to encode peer list", "error", err)
+		log.Error("failed to encode peer list", "error", err)
 		return
 	}
 
@@ -440,11 +430,11 @@ func (g *GossipEngine) sendToFanOut(data []byte, peerCount int) {
 	targets := g.selectRandomPeers(g.config.FanOut)
 	for _, nodeID := range targets {
 		if err := g.sender.SendTo(nodeID, data); err != nil {
-			g.logger.Debug("failed to send peer list", "target", nodeID, "error", err)
+			log.Debug("failed to send peer list", "target", nodeID, "error", err)
 		}
 	}
 
-	g.logger.Debug("gossiped peer list", "peers", peerCount, "targets", len(targets))
+	log.Debug("gossiped peer list", "peers", peerCount, "targets", len(targets))
 }
 
 // syncFullState sends complete routing table to a random peer.
@@ -460,7 +450,7 @@ func (g *GossipEngine) syncFullState() {
 
 	data, err := g.encodeRouteUpdate(routes)
 	if err != nil {
-		g.logger.Error("failed to encode route update", "error", err)
+		log.Error("failed to encode route update", "error", err)
 		return
 	}
 
@@ -499,9 +489,9 @@ func (g *GossipEngine) sendToRandomPeer(data []byte, routeCount int) {
 	targets := g.selectRandomPeers(1)
 	for _, nodeID := range targets {
 		if err := g.sender.SendTo(nodeID, data); err != nil {
-			g.logger.Debug("failed to send route update", "target", nodeID, "error", err)
+			log.Debug("failed to send route update", "target", nodeID, "error", err)
 		} else {
-			g.logger.Debug("sent anti-entropy sync", "routes", routeCount, "target", nodeID)
+			log.Debug("sent anti-entropy sync", "routes", routeCount, "target", nodeID)
 		}
 	}
 }
@@ -519,7 +509,7 @@ func (g *GossipEngine) pruneStale() {
 	}
 
 	if pruned > 0 {
-		g.logger.Info("pruned stale entries", "count", pruned)
+		log.Info("pruned stale entries", "count", pruned)
 	}
 }
 
@@ -601,7 +591,7 @@ func (g *GossipEngine) handlePeerAnnounce(msg *Message) error {
 		g.peerManager.UpdatePeerSeen(announce.NodeID)
 	}
 
-	g.logger.Debug("received peer announcement",
+	log.Debug("received peer announcement",
 		"from", announce.NodeID,
 		"peers", announce.PeerCount)
 
@@ -625,11 +615,11 @@ func (g *GossipEngine) processDiscoveredPeer(peer PeerInfo, callback func(PeerIn
 	}
 
 	if g.isPeerKnown(peer.NodeID) {
-		g.logger.Debug("peer already known", "node_id", peer.NodeID)
+		log.Debug("peer already known", "node_id", peer.NodeID)
 		return
 	}
 
-	g.logger.Info("discovered new peer via gossip",
+	log.Info("discovered new peer via gossip",
 		"node_id", peer.NodeID,
 		"i2p_dest", truncateString(peer.I2PDest, 32))
 
@@ -648,7 +638,7 @@ func (g *GossipEngine) handlePeerList(msg *Message) error {
 		return nil
 	}
 
-	g.logger.Debug("received peer list",
+	log.Debug("received peer list",
 		"from", peerList.NodeID,
 		"peers", len(peerList.Peers))
 
@@ -670,7 +660,7 @@ func (g *GossipEngine) convertRouteInfoToEntries(update *RouteUpdatePayload) []*
 	for _, ri := range update.Routes {
 		tunnelIP, err := netip.ParseAddr(ri.TunnelIP)
 		if err != nil {
-			g.logger.Debug("skipping invalid tunnel IP in route update",
+			log.Debug("skipping invalid tunnel IP in route update",
 				"ip", ri.TunnelIP, "error", err)
 			continue
 		}
@@ -697,13 +687,13 @@ func (g *GossipEngine) mergeRouteEntries(entries []*RouteEntry) {
 
 	added, updated, collisions := g.routingTable.Merge(entries)
 	if added > 0 || updated > 0 {
-		g.logger.Debug("merged route update",
+		log.Debug("merged route update",
 			"added", added,
 			"updated", updated,
 			"collisions", len(collisions))
 	}
 	for _, coll := range collisions {
-		g.logger.Warn("route collision detected", "error", coll)
+		log.Warn("route collision detected", "error", coll)
 	}
 }
 
@@ -721,7 +711,7 @@ func (g *GossipEngine) handleRouteUpdate(msg *Message) error {
 		return nil
 	}
 
-	g.logger.Debug("received route update",
+	log.Debug("received route update",
 		"from", update.NodeID,
 		"routes", len(update.Routes))
 
@@ -742,7 +732,7 @@ func (g *GossipEngine) handlePeerLeave(msg *Message) error {
 		return nil
 	}
 
-	g.logger.Info("peer leaving network", "node_id", leave.NodeID, "reason", leave.Reason)
+	log.Info("peer leaving network", "node_id", leave.NodeID, "reason", leave.Reason)
 
 	// Remove from peer manager and routing table
 	if g.peerManager != nil {
@@ -768,7 +758,7 @@ func (g *GossipEngine) delegateHandshakeInit(init *HandshakeInit) (*HandshakeRes
 	if g.peerManager != nil {
 		return g.peerManager.HandleHandshakeInit(init)
 	}
-	g.logger.Warn("no handler for handshake init")
+	log.Warn("no handler for handshake init")
 	return nil, nil
 }
 
@@ -780,19 +770,19 @@ func (g *GossipEngine) sendHandshakeResponse(init *HandshakeInit, response *Hand
 
 	responseData, encErr := EncodeMessage(MsgHandshakeResponse, response)
 	if encErr != nil {
-		g.logger.Error("failed to encode handshake response", "error", encErr)
+		log.Error("failed to encode handshake response", "error", encErr)
 		return encErr
 	}
 
 	if sendErr := g.sender.SendTo(init.NodeID, responseData); sendErr != nil {
-		g.logger.Debug("SendTo failed, falling back to SendToDest", "error", sendErr)
+		log.Debug("SendTo failed, falling back to SendToDest", "error", sendErr)
 		if fallbackErr := g.sender.SendToDest(init.I2PDest, responseData); fallbackErr != nil {
-			g.logger.Error("failed to send handshake response via fallback", "error", fallbackErr)
+			log.Error("failed to send handshake response via fallback", "error", fallbackErr)
 			return fallbackErr
 		}
 	}
 
-	g.logger.Info("sent handshake response",
+	log.Info("sent handshake response",
 		"to_node", init.NodeID,
 		"accepted", response.Accepted)
 	return nil
@@ -805,13 +795,13 @@ func (g *GossipEngine) handleHandshakeInit(msg *Message) error {
 		return err
 	}
 
-	g.logger.Info("received handshake init",
+	log.Info("received handshake init",
 		"from_node", init.NodeID,
 		"i2p_dest", truncateString(init.I2PDest, 32))
 
 	response, err := g.delegateHandshakeInit(init)
 	if err != nil {
-		g.logger.Warn("handshake init handling failed", "error", err)
+		log.Warn("handshake init handling failed", "error", err)
 		return err
 	}
 
@@ -831,7 +821,7 @@ func (g *GossipEngine) delegateHandshakeResponse(resp *HandshakeResponse) error 
 	if g.peerManager != nil {
 		return g.peerManager.HandleHandshakeResponse(resp)
 	}
-	g.logger.Warn("no handler for handshake response")
+	log.Warn("no handler for handshake response")
 	return nil
 }
 
@@ -844,14 +834,14 @@ func (g *GossipEngine) sendHandshakeComplete(nodeID string) {
 	complete := g.peerManager.CreateHandshakeComplete(true)
 	completeData, encErr := EncodeMessage(MsgHandshakeComplete, complete)
 	if encErr != nil {
-		g.logger.Error("failed to encode handshake complete", "error", encErr)
+		log.Error("failed to encode handshake complete", "error", encErr)
 		return
 	}
 
 	if sendErr := g.sender.SendTo(nodeID, completeData); sendErr != nil {
-		g.logger.Debug("failed to send handshake complete", "error", sendErr)
+		log.Debug("failed to send handshake complete", "error", sendErr)
 	} else {
-		g.logger.Info("sent handshake complete", "to_node", nodeID)
+		log.Info("sent handshake complete", "to_node", nodeID)
 	}
 }
 
@@ -861,12 +851,12 @@ func (g *GossipEngine) handleHandshakeResponse(msg *Message) error {
 		return err
 	}
 
-	g.logger.Info("received handshake response",
+	log.Info("received handshake response",
 		"from_node", resp.NodeID,
 		"accepted", resp.Accepted)
 
 	if err := g.delegateHandshakeResponse(resp); err != nil {
-		g.logger.Warn("handshake response handling failed", "error", err)
+		log.Warn("handshake response handling failed", "error", err)
 		return err
 	}
 
@@ -884,7 +874,7 @@ func (g *GossipEngine) handleHandshakeComplete(msg *Message) error {
 		return err
 	}
 
-	g.logger.Info("received handshake complete",
+	log.Info("received handshake complete",
 		"from_node", complete.NodeID,
 		"success", complete.Success)
 
@@ -898,12 +888,12 @@ func (g *GossipEngine) handleHandshakeComplete(msg *Message) error {
 	} else if g.peerManager != nil {
 		err = g.peerManager.HandleHandshakeComplete(complete)
 	} else {
-		g.logger.Warn("no handler for handshake complete")
+		log.Warn("no handler for handshake complete")
 		return nil
 	}
 
 	if err != nil {
-		g.logger.Warn("handshake complete handling failed", "error", err)
+		log.Warn("handshake complete handling failed", "error", err)
 	}
 
 	return err
@@ -954,14 +944,14 @@ func (g *GossipEngine) AnnounceLeave(reason string) {
 
 	data, err := EncodeMessage(MsgPeerLeave, leave)
 	if err != nil {
-		g.logger.Error("failed to encode leave message", "error", err)
+		log.Error("failed to encode leave message", "error", err)
 		return
 	}
 
 	if err := g.sender.Broadcast(data); err != nil {
-		g.logger.Debug("failed to broadcast leave", "error", err)
+		log.Debug("failed to broadcast leave", "error", err)
 	} else {
-		g.logger.Info("announced departure from network")
+		log.Info("announced departure from network")
 	}
 }
 

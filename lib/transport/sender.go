@@ -34,6 +34,7 @@ func NewSender(t *Transport) *Sender {
 // RegisterPeer maps a nodeID to an I2P destination for sending.
 // This must be called before SendTo can reach the peer.
 func (s *Sender) RegisterPeer(nodeID, i2pDest string) {
+	log.WithField("nodeID", nodeID).WithField("i2pDest", i2pDest).Debug("registering peer")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.peerDestinations[nodeID] = i2pDest
@@ -57,12 +58,14 @@ func (s *Sender) GetPeerDestination(nodeID string) (string, bool) {
 // SendTo sends a message to a specific peer by node ID.
 // The peer must be registered with RegisterPeer first.
 func (s *Sender) SendTo(nodeID string, data []byte) error {
+	log.WithField("nodeID", nodeID).WithField("dataLen", len(data)).Debug("sending to peer")
 	s.mu.RLock()
 	i2pDest, ok := s.peerDestinations[nodeID]
 	t := s.transport
 	s.mu.RUnlock()
 
 	if !ok {
+		log.WithField("nodeID", nodeID).Warn("peer not registered for sending")
 		return errors.New("peer not registered for sending")
 	}
 
@@ -82,29 +85,38 @@ func (s *Sender) SendToDest(i2pDest string, data []byte) error {
 // sendToDest is the internal send implementation.
 func (s *Sender) sendToDest(t *Transport, i2pDest string, data []byte) error {
 	if t == nil || !t.IsOpen() {
+		log.Warn("cannot send: transport not open")
 		return errors.New("transport not open")
 	}
 
 	// Get the underlying bind
 	bind := t.Bind()
 	if bind == nil {
+		log.Warn("cannot send: transport bind not available")
 		return errors.New("transport bind not available")
 	}
 
 	// Cast to I2PBind to access Send
 	i2pBind, ok := bind.(*i2pbind.I2PBind)
 	if !ok {
+		log.Warn("cannot send: transport is not I2P bind")
 		return errors.New("transport is not I2P bind")
 	}
 
 	// Parse the destination to an endpoint
 	endpoint, err := i2pBind.ParseEndpoint(i2pDest)
 	if err != nil {
+		log.WithError(err).Error("failed to parse endpoint")
 		return err
 	}
 
 	// Send the data
-	return i2pBind.Send([][]byte{data}, endpoint)
+	if err := i2pBind.Send([][]byte{data}, endpoint); err != nil {
+		log.WithError(err).Error("failed to send data")
+		return err
+	}
+
+	return nil
 }
 
 // Broadcast sends a message to all registered peers in parallel.
@@ -119,8 +131,11 @@ func (s *Sender) Broadcast(data []byte) error {
 	s.mu.RUnlock()
 
 	if len(destinations) == 0 {
+		log.Debug("no peers to broadcast to")
 		return nil // No peers to broadcast to
 	}
+
+	log.WithField("peerCount", len(destinations)).WithField("dataLen", len(data)).Debug("broadcasting to all peers")
 
 	// Send to all peers in parallel for better performance
 	var wg sync.WaitGroup

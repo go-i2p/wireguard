@@ -3,7 +3,6 @@ package mesh
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -60,16 +59,13 @@ type BanListConfig struct {
 	// CleanupInterval is how often to clean up expired bans.
 	// If zero, defaults to 1 hour.
 	CleanupInterval time.Duration
-	// Logger for logging ban events.
-	Logger *slog.Logger
 }
 
 // BanList manages banned peers.
 type BanList struct {
-	mu     sync.RWMutex
-	bans   map[string]*BanEntry // keyed by NodeID
-	dests  map[string]string    // I2P dest -> NodeID mapping
-	logger *slog.Logger
+	mu    sync.RWMutex
+	bans  map[string]*BanEntry // keyed by NodeID
+	dests map[string]string    // I2P dest -> NodeID mapping
 
 	// Strike tracking for auto-banning
 	strikes map[string]int // NodeID -> strike count
@@ -88,11 +84,11 @@ type BanList struct {
 
 // NewBanList creates a new BanList.
 func NewBanList(cfg BanListConfig) *BanList {
+	log.Debug("creating new ban list")
 	bl := &BanList{
 		bans:            make(map[string]*BanEntry),
 		dests:           make(map[string]string),
 		strikes:         make(map[string]int),
-		logger:          resolveLogger(cfg.Logger),
 		persistPath:     cfg.PersistPath,
 		strikeThreshold: resolveStrikeThreshold(cfg.StrikeThreshold),
 		autoBanDuration: resolveAutoBanDuration(cfg.AutoBanDuration),
@@ -101,14 +97,6 @@ func NewBanList(cfg BanListConfig) *BanList {
 
 	bl.loadPersistedBans()
 	return bl
-}
-
-// resolveLogger returns the provided logger or a default one.
-func resolveLogger(logger *slog.Logger) *slog.Logger {
-	if logger == nil {
-		return slog.Default()
-	}
-	return logger
 }
 
 // resolveStrikeThreshold returns the provided threshold or the default.
@@ -139,7 +127,7 @@ func resolveCleanupInterval(interval time.Duration) time.Duration {
 func (bl *BanList) loadPersistedBans() {
 	if bl.persistPath != "" {
 		if err := bl.load(); err != nil && !os.IsNotExist(err) {
-			bl.logger.Warn("failed to load ban list", "error", err)
+			log.WithError(err).Warn("failed to load ban list")
 		}
 	}
 }
@@ -162,8 +150,7 @@ func (bl *BanList) Start(ctx context.Context) error {
 
 	go bl.cleanupLoop(cleanupCtx)
 
-	bl.logger.Info("ban list cleanup loop started",
-		"interval", bl.cleanupInterval)
+	log.WithField("interval", bl.cleanupInterval).Debug("ban list cleanup loop started")
 
 	return nil
 }
@@ -187,7 +174,7 @@ func (bl *BanList) Stop() {
 		<-done
 	}
 
-	bl.logger.Info("ban list cleanup loop stopped")
+	log.Debug("ban list cleanup loop stopped")
 }
 
 // cleanupLoop periodically removes expired bans.
@@ -204,7 +191,7 @@ func (bl *BanList) cleanupLoop(ctx context.Context) {
 		case <-ticker.C:
 			removed := bl.CleanupExpired()
 			if removed > 0 {
-				bl.logger.Debug("cleaned up expired bans", "count", removed)
+				log.WithField("count", removed).Debug("cleaned up expired bans")
 			}
 		}
 	}
@@ -228,10 +215,7 @@ func (bl *BanList) Ban(nodeID string, reason BanReason, description string, dura
 	}
 
 	bl.bans[nodeID] = entry
-	bl.logger.Info("peer banned",
-		"node_id", nodeID,
-		"reason", reason,
-		"duration", duration)
+	log.WithField("nodeID", nodeID).WithField("reason", reason).WithField("duration", duration).Debug("peer banned")
 
 	bl.saveLocked()
 }
@@ -259,11 +243,7 @@ func (bl *BanList) BanWithDest(nodeID, i2pDest string, reason BanReason, descrip
 		bl.dests[i2pDest] = nodeID
 	}
 
-	bl.logger.Info("peer banned",
-		"node_id", nodeID,
-		"i2p_dest", truncateDest(i2pDest),
-		"reason", reason,
-		"duration", duration)
+	log.WithField("nodeID", nodeID).WithField("reason", reason).WithField("duration", duration).Debug("peer banned")
 
 	bl.saveLocked()
 }
@@ -286,7 +266,7 @@ func (bl *BanList) Unban(nodeID string) bool {
 	delete(bl.bans, nodeID)
 	delete(bl.strikes, nodeID) // Clear strikes on unban
 
-	bl.logger.Info("peer unbanned", "node_id", nodeID)
+	log.WithField("nodeID", nodeID).Debug("peer unbanned")
 	bl.saveLocked()
 
 	return true
@@ -342,10 +322,7 @@ func (bl *BanList) RecordStrike(nodeID string, reason BanReason, description str
 	bl.strikes[nodeID]++
 	strikes := bl.strikes[nodeID]
 
-	bl.logger.Debug("strike recorded",
-		"node_id", nodeID,
-		"strikes", strikes,
-		"threshold", bl.strikeThreshold)
+	log.WithField("nodeID", nodeID).WithField("strikes", strikes).WithField("threshold", bl.strikeThreshold).Debug("strike recorded")
 
 	if strikes >= bl.strikeThreshold {
 		// Auto-ban
@@ -359,11 +336,7 @@ func (bl *BanList) RecordStrike(nodeID string, reason BanReason, description str
 		}
 		bl.bans[nodeID] = entry
 
-		bl.logger.Warn("peer auto-banned after strikes",
-			"node_id", nodeID,
-			"strikes", strikes,
-			"reason", reason,
-			"duration", bl.autoBanDuration)
+		log.WithField("nodeID", nodeID).WithField("strikes", strikes).WithField("reason", reason).WithField("duration", bl.autoBanDuration).Warn("peer auto-banned after strikes")
 
 		bl.saveLocked()
 		return true
@@ -399,7 +372,7 @@ func (bl *BanList) CleanupExpired() int {
 			}
 			delete(bl.bans, nodeID)
 			removed++
-			bl.logger.Info("expired ban removed", "node_id", nodeID)
+			log.WithField("nodeID", nodeID).Debug("expired ban removed")
 		}
 	}
 
@@ -435,7 +408,7 @@ func (bl *BanList) load() error {
 	bl.loadBanEntries(bld.Bans)
 	bl.loadStrikes(bld.Strikes)
 
-	bl.logger.Info("loaded ban list", "bans", len(bl.bans))
+	log.WithField("bans", len(bl.bans)).Debug("loaded ban list")
 	return nil
 }
 
@@ -476,11 +449,11 @@ func (bl *BanList) saveLocked() {
 
 	data, err := json.MarshalIndent(bld, "", "  ")
 	if err != nil {
-		bl.logger.Error("failed to marshal ban list", "error", err)
+		log.WithError(err).Error("failed to marshal ban list")
 		return
 	}
 
 	if err := os.WriteFile(bl.persistPath, data, 0o600); err != nil {
-		bl.logger.Error("failed to save ban list", "error", err)
+		log.WithError(err).Error("failed to save ban list")
 	}
 }
