@@ -22,6 +22,12 @@ const (
 	InvitesModeAccept
 )
 
+// Timeout constants for invite operations.
+const (
+	inviteCreateTimeout = 10 * time.Second
+	inviteAcceptTimeout = 30 * time.Second
+)
+
 // InvitesModel is the model for the invites view.
 type InvitesModel struct {
 	mode          InvitesMode
@@ -394,7 +400,7 @@ func (m InvitesModel) viewAccept() string {
 // createInvite creates a new invite via RPC.
 func (m InvitesModel) createInvite(client *rpc.Client) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), inviteCreateTimeout)
 		defer cancel()
 
 		result, err := client.InviteCreate(ctx, "24h", 1)
@@ -408,7 +414,7 @@ func (m InvitesModel) createInvite(client *rpc.Client) tea.Cmd {
 // acceptInvite accepts an invite via RPC.
 func (m InvitesModel) acceptInvite(client *rpc.Client, code string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), inviteAcceptTimeout)
 		defer cancel()
 
 		result, err := client.InviteAccept(ctx, code)

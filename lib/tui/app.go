@@ -30,6 +30,13 @@ const (
 	numTabs // Total number of tabs (must be last)
 )
 
+// Time constants for TUI operations.
+const (
+	defaultRefreshInterval  = 5 * time.Second
+	defaultRPCTimeout       = 5 * time.Second
+	defaultErrorDisplayTime = 10 * time.Second
+)
+
 func (t Tab) String() string {
 	switch t {
 	case TabPeers:
@@ -108,16 +115,17 @@ func New(cfg Config) (*Model, error) {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return &Model{
-		client:        client,
-		rpcConfig:     cfg,
-		rpcConnected:  true,
-		rpcMaxRetries: 3,
-		activeTab:     TabStatus,
-		spinner:       s,
-		peersView:     NewPeersModel(),
-		routesView:    NewRoutesModel(),
-		invitesView:   NewInvitesModel(),
-		statusView:    NewStatusModel(),
+		client:         client,
+		rpcConfig:      cfg,
+		rpcConnected:   true,
+		rpcMaxRetries:  3,
+		errDisplayTime: defaultErrorDisplayTime,
+		activeTab:      TabStatus,
+		spinner:        s,
+		peersView:      NewPeersModel(),
+		routesView:     NewRoutesModel(),
+		invitesView:    NewInvitesModel(),
+		statusView:     NewStatusModel(),
 	}, nil
 }
 
@@ -269,7 +277,7 @@ func (m *Model) handleRefreshMsg(msg refreshMsg, cmds []tea.Cmd) []tea.Cmd {
 	m.peersView.SetData(msg.peers)
 	m.routesView.SetData(msg.routes)
 	m.statusView.SetData(msg.status)
-	return append(cmds, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+	return append(cmds, tea.Tick(defaultRefreshInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	}))
 }
@@ -418,7 +426,7 @@ func (m Model) renderHelpOverlay() string {
 
 // refreshData fetches fresh data from RPC with automatic reconnection on connection errors.
 func (m Model) refreshData() tea.Msg {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRPCTimeout)
 	defer cancel()
 
 	var msg refreshMsg

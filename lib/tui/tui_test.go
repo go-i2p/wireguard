@@ -970,3 +970,36 @@ func TestMessageTypes(t *testing.T) {
 		t.Error("refreshMsg should have status")
 	}
 }
+
+// TestTimeConstants verifies that time constants are properly defined and have sensible values.
+func TestTimeConstants(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    interface{}
+		wantType string
+	}{
+		{"defaultRefreshInterval", defaultRefreshInterval, "time.Duration"},
+		{"defaultRPCTimeout", defaultRPCTimeout, "time.Duration"},
+		{"defaultErrorDisplayTime", defaultErrorDisplayTime, "time.Duration"},
+		{"inviteCreateTimeout", inviteCreateTimeout, "time.Duration"},
+		{"inviteAcceptTimeout", inviteAcceptTimeout, "time.Duration"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Verify non-zero value
+			if tc.value == 0 {
+				t.Errorf("%s is zero, expected non-zero duration", tc.name)
+			}
+		})
+	}
+
+	// Verify relationships between constants
+	if inviteAcceptTimeout <= inviteCreateTimeout {
+		t.Error("inviteAcceptTimeout should be longer than inviteCreateTimeout")
+	}
+
+	if defaultErrorDisplayTime <= defaultRefreshInterval {
+		t.Error("defaultErrorDisplayTime should be longer than defaultRefreshInterval")
+	}
+}
