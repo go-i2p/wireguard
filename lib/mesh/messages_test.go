@@ -1,3 +1,23 @@
+// Package mesh_test provides unit tests and fuzz tests for the mesh protocol.
+//
+// # Fuzz Testing
+//
+// This package includes native Go fuzz tests that validate message parsing
+// and validation functions handle malformed input gracefully without panics.
+//
+// To run fuzz tests (requires Go 1.18+):
+//
+//	# Run a specific fuzz test for 60 seconds
+//	go test -fuzz=FuzzDecodeMessage -fuzztime=60s
+//
+//	# Run all fuzz tests with seed corpus only (no fuzzing)
+//	go test -v
+//
+//	# Run continuous fuzzing until a failure is found
+//	go test -fuzz=FuzzDecodeMessage
+//
+// Fuzz tests automatically generate corpus files in testdata/fuzz/ for
+// interesting inputs discovered during fuzzing.
 package mesh
 
 import (
