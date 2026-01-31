@@ -5,7 +5,17 @@ set -e
 VERSION="${VERSION:-1.0.0}"
 ARCH="x86_64"
 
-echo "Building RPM package: i2plan-${VERSION}-1.${ARCH}.rpm"
+# RPM doesn't allow hyphens in version numbers
+# Convert "0.0.0-experimental" to "0.0.0" with release "0.experimental"
+if [[ "$VERSION" == *"-"* ]]; then
+    RPM_VERSION="${VERSION%%-*}"
+    RPM_RELEASE="0.${VERSION##*-}"
+else
+    RPM_VERSION="$VERSION"
+    RPM_RELEASE="1"
+fi
+
+echo "Building RPM package: i2plan-${RPM_VERSION}-${RPM_RELEASE}.${ARCH}.rpm"
 
 # Create RPM build directory structure
 mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -23,8 +33,8 @@ cp README.md rpmbuild/BUILD/
 # Create SPEC file
 cat > rpmbuild/SPECS/i2plan.spec <<EOF
 Name:           i2plan
-Version:        ${VERSION}
-Release:        1%{?dist}
+Version:        ${RPM_VERSION}
+Release:        ${RPM_RELEASE}%{?dist}
 Summary:        WireGuard mesh VPN over I2P
 License:        See LICENSE file
 URL:            https://github.com/go-i2p/wireguard
@@ -88,7 +98,7 @@ fi
 /usr/share/doc/i2plan/README.md
 
 %changelog
-* $(date "+%a %b %d %Y") GitHub Actions <noreply@github.com> - ${VERSION}-1
+* $(date "+%a %b %d %Y") GitHub Actions <noreply@github.com> - ${RPM_VERSION}-${RPM_RELEASE}
 - Automated release build
 EOF
 
@@ -96,7 +106,7 @@ EOF
 rpmbuild -bb --define "_topdir $(pwd)/rpmbuild" rpmbuild/SPECS/i2plan.spec
 
 # Copy built RPM to current directory
-cp rpmbuild/RPMS/${ARCH}/i2plan-${VERSION}-1.*.rpm .
+cp rpmbuild/RPMS/${ARCH}/i2plan-${RPM_VERSION}-${RPM_RELEASE}.*.rpm .
 
-echo "RPM package built: i2plan-${VERSION}-1.*.rpm"
+echo "RPM package built: i2plan-${RPM_VERSION}-${RPM_RELEASE}.*.rpm"
 ls -lh i2plan-*.rpm
