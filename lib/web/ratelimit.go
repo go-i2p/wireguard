@@ -31,7 +31,7 @@ func DefaultRateLimitConfig() RateLimitConfig {
 // RateLimiter provides HTTP middleware for per-IP rate limiting.
 type RateLimiter struct {
 	limiter  *ratelimit.KeyedLimiter
-	onReject func(ip string, path string) // optional callback for rejections
+	onReject func(ip, path string) // optional callback for rejections
 }
 
 // NewRateLimiter creates a new rate limiter with the given configuration.
@@ -52,7 +52,7 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 }
 
 // SetOnReject sets a callback that is invoked when a request is rate limited.
-func (rl *RateLimiter) SetOnReject(fn func(ip string, path string)) {
+func (rl *RateLimiter) SetOnReject(fn func(ip, path string)) {
 	rl.onReject = fn
 }
 

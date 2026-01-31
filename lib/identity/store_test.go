@@ -513,7 +513,7 @@ func TestInviteStore_SaveReadOnlyDirectory(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	readOnlyDir := filepath.Join(tmpDir, "readonly")
-	if err := os.Mkdir(readOnlyDir, 0400); err != nil {
+	if err := os.Mkdir(readOnlyDir, 0o400); err != nil {
 		t.Fatal(err)
 	}
 	storePath := filepath.Join(readOnlyDir, "store.json")

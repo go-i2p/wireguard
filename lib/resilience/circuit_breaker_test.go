@@ -252,7 +252,6 @@ func TestCircuitBreakerExecuteSuccess(t *testing.T) {
 	err := cb.Execute(func() error {
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -320,7 +319,6 @@ func TestCircuitBreakerExecuteWithContext(t *testing.T) {
 	err := cb.ExecuteWithContext(ctx, func(c context.Context) error {
 		return nil
 	})
-
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}

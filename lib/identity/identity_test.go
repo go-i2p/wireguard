@@ -394,7 +394,7 @@ func TestLoadIdentity_InvalidSigningKeyHex(t *testing.T) {
 		"node_id": "test",
 		"created_at": "2024-01-01T00:00:00Z"
 	}`)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -418,7 +418,7 @@ func TestLoadIdentity_InvalidSigningKeySize(t *testing.T) {
 		"node_id": "test",
 		"created_at": "2024-01-01T00:00:00Z"
 	}`)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -445,7 +445,7 @@ func TestLoadIdentity_InvalidVerifyingKeyHex(t *testing.T) {
 		"node_id": "test",
 		"created_at": "2024-01-01T00:00:00Z"
 	}`)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -472,7 +472,7 @@ func TestLoadIdentity_InvalidVerifyingKeySize(t *testing.T) {
 		"node_id": "test",
 		"created_at": "2024-01-01T00:00:00Z"
 	}`)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -501,7 +501,7 @@ func TestLoadIdentity_KeyMismatch(t *testing.T) {
 		"node_id": "test",
 		"created_at": "2024-01-01T00:00:00Z"
 	}`)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -540,7 +540,7 @@ func TestIdentity_SaveReadOnlyDirectory(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	readOnlyDir := filepath.Join(tmpDir, "readonly")
-	if err := os.Mkdir(readOnlyDir, 0400); err != nil {
+	if err := os.Mkdir(readOnlyDir, 0o400); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(readOnlyDir, "identity.json")

@@ -199,7 +199,7 @@ func setupTestClientServer(t *testing.T) (*Client, *Server, func()) {
 
 	// Create auth file
 	authFile := filepath.Join(tmpDir, "auth.txt")
-	if err := os.WriteFile(authFile, []byte(hex.EncodeToString([]byte("test-auth-token"))), 0600); err != nil {
+	if err := os.WriteFile(authFile, []byte(hex.EncodeToString([]byte("test-auth-token"))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -554,7 +554,7 @@ func TestClient_DefaultTimeout(t *testing.T) {
 
 	// Start a test server
 	authorFile := filepath.Join(tmpDir, "auth.txt")
-	if err := os.WriteFile(authorFile, []byte(hex.EncodeToString([]byte("test-auth-token"))), 0600); err != nil {
+	if err := os.WriteFile(authorFile, []byte(hex.EncodeToString([]byte("test-auth-token"))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	srv, err := NewServer(ServerConfig{
