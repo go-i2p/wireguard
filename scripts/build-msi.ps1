@@ -38,7 +38,7 @@ if (-not (Test-Path "i2plan.exe")) {
 
 # Compile WXS to WIXOBJ
 Write-Host "Compiling WXS..."
-candle.exe -dVersion=$MsiVersion -arch $Arch installer/windows/i2plan.wxs
+candle.exe "-dVersion=$MsiVersion" -arch $Arch installer/windows/i2plan.wxs
 if ($LASTEXITCODE -ne 0) {
     Write-Error "candle.exe failed with exit code $LASTEXITCODE"
     exit $LASTEXITCODE
