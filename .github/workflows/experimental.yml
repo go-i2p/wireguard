@@ -1,0 +1,352 @@
+name: Experimental Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+
+jobs:
+  # Determine version for experimental build
+  prepare:
+    name: Prepare Experimental Build
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      git_commit: ${{ steps.version.outputs.git_commit }}
+      build_time: ${{ steps.version.outputs.build_time }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate version
+        id: version
+        run: |
+          # Get latest tag or use 0.0.0
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          VERSION="${LAST_TAG#v}-experimental"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "git_commit=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+          echo "Experimental version: $VERSION (commit: ${GITHUB_SHA::8})"
+
+  # Linux builds (deb and rpm)
+  build-linux:
+    name: Build Linux ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      matrix:
+        package: [deb, rpm]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install packaging tools
+        run: |
+          if [ "${{ matrix.package }}" = "rpm" ]; then
+            sudo apt-get update
+            sudo apt-get install -y rpm
+          fi
+
+      - name: Build static binary
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GIT_COMMIT: ${{ needs.prepare.outputs.git_commit }}
+          BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -extldflags '-static' \
+              -X github.com/go-i2p/wireguard/version.Version=${VERSION} \
+              -X github.com/go-i2p/wireguard/version.GitCommit=${GIT_COMMIT} \
+              -X github.com/go-i2p/wireguard/version.BuildTime=${BUILD_TIME}" \
+            -o i2plan ./cmd/i2plan
+
+      - name: Verify binary
+        run: |
+          ./i2plan --version
+          file i2plan
+          ldd i2plan 2>&1 | grep -q "not a dynamic executable" || (echo "Binary is not static" && exit 1)
+
+      - name: Build ${{ matrix.package }} package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          chmod +x scripts/build-${{ matrix.package }}.sh
+          ./scripts/build-${{ matrix.package }}.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2plan-${{ needs.prepare.outputs.version }}-linux-amd64-${{ matrix.package }}
+          path: |
+            *.deb
+            *.rpm
+          retention-days: 30
+
+  # Windows MSI build
+  build-windows:
+    name: Build Windows MSI
+    runs-on: windows-latest
+    needs: prepare
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install WiX Toolset
+        run: |
+          choco install wixtoolset -y --version=3.11.2
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build static binary
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GIT_COMMIT: ${{ needs.prepare.outputs.git_commit }}
+          BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
+        run: |
+          $env:CGO_ENABLED="0"
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          go build -trimpath `
+            -ldflags="-s -w -extldflags '-static' -X github.com/go-i2p/wireguard/version.Version=$env:VERSION -X github.com/go-i2p/wireguard/version.GitCommit=$env:GIT_COMMIT -X github.com/go-i2p/wireguard/version.BuildTime=$env:BUILD_TIME" `
+            -o i2plan.exe ./cmd/i2plan
+
+      - name: Verify binary
+        run: |
+          .\i2plan.exe --version
+
+      - name: Build MSI installer
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/build-msi.ps1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2plan-${{ needs.prepare.outputs.version }}-windows-amd64-msi
+          path: '*.msi'
+          retention-days: 30
+
+  # macOS builds (Intel and ARM)
+  build-macos:
+    name: Build macOS ${{ matrix.arch }}
+    runs-on: macos-latest
+    needs: prepare
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install create-dmg
+        run: |
+          npm install -g create-dmg
+
+      - name: Build static binary
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GIT_COMMIT: ${{ needs.prepare.outputs.git_commit }}
+          BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=${{ matrix.arch }} go build -trimpath \
+            -ldflags="-s -w -extldflags '-static' \
+              -X github.com/go-i2p/wireguard/version.Version=${VERSION} \
+              -X github.com/go-i2p/wireguard/version.GitCommit=${GIT_COMMIT} \
+              -X github.com/go-i2p/wireguard/version.BuildTime=${BUILD_TIME}" \
+            -o i2plan ./cmd/i2plan
+
+      - name: Verify binary
+        run: |
+          ./i2plan --version
+          file i2plan
+
+      - name: Build DMG
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          chmod +x scripts/build-dmg.sh
+          ./scripts/build-dmg.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2plan-${{ needs.prepare.outputs.version }}-darwin-${{ matrix.arch }}-dmg
+          path: '*.dmg'
+          retention-days: 30
+
+  # Docker multi-arch build
+  build-docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:experimental
+            ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.git_commit }}
+          labels: |
+            org.opencontainers.image.title=i2plan
+            org.opencontainers.image.description=WireGuard mesh VPN over I2P (experimental build)
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ needs.prepare.outputs.build_time }}
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+            GIT_COMMIT=${{ needs.prepare.outputs.git_commit }}
+            BUILD_TIME=${{ needs.prepare.outputs.build_time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Run tests
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run unit tests
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Check test coverage
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Test coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "Test coverage ${COVERAGE}% is below 70% threshold"
+            exit 1
+          fi
+
+      - name: Run integration tests
+        run: |
+          go test -tags=integration ./...
+
+  # Create/update experimental release
+  release:
+    name: Update Experimental Release
+    runs-on: ubuntu-latest
+    needs: [prepare, build-linux, build-windows, build-macos, build-docker, test]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.msi" -o -name "*.dmg" \) -exec sha256sum {} \; > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md <<EOF
+          # Experimental Build
+          
+          **⚠️ WARNING: This is an experimental build from the main branch.**
+          
+          - **Version:** ${{ needs.prepare.outputs.version }}
+          - **Commit:** ${{ needs.prepare.outputs.git_commit }} (${{ github.sha }})
+          - **Built:** ${{ needs.prepare.outputs.build_time }}
+          
+          This build is automatically generated from the latest code on the main branch and may be unstable.
+          For production use, download a stable release instead.
+          
+          ## What's Changed
+          
+          $(git log --oneline -10)
+          
+          ## Docker Images
+          
+          \`\`\`bash
+          docker pull ghcr.io/${{ github.repository }}:experimental
+          docker pull ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.git_commit }}
+          \`\`\`
+          
+          ## Installation
+          
+          See [DEPLOYMENT.md](https://github.com/${{ github.repository }}/blob/main/DEPLOYMENT.md) for installation instructions.
+          EOF
+
+      - name: Delete existing experimental release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete experimental --yes || true
+          git push origin :refs/tags/experimental || true
+
+      - name: Create experimental release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Experimental Build
+          tag_name: experimental
+          prerelease: true
+          draft: false
+          body_path: release-notes.md
+          files: |
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.msi
+            artifacts/**/*.dmg
+            artifacts/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
