@@ -367,32 +367,50 @@ func (p *Pool) runHealthCheck() {
 		return
 	}
 
+	toClose, healthy := p.evaluateConnections()
+	p.idle = healthy
+
+	// Close bad connections outside the lock
+	p.closeConnections(toClose)
+}
+
+// evaluateConnections checks each idle connection for staleness and health.
+// Returns connections to close and connections that remain healthy.
+func (p *Pool) evaluateConnections() ([]Connection, []*pooledConn) {
 	var toClose []Connection
 	healthy := make([]*pooledConn, 0, len(p.idle))
 	now := time.Now()
 
 	for _, pc := range p.idle {
-		// Check if too old
-		if now.Sub(pc.lastUsed) > p.config.MaxIdleTime {
+		if p.shouldCloseConnection(pc, now) {
 			toClose = append(toClose, pc.conn)
 			p.numOpen--
-			continue
+		} else {
+			healthy = append(healthy, pc)
 		}
-
-		// Health check
-		if !p.config.HealthCheck(pc.conn) {
-			atomic.AddUint64(&p.healthFails, 1)
-			toClose = append(toClose, pc.conn)
-			p.numOpen--
-			continue
-		}
-
-		healthy = append(healthy, pc)
 	}
 
-	p.idle = healthy
+	return toClose, healthy
+}
 
-	// Close bad connections outside the lock
+// shouldCloseConnection determines if a connection should be closed based on age and health.
+func (p *Pool) shouldCloseConnection(pc *pooledConn, now time.Time) bool {
+	// Check if too old
+	if now.Sub(pc.lastUsed) > p.config.MaxIdleTime {
+		return true
+	}
+
+	// Health check
+	if !p.config.HealthCheck(pc.conn) {
+		atomic.AddUint64(&p.healthFails, 1)
+		return true
+	}
+
+	return false
+}
+
+// closeConnections closes a list of connections asynchronously and logs the count.
+func (p *Pool) closeConnections(toClose []Connection) {
 	for _, conn := range toClose {
 		go conn.Close()
 	}
