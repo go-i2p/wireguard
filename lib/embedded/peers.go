@@ -186,7 +186,8 @@ func (v *VPN) convertRPCPeerInfoToInfo(p rpc.PeerInfo) *PeerInfo {
 
 // CreateInvite generates an invite code for a new peer to join the network.
 // The invite expires after the specified duration and can be used up to maxUses times.
-// Use maxUses=0 for unlimited uses (not recommended for security).
+// Use identity.UnlimitedUses (-1) for unlimited uses (not recommended for security).
+// maxUses=0 is invalid and will return an error.
 func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 	log.WithFields(map[string]interface{}{
 		"expiry":   expiry.String(),
@@ -206,10 +207,12 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 	if expiry <= 0 {
 		expiry = 24 * time.Hour
 	}
-	// Note: maxUses=0 means unlimited uses (passed through intentionally)
-	// Only convert negative values to the default of 1
-	if maxUses < 0 {
-		maxUses = 1
+	// Validate maxUses parameter
+	if maxUses == 0 {
+		return "", errors.New("maxUses=0 is invalid; use identity.UnlimitedUses (-1) for unlimited invites or a positive number for limited uses")
+	}
+	if maxUses < -1 {
+		return "", errors.New("maxUses must be positive, -1 (unlimited), or omitted (defaults to 1)")
 	}
 
 	// Delegate to core.Node's CreateInvite

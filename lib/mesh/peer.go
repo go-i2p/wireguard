@@ -255,6 +255,13 @@ func (pm *PeerManager) HandleHandshakeInit(init *HandshakeInit) (*HandshakeRespo
 		return pm.rejectHandshake("network ID mismatch"), nil
 	}
 
+	// Reject empty auth tokens explicitly for defense in depth
+	if len(init.AuthToken) == 0 {
+		log.Warn("rejected handshake with empty auth token", "from_node", init.NodeID)
+		pm.recordTokenStrike(init.NodeID)
+		return pm.rejectHandshake("empty auth token"), nil
+	}
+
 	matchedToken, validToken := pm.validateToken(init.AuthToken)
 	if !validToken {
 		pm.recordTokenStrike(init.NodeID)
