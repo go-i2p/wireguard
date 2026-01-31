@@ -114,6 +114,25 @@ func deriveNodeID(publicKey wgtypes.Key) string {
 // Returns nil, nil if the file doesn't exist (caller should create new identity).
 func LoadIdentity(path string) (*Identity, error) {
 	log.WithField("path", path).Debug("loading identity from file")
+
+	data, err := readIdentityFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, nil // File doesn't exist
+	}
+
+	p, err := parseIdentityJSON(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildIdentityFromPersisted(p)
+}
+
+// readIdentityFile reads the identity file, returning nil if it doesn't exist.
+func readIdentityFile(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -123,28 +142,52 @@ func LoadIdentity(path string) (*Identity, error) {
 		log.WithError(err).WithField("path", path).Error("failed to read identity file")
 		return nil, fmt.Errorf("reading identity file: %w", err)
 	}
+	return data, nil
+}
 
+// parseIdentityJSON unmarshals the JSON identity data.
+func parseIdentityJSON(data []byte) (*persistedIdentity, error) {
 	var p persistedIdentity
 	if err := json.Unmarshal(data, &p); err != nil {
 		log.WithError(err).Error("failed to parse identity file")
 		return nil, fmt.Errorf("parsing identity file: %w", err)
 	}
+	return &p, nil
+}
 
-	privateKey, err := parseWireGuardKey(p)
+// buildIdentityFromPersisted constructs an Identity from persisted data with validation.
+func buildIdentityFromPersisted(p *persistedIdentity) (*Identity, error) {
+	privateKey, err := parseWireGuardKey(*p)
 	if err != nil {
 		return nil, err
 	}
 
-	signingKey, verifyingKey, err := parseSigningKeys(p)
+	signingKey, verifyingKey, err := parseSigningKeys(*p)
 	if err != nil {
 		return nil, err
 	}
 
+	if err := validateNodeID(privateKey, p.NodeID); err != nil {
+		return nil, err
+	}
+
+	return createIdentityFromKeys(privateKey, signingKey, verifyingKey, p), nil
+}
+
+// validateNodeID verifies that the stored node ID matches the derived value.
+func validateNodeID(privateKey wgtypes.Key, storedNodeID string) error {
 	derivedPublicKey := privateKey.PublicKey()
 	derivedNodeID := deriveNodeID(derivedPublicKey)
-	if p.NodeID != derivedNodeID {
-		return nil, errors.New("node ID mismatch in identity file")
+	if storedNodeID != derivedNodeID {
+		return errors.New("node ID mismatch in identity file")
 	}
+	return nil
+}
+
+// createIdentityFromKeys creates an Identity instance from keys and persisted metadata.
+func createIdentityFromKeys(privateKey wgtypes.Key, signingKey ed25519.PrivateKey, verifyingKey ed25519.PublicKey, p *persistedIdentity) *Identity {
+	derivedPublicKey := privateKey.PublicKey()
+	derivedNodeID := deriveNodeID(derivedPublicKey)
 
 	return &Identity{
 		privateKey:   privateKey,
@@ -155,7 +198,7 @@ func LoadIdentity(path string) (*Identity, error) {
 		i2pDest:      p.I2PDest,
 		networkID:    p.NetworkID,
 		createdAt:    p.CreatedAt,
-	}, nil
+	}
 }
 
 // parseWireGuardKey parses and validates the WireGuard private key from persisted identity.
