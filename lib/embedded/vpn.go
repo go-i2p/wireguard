@@ -366,16 +366,23 @@ func (v *VPN) transitionTo(newState State) {
 // monitor watches the core node and emits events.
 func (v *VPN) monitor() {
 	log.Debug("VPN monitor started")
-	if v.node == nil {
+
+	// Safely copy node and ctx references under mutex to avoid race conditions
+	v.mu.RLock()
+	node := v.node
+	ctx := v.ctx
+	v.mu.RUnlock()
+
+	if node == nil {
 		log.Warn("VPN monitor: node is nil")
 		return
 	}
 
 	select {
-	case <-v.ctx.Done():
+	case <-ctx.Done():
 		// Normal shutdown
 		log.Debug("VPN monitor: normal shutdown")
-	case <-v.node.Done():
+	case <-node.Done():
 		// Node stopped unexpectedly
 		log.Warn("VPN monitor: node stopped unexpectedly")
 		v.mu.Lock()
