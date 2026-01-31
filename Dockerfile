@@ -29,8 +29,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
       -X github.com/go-i2p/wireguard/version.BuildTime=${BUILD_TIME}" \
     -o i2plan ./cmd/i2plan
 
-# Verify static binary (Alpine ldd returns "statically linked" for static binaries)
-RUN ldd i2plan 2>&1 | grep -qE "(not a dynamic|statically linked)" || \
+# Verify static binary
+# On Alpine, static binaries show "statically linked" or error "not a dynamic executable"
+# We just check that ldd doesn't find any dynamic libraries
+RUN ! ldd i2plan 2>&1 | grep -q "=>" || \
     (echo "Binary is not static" && exit 1)
 
 # Runtime stage
