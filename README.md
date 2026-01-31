@@ -233,11 +233,21 @@ When you create the first invite on a fresh node, a new mesh network is automati
 inviteCode, err := vpn.CreateInvite(24*time.Hour, 1) // 24h expiry, single use
 // Returns: i2plan://eyJpMnBfZGVzdCI6Ii4uLiIsImF1dGhfdG9rZW4iOiIuLi4ifQ==
 
+// Create unlimited-use invite (not recommended for security)
+// Use identity.UnlimitedUses constant (-1) for unlimited uses
+inviteCode, err := vpn.CreateInvite(24*time.Hour, identity.UnlimitedUses)
+
 // Accept an invite (joiner side)
 // The node inherits the Network ID from the invite
 ctx := context.Background()
 err = vpn.AcceptInvite(ctx, "i2plan://...")
 ```
+
+**Invite Usage Limits:**
+- **Single-use** (default): `maxUses: 1` - Most secure, recommended for production
+- **Limited uses**: `maxUses: N` - For small groups, specify positive integer
+- **Unlimited**: `maxUses: identity.UnlimitedUses` (value: -1) - Not recommended for security
+- **Invalid**: `maxUses: 0` - Explicitly rejected with error message
 
 ### CLI Commands
 
@@ -250,9 +260,12 @@ go build -o i2plan cmd/i2plan/main.go
 # Grant capabilities (Linux only)
 sudo setcap cap_net_admin=+ep ./i2plan
 
-# Start the node daemon (runs in foreground)
+# Start the node daemon (runs in foreground) - default when no subcommand is provided
 ./i2plan
 # Or with sudo on macOS/Windows/BSD: sudo ./i2plan
+
+# Check version
+./i2plan --version
 
 # Launch the interactive Terminal UI (connects to running node via RPC)
 ./i2plan tui
