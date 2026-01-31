@@ -680,7 +680,7 @@ func TestHandshakeInit_EmptyAuthToken(t *testing.T) {
 	// Create initiator identity
 	initKey, _ := wgtypes.GeneratePrivateKey()
 	initIP := AllocateTunnelIP(initKey.PublicKey())
-	initNodeID := DeriveNodeID(initKey.PublicKey())
+	initNodeID := "initiator-node"
 
 	tests := []struct {
 		name      string
