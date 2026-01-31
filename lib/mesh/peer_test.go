@@ -658,3 +658,135 @@ func TestPeerManager_TokenUsedCallback_NotCalledWithoutToken(t *testing.T) {
 		}
 	}
 }
+
+// TestHandshakeInit_EmptyAuthToken tests that handshakes with empty auth tokens are rejected.
+// This test addresses the AUDIT.md finding: "Add Empty Token Validation"
+func TestHandshakeInit_EmptyAuthToken(t *testing.T) {
+	// Create peer manager (responder)
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "responder-node",
+		I2PDest:     "responder.b32.i2p",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+
+	// Add a valid token (but we'll send empty token in handshake)
+	validToken := []byte("valid-token-12345")
+	pm.AddValidToken(validToken)
+
+	// Create initiator identity
+	initKey, _ := wgtypes.GeneratePrivateKey()
+	initIP := AllocateTunnelIP(initKey.PublicKey())
+	initNodeID := DeriveNodeID(initKey.PublicKey())
+
+	tests := []struct {
+		name      string
+		authToken []byte
+		wantError bool
+	}{
+		{
+			name:      "empty token (nil)",
+			authToken: nil,
+			wantError: true,
+		},
+		{
+			name:      "empty token (zero-length slice)",
+			authToken: []byte{},
+			wantError: true,
+		},
+		{
+			name:      "valid non-empty token",
+			authToken: validToken,
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create handshake init with specified auth token
+			init := &HandshakeInit{
+				I2PDest:     "initiator.b32.i2p",
+				WGPublicKey: initKey.PublicKey().String(),
+				TunnelIP:    initIP.String(),
+				NetworkID:   "test-network",
+				AuthToken:   tt.authToken,
+				NodeID:      initNodeID,
+			}
+
+			// Handle the handshake
+			resp, err := pm.HandleHandshakeInit(init)
+			if err != nil {
+				t.Fatalf("HandleHandshakeInit() unexpected error: %v", err)
+			}
+
+			if tt.wantError {
+				// Should be rejected
+				if resp.Accepted {
+					t.Error("HandleHandshakeInit() accepted empty auth token, expected rejection")
+				}
+				if resp.RejectReason == "" {
+					t.Error("HandleHandshakeInit() rejected but no reason provided")
+				}
+				// Verify the rejection reason mentions empty token
+				if resp.RejectReason != "empty auth token" && resp.RejectReason != "invalid auth token" {
+					t.Errorf("HandleHandshakeInit() reject reason = %q, expected 'empty auth token' or 'invalid auth token'", resp.RejectReason)
+				}
+			} else {
+				// Should be accepted
+				if !resp.Accepted {
+					t.Errorf("HandleHandshakeInit() rejected valid token: %s", resp.RejectReason)
+				}
+			}
+		})
+	}
+}
+
+// TestAddValidToken_EmptyToken tests that empty tokens are silently ignored.
+func TestAddValidToken_EmptyToken(t *testing.T) {
+	key, _ := wgtypes.GeneratePrivateKey()
+	ip := AllocateTunnelIP(key.PublicKey())
+	pm := NewPeerManager(PeerManagerConfig{
+		NodeID:      "test-node",
+		I2PDest:     "test.b32.i2p",
+		WGPublicKey: key.PublicKey(),
+		TunnelIP:    ip,
+		NetworkID:   "test-network",
+	})
+
+	// Add empty tokens (should be silently ignored)
+	pm.AddValidToken(nil)
+	pm.AddValidToken([]byte{})
+
+	// Add a valid token
+	validToken := []byte("valid-token")
+	pm.AddValidToken(validToken)
+
+	// Check that only the valid token is in the list
+	pm.mu.RLock()
+	tokenCount := len(pm.validTokens)
+	pm.mu.RUnlock()
+
+	if tokenCount != 1 {
+		t.Errorf("validTokens count = %d, want 1 (empty tokens should be ignored)", tokenCount)
+	}
+
+	// Verify the valid token works
+	_, valid := pm.validateToken(validToken)
+	if !valid {
+		t.Error("validateToken() failed for valid token")
+	}
+
+	// Verify empty tokens don't validate (even though they weren't added)
+	_, valid = pm.validateToken(nil)
+	if valid {
+		t.Error("validateToken() unexpectedly accepted nil token")
+	}
+
+	_, valid = pm.validateToken([]byte{})
+	if valid {
+		t.Error("validateToken() unexpectedly accepted empty token")
+	}
+}

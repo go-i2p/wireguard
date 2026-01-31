@@ -194,6 +194,14 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 		"max_uses": maxUses,
 	}).Debug("Creating invite")
 
+	// Validate maxUses parameter early (before checking VPN state)
+	if maxUses == 0 {
+		return "", errors.New("maxUses=0 is invalid; use identity.UnlimitedUses (-1) for unlimited invites or a positive number for limited uses")
+	}
+	if maxUses < -1 {
+		return "", errors.New("maxUses must be positive, -1 (unlimited), or omitted (defaults to 1)")
+	}
+
 	v.mu.RLock()
 	state := v.state
 	node := v.node
@@ -206,13 +214,6 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 
 	if expiry <= 0 {
 		expiry = 24 * time.Hour
-	}
-	// Validate maxUses parameter
-	if maxUses == 0 {
-		return "", errors.New("maxUses=0 is invalid; use identity.UnlimitedUses (-1) for unlimited invites or a positive number for limited uses")
-	}
-	if maxUses < -1 {
-		return "", errors.New("maxUses must be positive, -1 (unlimited), or omitted (defaults to 1)")
 	}
 
 	// Delegate to core.Node's CreateInvite
