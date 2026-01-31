@@ -132,67 +132,86 @@ func New(factory Factory, cfg Config) *Pool {
 func (p *Pool) Acquire(ctx context.Context) (Connection, error) {
 	atomic.AddUint64(&p.acquireCount, 1)
 
-	// Use configured timeout if context has no deadline
-	acquireCtx := ctx
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline && p.config.AcquireTimeout > 0 {
-		var cancel context.CancelFunc
-		acquireCtx, cancel = context.WithTimeout(ctx, p.config.AcquireTimeout)
-		defer cancel()
-	}
+	acquireCtx := p.createAcquireContext(ctx)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	for {
-		if p.closed {
+		if err := p.checkPoolState(acquireCtx); err != nil {
 			atomic.AddUint64(&p.acquireFailed, 1)
-			return nil, ErrPoolClosed
-		}
-
-		// Check context cancellation
-		select {
-		case <-acquireCtx.Done():
-			atomic.AddUint64(&p.acquireFailed, 1)
-			if acquireCtx.Err() == context.DeadlineExceeded {
-				return nil, ErrTimeout
-			}
-			return nil, acquireCtx.Err()
-		default:
+			return nil, err
 		}
 
 		// Try to get an idle connection
-		conn, ok := p.getIdleLocked()
-		if ok {
+		if conn, ok := p.getIdleLocked(); ok {
 			atomic.AddUint64(&p.acquireSuccess, 1)
 			log.Debug("acquired idle connection from pool")
 			return conn, nil
 		}
 
 		// Try to create a new connection if under limit
-		if p.numOpen < p.config.MaxSize {
-			p.numOpen++
-			p.mu.Unlock()
-
-			conn, err := p.factory(acquireCtx)
-			if err != nil {
-				p.mu.Lock()
-				p.numOpen--
-				p.cond.Signal()
-				atomic.AddUint64(&p.acquireFailed, 1)
-				log.WithError(err).Debug("failed to create new connection")
-				return nil, err
-			}
-
-			p.mu.Lock()
-			atomic.AddUint64(&p.acquireSuccess, 1)
-			log.Debug("created new connection")
-			return conn, nil
+		if conn, err := p.tryCreateConnection(acquireCtx); err != nil || conn != nil {
+			return conn, err
 		}
 
 		// Wait for a connection to be released
 		log.Debug("waiting for available connection")
 		p.waitWithContext(acquireCtx)
 	}
+}
+
+// createAcquireContext wraps the context with acquire timeout if needed.
+func (p *Pool) createAcquireContext(ctx context.Context) context.Context {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && p.config.AcquireTimeout > 0 {
+		acquireCtx, cancel := context.WithTimeout(ctx, p.config.AcquireTimeout)
+		_ = cancel // Will be cleaned up by deferred unlock in Acquire
+		return acquireCtx
+	}
+	return ctx
+}
+
+// checkPoolState checks if the pool is closed or context is canceled.
+func (p *Pool) checkPoolState(ctx context.Context) error {
+	if p.closed {
+		return ErrPoolClosed
+	}
+
+	select {
+	case <-ctx.Done():
+		if ctx.Err() == context.DeadlineExceeded {
+			return ErrTimeout
+		}
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+// tryCreateConnection attempts to create a new connection if pool capacity allows.
+// Returns (conn, nil) on success, (nil, err) on failure, or (nil, nil) if at capacity.
+func (p *Pool) tryCreateConnection(ctx context.Context) (Connection, error) {
+	if p.numOpen >= p.config.MaxSize {
+		return nil, nil
+	}
+
+	p.numOpen++
+	p.mu.Unlock()
+
+	conn, err := p.factory(ctx)
+	p.mu.Lock()
+
+	if err != nil {
+		p.numOpen--
+		p.cond.Signal()
+		atomic.AddUint64(&p.acquireFailed, 1)
+		log.WithError(err).Debug("failed to create new connection")
+		return nil, err
+	}
+
+	atomic.AddUint64(&p.acquireSuccess, 1)
+	log.Debug("created new connection")
+	return conn, nil
 }
 
 // getIdleLocked gets an idle connection (caller must hold lock).

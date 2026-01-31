@@ -260,74 +260,85 @@ func (c *Config) EnsureDataDir() error {
 // applyEnvOverrides applies environment variable overrides to the configuration.
 // Environment variables with the I2PLAN_ prefix take precedence over file-based config.
 func applyEnvOverrides(cfg *Config) {
-	// Node configuration
+	applyNodeEnvOverrides(&cfg.Node)
+	applyI2PEnvOverrides(&cfg.I2P)
+	applyMeshEnvOverrides(&cfg.Mesh)
+	applyRPCEnvOverrides(&cfg.RPC)
+	applyWebEnvOverrides(&cfg.Web)
+}
+
+// applyNodeEnvOverrides applies environment variable overrides to node configuration.
+func applyNodeEnvOverrides(node *NodeConfig) {
 	if v := os.Getenv("I2PLAN_NODE_NAME"); v != "" {
-		cfg.Node.Name = v
+		node.Name = v
 	}
 	if v := os.Getenv("I2PLAN_DATA_DIR"); v != "" {
-		cfg.Node.DataDir = v
+		node.DataDir = v
 	}
+}
 
-	// I2P configuration
+// applyI2PEnvOverrides applies environment variable overrides to I2P configuration.
+func applyI2PEnvOverrides(i2p *I2PConfig) {
 	if v := os.Getenv("I2PLAN_SAM_ADDRESS"); v != "" {
-		cfg.I2P.SAMAddress = v
+		i2p.SAMAddress = v
 	}
-	if v := os.Getenv("I2PLAN_TUNNEL_LENGTH"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.I2P.TunnelLength = i
-		}
-	}
+	applyIntEnv("I2PLAN_TUNNEL_LENGTH", &i2p.TunnelLength)
+}
 
-	// Mesh configuration
+// applyMeshEnvOverrides applies environment variable overrides to mesh configuration.
+func applyMeshEnvOverrides(mesh *MeshConfig) {
 	if v := os.Getenv("I2PLAN_TUNNEL_SUBNET"); v != "" {
-		cfg.Mesh.TunnelSubnet = v
+		mesh.TunnelSubnet = v
 	}
-	if v := os.Getenv("I2PLAN_HEARTBEAT_INTERVAL"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Mesh.HeartbeatInterval = time.Duration(i) * time.Second
-		}
-	}
-	if v := os.Getenv("I2PLAN_PEER_TIMEOUT"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Mesh.PeerTimeout = time.Duration(i) * time.Second
-		}
-	}
-	if v := os.Getenv("I2PLAN_MAX_PEERS"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Mesh.MaxPeers = i
-		}
-	}
-	if v := os.Getenv("I2PLAN_SHUTDOWN_TIMEOUT"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Mesh.ShutdownTimeout = time.Duration(i) * time.Second
-		}
-	}
-	if v := os.Getenv("I2PLAN_DRAIN_TIMEOUT"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Mesh.DrainTimeout = time.Duration(i) * time.Second
-		}
-	}
+	applyDurationEnv("I2PLAN_HEARTBEAT_INTERVAL", &mesh.HeartbeatInterval)
+	applyDurationEnv("I2PLAN_PEER_TIMEOUT", &mesh.PeerTimeout)
+	applyIntEnv("I2PLAN_MAX_PEERS", &mesh.MaxPeers)
+	applyDurationEnv("I2PLAN_SHUTDOWN_TIMEOUT", &mesh.ShutdownTimeout)
+	applyDurationEnv("I2PLAN_DRAIN_TIMEOUT", &mesh.DrainTimeout)
+}
 
-	// RPC configuration
-	if v := os.Getenv("I2PLAN_RPC_ENABLED"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.RPC.Enabled = b
-		}
-	}
+// applyRPCEnvOverrides applies environment variable overrides to RPC configuration.
+func applyRPCEnvOverrides(rpc *RPCConfig) {
+	applyBoolEnv("I2PLAN_RPC_ENABLED", &rpc.Enabled)
 	if v := os.Getenv("I2PLAN_RPC_SOCKET"); v != "" {
-		cfg.RPC.Socket = v
+		rpc.Socket = v
 	}
 	if v := os.Getenv("I2PLAN_RPC_TCP_ADDRESS"); v != "" {
-		cfg.RPC.TCPAddress = v
+		rpc.TCPAddress = v
 	}
+}
 
-	// Web configuration
-	if v := os.Getenv("I2PLAN_WEB_ENABLED"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.Web.Enabled = b
+// applyWebEnvOverrides applies environment variable overrides to web configuration.
+func applyWebEnvOverrides(web *WebConfig) {
+	applyBoolEnv("I2PLAN_WEB_ENABLED", &web.Enabled)
+	if v := os.Getenv("I2PLAN_WEB_LISTEN"); v != "" {
+		web.Listen = v
+	}
+}
+
+// applyIntEnv reads an integer environment variable and applies it to the target.
+func applyIntEnv(key string, target *int) {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			*target = i
 		}
 	}
-	if v := os.Getenv("I2PLAN_WEB_LISTEN"); v != "" {
-		cfg.Web.Listen = v
+}
+
+// applyDurationEnv reads a duration environment variable in seconds and applies it to the target.
+func applyDurationEnv(key string, target *time.Duration) {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			*target = time.Duration(i) * time.Second
+		}
+	}
+}
+
+// applyBoolEnv reads a boolean environment variable and applies it to the target.
+func applyBoolEnv(key string, target *bool) {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			*target = b
+		}
 	}
 }
