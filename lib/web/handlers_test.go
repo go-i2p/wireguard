@@ -411,6 +411,184 @@ func TestHandleAPIInviteAccept(t *testing.T) {
 	})
 }
 
+func TestHandleAPIInviteQR(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		mock := &mockRPCClient{}
+		s := newTestServer(mock)
+
+		body := `{"invite_code": "i2plan://test-invite-code-123"}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/invite/qr", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		s.handleAPIInviteQR(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		// Verify Content-Type header
+		contentType := w.Header().Get("Content-Type")
+		if contentType != "image/png" {
+			t.Errorf("Content-Type = %q, want %q", contentType, "image/png")
+		}
+
+		// Verify Cache-Control header
+		cacheControl := w.Header().Get("Cache-Control")
+		if cacheControl != "no-cache, no-store, must-revalidate" {
+			t.Errorf("Cache-Control = %q, want %q", cacheControl, "no-cache, no-store, must-revalidate")
+		}
+
+		// Verify PNG content (check PNG magic bytes)
+		responseBody := w.Body.Bytes()
+		if len(responseBody) < 8 {
+			t.Fatalf("body too short: %d bytes", len(responseBody))
+		}
+		pngHeader := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+		for i := 0; i < 8; i++ {
+			if responseBody[i] != pngHeader[i] {
+				t.Errorf("PNG header byte %d = 0x%02X, want 0x%02X", i, responseBody[i], pngHeader[i])
+			}
+		}
+
+		// Verify image is not empty (should be at least a few hundred bytes for a 256x256 QR code)
+		if len(responseBody) < 400 {
+			t.Errorf("PNG too small: %d bytes, expected >400", len(responseBody))
+		}
+	})
+
+	t.Run("empty invite code", func(t *testing.T) {
+		mock := &mockRPCClient{}
+		s := newTestServer(mock)
+
+		body := `{"invite_code": ""}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/invite/qr", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		s.handleAPIInviteQR(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+
+		var result map[string]string
+		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if result["error"] != "invite_code is required" {
+			t.Errorf("error = %q, want %q", result["error"], "invite_code is required")
+		}
+	})
+
+	t.Run("missing invite code field", func(t *testing.T) {
+		mock := &mockRPCClient{}
+		s := newTestServer(mock)
+
+		body := `{}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/invite/qr", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		s.handleAPIInviteQR(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+
+		var result map[string]string
+		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if result["error"] != "invite_code is required" {
+			t.Errorf("error = %q, want %q", result["error"], "invite_code is required")
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		mock := &mockRPCClient{}
+		s := newTestServer(mock)
+
+		body := `{invalid json`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/invite/qr", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		s.handleAPIInviteQR(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+
+		var result map[string]string
+		if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if result["error"] != "invalid request body" {
+			t.Errorf("error = %q, want %q", result["error"], "invalid request body")
+		}
+	})
+
+	t.Run("QR code with special characters", func(t *testing.T) {
+		mock := &mockRPCClient{}
+		s := newTestServer(mock)
+
+		// Test with various special characters to ensure QR library handles them
+		body := `{"invite_code": "i2plan://test-code!@#$%^&*()_+-=[]{}|;:',.<>?/~"}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/invite/qr", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		s.handleAPIInviteQR(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		// Verify valid PNG was generated
+		responseBody := w.Body.Bytes()
+		if len(responseBody) < 8 {
+			t.Fatalf("body too short: %d bytes", len(responseBody))
+		}
+		pngHeader := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+		for i := 0; i < 8; i++ {
+			if responseBody[i] != pngHeader[i] {
+				t.Errorf("PNG header byte %d = 0x%02X, want 0x%02X", i, responseBody[i], pngHeader[i])
+			}
+		}
+	})
+
+	t.Run("QR code with long invite code", func(t *testing.T) {
+		mock := &mockRPCClient{}
+		s := newTestServer(mock)
+
+		// Test with a long invite code to ensure QR library handles it
+		longCode := "i2plan://" + strings.Repeat("abcdefghijklmnopqrstuvwxyz0123456789", 10)
+		body := `{"invite_code": "` + longCode + `"}`
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/invite/qr", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
+		s.handleAPIInviteQR(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		// Verify valid PNG was generated (long codes may create larger QR codes)
+		responseBody := w.Body.Bytes()
+		if len(responseBody) < 8 {
+			t.Fatalf("body too short: %d bytes", len(responseBody))
+		}
+		pngHeader := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+		for i := 0; i < 8; i++ {
+			if responseBody[i] != pngHeader[i] {
+				t.Errorf("PNG header byte %d = 0x%02X, want 0x%02X", i, responseBody[i], pngHeader[i])
+			}
+		}
+	})
+}
+
 func TestHandleAPIHealth(t *testing.T) {
 	t.Run("healthy with peers", func(t *testing.T) {
 		mock := &mockRPCClient{
