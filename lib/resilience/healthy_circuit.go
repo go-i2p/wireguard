@@ -151,46 +151,79 @@ func (hc *HealthyCircuit) monitorLoop(ctx context.Context) {
 
 // checkHealth performs a health check and updates circuit breaker state.
 func (hc *HealthyCircuit) checkHealth() {
-	hc.mu.Lock()
-	hc.lastCheck = time.Now()
-	wasHealthy := hc.isHealthy
-	onUnhealthy := hc.onUnhealthy
-	onHealthy := hc.onHealthy
-	onReconnect := hc.onReconnect
-	hc.mu.Unlock()
-
+	wasHealthy, callbacks := hc.captureHealthState()
 	healthy := hc.probeSAM()
+	hc.updateHealthState(healthy)
 
+	if healthy {
+		hc.handleHealthyState(wasHealthy, callbacks.onHealthy)
+	} else {
+		hc.handleUnhealthyState(wasHealthy, callbacks.onUnhealthy, callbacks.onReconnect)
+	}
+}
+
+// healthCallbacks holds callbacks captured under lock.
+type healthCallbacks struct {
+	onUnhealthy func()
+	onHealthy   func()
+	onReconnect func() error
+}
+
+// captureHealthState captures current health state and callbacks under lock.
+func (hc *HealthyCircuit) captureHealthState() (bool, healthCallbacks) {
 	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
+	hc.lastCheck = time.Now()
+	return hc.isHealthy, healthCallbacks{
+		onUnhealthy: hc.onUnhealthy,
+		onHealthy:   hc.onHealthy,
+		onReconnect: hc.onReconnect,
+	}
+}
+
+// updateHealthState updates the health status under lock.
+func (hc *HealthyCircuit) updateHealthState(healthy bool) {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
 	hc.isHealthy = healthy
 	if healthy {
 		hc.lastHealthy = time.Now()
 	}
-	hc.mu.Unlock()
+}
 
-	if healthy {
-		hc.circuit.RecordSuccess()
-		if !wasHealthy && onHealthy != nil {
-			log.Debug("SAM connection restored, invoking onHealthy callback")
-			go onHealthy()
-		}
-	} else {
-		hc.circuit.RecordFailure()
-		if wasHealthy && onUnhealthy != nil {
-			log.Debug("SAM connection unhealthy, invoking onUnhealthy callback")
-			go onUnhealthy()
-		}
-
-		// Attempt reconnection if circuit is open or half-open
-		if hc.circuit.IsOpen() && onReconnect != nil {
-			log.Debug("circuit open, attempting reconnection")
-			go func() {
-				if err := onReconnect(); err != nil {
-					log.WithError(err).Warn("reconnection attempt failed")
-				}
-			}()
-		}
+// handleHealthyState processes a successful health check result.
+func (hc *HealthyCircuit) handleHealthyState(wasHealthy bool, onHealthy func()) {
+	hc.circuit.RecordSuccess()
+	if !wasHealthy && onHealthy != nil {
+		log.Debug("SAM connection restored, invoking onHealthy callback")
+		go onHealthy()
 	}
+}
+
+// handleUnhealthyState processes a failed health check result.
+func (hc *HealthyCircuit) handleUnhealthyState(wasHealthy bool, onUnhealthy func(), onReconnect func() error) {
+	hc.circuit.RecordFailure()
+
+	if wasHealthy && onUnhealthy != nil {
+		log.Debug("SAM connection unhealthy, invoking onUnhealthy callback")
+		go onUnhealthy()
+	}
+
+	if hc.circuit.IsOpen() && onReconnect != nil {
+		hc.attemptReconnection(onReconnect)
+	}
+}
+
+// attemptReconnection triggers a reconnection attempt asynchronously.
+func (hc *HealthyCircuit) attemptReconnection(onReconnect func() error) {
+	log.Debug("circuit open, attempting reconnection")
+	go func() {
+		if err := onReconnect(); err != nil {
+			log.WithError(err).Warn("reconnection attempt failed")
+		}
+	}()
 }
 
 // probeSAM attempts to connect to the SAM bridge.
