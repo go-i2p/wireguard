@@ -46,7 +46,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Link WIXOBJ to MSI
 Write-Host "Linking MSI..."
-light.exe -ext WixUIExtension -out $MsiFile i2plan.wixobj
+light.exe -ext WixUIExtension -sice:ICE61 -out $MsiFile i2plan.wixobj
 if ($LASTEXITCODE -ne 0) {
     Write-Error "light.exe failed with exit code $LASTEXITCODE"
     exit $LASTEXITCODE
