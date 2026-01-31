@@ -139,11 +139,13 @@ func (inv *Invite) Encode() (string, error) {
 		AuthToken []byte    `json:"t"`
 		NetworkID string    `json:"n"`
 		ExpiresAt time.Time `json:"e"`
+		CreatedBy string    `json:"c,omitempty"`
 	}{
 		I2PDest:   inv.I2PDest,
 		AuthToken: inv.AuthToken,
 		NetworkID: inv.NetworkID,
 		ExpiresAt: inv.ExpiresAt,
+		CreatedBy: inv.CreatedBy,
 	}
 
 	data, err := json.Marshal(payload)
@@ -204,6 +206,7 @@ type invitePayload struct {
 	AuthToken []byte    `json:"t"`
 	NetworkID string    `json:"n"`
 	ExpiresAt time.Time `json:"e"`
+	CreatedBy string    `json:"c,omitempty"`
 }
 
 // unmarshalInvitePayload parses JSON data into an invite payload.
@@ -232,6 +235,7 @@ func buildInviteFromPayload(payload *invitePayload) (*Invite, error) {
 		AuthToken: payload.AuthToken,
 		NetworkID: payload.NetworkID,
 		ExpiresAt: payload.ExpiresAt,
+		CreatedBy: payload.CreatedBy,
 		MaxUses:   1,
 		UsedCount: 0,
 	}, nil

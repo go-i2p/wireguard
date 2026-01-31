@@ -462,8 +462,12 @@ func (n *Node) initTransport() error {
 	}
 
 	// Store I2P destination in identity
-	localDest := n.trans.LocalAddress()
-	n.identity.SetI2PDest(localDest)
+	// Use full base64-encoded destination for invite compatibility
+	localDest, err := n.trans.LocalDestination()
+	if err != nil {
+		return fmt.Errorf("getting local I2P destination: %w", err)
+	}
+	n.identity.SetI2PDest(string(localDest))
 
 	// Save identity with I2P destination
 	identityPath := filepath.Join(n.config.Node.DataDir, identity.IdentityFileName)
@@ -482,8 +486,10 @@ func (n *Node) initTransport() error {
 		MaxRetryDelay: 2 * time.Minute,
 	})
 
+	// Log with base32 address for readability
+	base32Addr := localDest.Base32()
 	log.Info("I2P transport opened",
-		"local_dest", localDest[:32]+"...",
+		"local_dest", base32Addr[:32]+"...",
 	)
 
 	return nil
