@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/skip2/go-qrcode"
 )
 
 // handleDashboard renders the main dashboard page.
@@ -227,6 +229,39 @@ func (s *Server) handleAPIInviteAccept(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, result)
+}
+
+// InviteQRRequest is the request body for generating a QR code.
+type InviteQRRequest struct {
+	InviteCode string `json:"invite_code"`
+}
+
+// handleAPIInviteQR generates a QR code image for an invite code.
+func (s *Server) handleAPIInviteQR(w http.ResponseWriter, r *http.Request) {
+	var req InviteQRRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.InviteCode == "" {
+		s.writeError(w, http.StatusBadRequest, "invite_code is required")
+		return
+	}
+
+	// Generate QR code as PNG with medium error correction
+	png, err := qrcode.Encode(req.InviteCode, qrcode.Medium, 256)
+	if err != nil {
+		log.Error("failed to generate QR code", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to generate QR code")
+		return
+	}
+
+	// Set headers for PNG image
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.WriteHeader(http.StatusOK)
+	w.Write(png)
 }
 
 // HealthResponse contains the health check response.

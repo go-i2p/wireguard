@@ -249,6 +249,12 @@ err = vpn.AcceptInvite(ctx, "i2plan://...")
 - **Unlimited**: `maxUses: identity.UnlimitedUses` (value: -1) - Not recommended for security
 - **Invalid**: `maxUses: 0` - Explicitly rejected with error message
 
+**QR Code Sharing:**
+Both TUI and Web UI support QR codes for easy invite sharing:
+- **TUI**: Terminal-rendered QR codes displayed when creating invites
+- **Web UI**: PNG QR codes with webcam scanning support
+- See [QR_FEATURES.md](QR_FEATURES.md) for detailed documentation
+
 ### CLI Commands
 
 The `i2plan` command provides subcommands for managing the mesh VPN:
@@ -268,9 +274,11 @@ sudo setcap cap_net_admin=+ep ./i2plan
 ./i2plan --version
 
 # Launch the interactive Terminal UI (connects to running node via RPC)
+# Includes terminal-rendered QR codes for invite sharing
 ./i2plan tui
 
 # Start the Web UI server (connects to running node via RPC)
+# Includes PNG QR codes and webcam scanning for invites
 ./i2plan web
 
 # Execute RPC commands directly

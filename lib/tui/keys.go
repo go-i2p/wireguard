@@ -22,6 +22,7 @@ type KeyMap struct {
 	NewInvite key.Binding
 	Accept    key.Binding
 	Connect   key.Binding
+	Scan      key.Binding
 	Help      key.Binding
 }
 
@@ -89,6 +90,10 @@ var keys = KeyMap{
 	Connect: key.NewBinding(
 		key.WithKeys("c"),
 		key.WithHelp("c", "connect"),
+	),
+	Scan: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "scan QR"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),

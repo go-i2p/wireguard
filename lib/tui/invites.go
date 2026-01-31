@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/go-i2p/wireguard/lib/rpc"
+	qrterminal "github.com/mdp/qrterminal/v3"
 )
 
 // InvitesMode represents the current mode of the invites view.
@@ -21,6 +22,7 @@ const (
 	InvitesModeNormal InvitesMode = iota
 	InvitesModeCreate
 	InvitesModeAccept
+	InvitesModeScan
 )
 
 // Timeout constants for invite operations.
@@ -40,8 +42,9 @@ type InvitesModel struct {
 	acceptResult  *rpc.InviteAcceptResult
 	error         string
 	message       string
-	pendingCreate bool // Tracks if invite creation is in progress
-	pendingAccept bool // Tracks if invite acceptance is in progress
+	qrCode        string // Stores rendered QR code for display
+	pendingCreate bool   // Tracks if invite creation is in progress
+	pendingAccept bool   // Tracks if invite acceptance is in progress
 }
 
 // NewInvitesModel creates a new invites view model.
@@ -78,6 +81,11 @@ func (m *InvitesModel) SetCreatedInvite(invite *rpc.InviteCreateResult) {
 	m.pendingCreate = false
 	m.createdInvite = invite
 	m.error = ""
+
+	// Generate QR code for terminal display
+	if invite != nil && invite.InviteCode != "" {
+		m.qrCode = m.generateQRCode(invite.InviteCode)
+	}
 }
 
 // SetAcceptResult sets the accept result and resets the mode to normal.
@@ -95,7 +103,7 @@ func (m *InvitesModel) SetAcceptResult(result *rpc.InviteAcceptResult) {
 }
 
 // Update handles keyboard input messages for the invites view.
-// The behavior changes based on the current mode (Normal, Create, or Accept).
+// The behavior changes based on the current mode (Normal, Create, Accept, or Scan).
 func (m InvitesModel) Update(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, tea.Cmd) {
 	switch m.mode {
 	case InvitesModeNormal:
@@ -104,6 +112,8 @@ func (m InvitesModel) Update(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, 
 		return m.handleCreateModeKey(msg)
 	case InvitesModeAccept:
 		return m.handleAcceptModeKey(msg, client)
+	case InvitesModeScan:
+		return m.handleScanModeKey(msg, client)
 	}
 	return m, nil
 }
@@ -132,6 +142,13 @@ func (m InvitesModel) handleNormalModeKey(msg tea.KeyMsg, client *rpc.Client) (I
 		return m, m.createInvite(client)
 	case key.Matches(msg, keys.Accept):
 		m.mode = InvitesModeAccept
+		m.textInput.Focus()
+		m.textInput.SetValue("")
+		m.error = ""
+		m.message = ""
+		return m, textinput.Blink
+	case key.Matches(msg, keys.Scan):
+		m.mode = InvitesModeScan
 		m.textInput.Focus()
 		m.textInput.SetValue("")
 		m.error = ""
@@ -202,6 +219,8 @@ func (m InvitesModel) View() string {
 		return m.viewCreate()
 	case InvitesModeAccept:
 		return m.viewAccept()
+	case InvitesModeScan:
+		return m.viewScan()
 	default:
 		return m.viewNormal()
 	}
@@ -246,6 +265,7 @@ func (m InvitesModel) renderInstructionsBox() string {
 		"",
 		styles.Bold.Render("n")+" - Generate a new invite code to share",
 		styles.Bold.Render("a")+" - Accept an invite code from someone else",
+		styles.Bold.Render("s")+" - Scan a QR code (paste from image)",
 	)
 
 	return instructionsBox.Render(instructions)
@@ -267,6 +287,16 @@ func (m InvitesModel) renderCreatedInviteBox() string {
 		"",
 		styles.Muted.Render("Expires: "+m.createdInvite.ExpiresAt),
 	)
+
+	// Add QR code if available
+	if m.qrCode != "" {
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			content,
+			"",
+			styles.Muted.Render("QR Code:"),
+			m.qrCode,
+		)
+	}
 
 	return inviteBox.Render(content)
 }
@@ -430,4 +460,121 @@ func (m InvitesModel) acceptInvite(client *rpc.Client, code string) tea.Cmd {
 		}
 		return inviteAcceptedMsg{result: result}
 	}
+}
+
+// generateQRCode generates a terminal-rendered QR code for the invite code.
+func (m InvitesModel) generateQRCode(inviteCode string) string {
+	// Create a string builder to capture the QR code output
+	var qrBuilder strings.Builder
+
+	// Configure QR terminal with medium level error correction
+	config := qrterminal.Config{
+		Level:     qrterminal.M,
+		Writer:    &qrBuilder,
+		BlackChar: qrterminal.BLACK,
+		WhiteChar: qrterminal.WHITE,
+		QuietZone: 1,
+	}
+
+	// Generate QR code
+	qrterminal.GenerateWithConfig(inviteCode, config)
+
+	return qrBuilder.String()
+}
+
+// handleScanModeKey processes key input in scan mode.
+// Note: Terminal webcam scanning is not feasible, so this mode allows
+// pasting QR code data extracted from an image file using external tools.
+func (m InvitesModel) handleScanModeKey(msg tea.KeyMsg, client *rpc.Client) (InvitesModel, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.Escape):
+		m.mode = InvitesModeNormal
+		m.textInput.Blur()
+	case key.Matches(msg, keys.Enter):
+		code := strings.TrimSpace(m.textInput.Value())
+		if code == "" {
+			return m, nil
+		}
+
+		// Validate invite code format
+		if !strings.HasPrefix(code, "i2plan://") {
+			m.error = "Invalid invite format (must start with i2plan://)"
+			return m, nil
+		}
+
+		if len(code) < 20 {
+			m.error = "Invite code too short"
+			return m, nil
+		}
+
+		// Ignore if already accepting an invite
+		if m.pendingAccept {
+			return m, nil
+		}
+
+		m.pendingAccept = true
+		m.textInput.Blur()
+		m.error = ""
+		return m, m.acceptInvite(client, code)
+	default:
+		var cmd tea.Cmd
+		m.textInput, cmd = m.textInput.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+// viewScan renders the scan invite view.
+// Terminal webcam access is not available, so this provides instructions
+// for using external QR code scanners or OCR tools.
+func (m InvitesModel) viewScan() string {
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Padding(2, 4).
+		Width(70)
+
+	var content string
+	if m.pendingAccept {
+		content = lipgloss.JoinVertical(lipgloss.Center,
+			styles.BoxTitle.Render("Accepting Invite..."),
+			"",
+			m.spinner.View()+" Joining network...",
+		)
+	} else {
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			styles.BoxTitle.Render("Scan QR Code"),
+			"",
+			"Terminal webcam scanning is not available.",
+			"",
+			"To scan a QR code:",
+			"1. Use a mobile QR code scanner app, or",
+			"2. Use 'zbarimg' command: zbarimg qr.png",
+			"3. Paste the extracted i2plan:// URL below",
+			"",
+			m.textInput.View(),
+			"",
+		)
+
+		if m.error != "" {
+			content = lipgloss.JoinVertical(lipgloss.Left,
+				content,
+				styles.Error.Render(fmt.Sprintf("⚠ %s", m.error)),
+				"",
+			)
+		}
+
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			content,
+			styles.HelpText.Render("Enter to accept • Esc to cancel"),
+		)
+	}
+
+	return lipgloss.Place(
+		m.width,
+		m.height-2,
+		lipgloss.Center,
+		lipgloss.Center,
+		box.Render(content),
+	)
 }

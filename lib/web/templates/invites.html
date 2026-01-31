@@ -27,7 +27,13 @@
             <label for="invite-code">Invite Code:</label>
             <textarea id="invite-code" class="form-textarea" readonly rows="4" aria-describedby="invite-code-help"></textarea>
             <p id="invite-code-help" class="muted sr-only">Copy this code and share it with the person you want to invite.</p>
-            <button type="button" class="btn btn-secondary" id="copy-invite-btn" onclick="copyInviteCode(event)">Copy to Clipboard</button>
+            <div style="margin-top: 1rem;">
+                <button type="button" class="btn btn-secondary" id="copy-invite-btn" onclick="copyInviteCode(event)">Copy to Clipboard</button>
+                <button type="button" class="btn btn-secondary" id="show-qr-btn" onclick="showQRCode(event)">Show QR Code</button>
+            </div>
+            <div id="qr-code-container" class="hidden" style="margin-top: 1rem; text-align: center;">
+                <img id="qr-code-image" src="" alt="QR Code" style="max-width: 256px; border: 1px solid #ccc; padding: 10px; background: white;">
+            </div>
         </div>
     </article>
 
@@ -39,11 +45,22 @@
                 <label for="invite_code">Invite Code:</label>
                 <textarea id="invite_code" name="invite_code" class="form-textarea" rows="4" placeholder="i2plan://..." required aria-required="true"></textarea>
             </div>
-            <button type="submit" class="btn btn-primary" id="accept-invite-btn">Accept Invite</button>
+            <div style="margin-top: 1rem;">
+                <button type="submit" class="btn btn-primary" id="accept-invite-btn">Accept Invite</button>
+                <button type="button" class="btn btn-secondary" id="scan-qr-btn" onclick="startQRScan()">Scan QR Code</button>
+            </div>
         </form>
         <div id="accept-result" class="hidden" aria-live="polite">
             <div id="accept-success" class="alert alert-success hidden" role="status"></div>
             <div id="accept-error" class="alert alert-error hidden" role="alert"></div>
+        </div>
+        <div id="qr-scanner-container" class="hidden" style="margin-top: 1rem;">
+            <video id="qr-video" style="max-width: 100%; border: 1px solid #ccc;"></video>
+            <canvas id="qr-canvas" style="display: none;"></canvas>
+            <div style="margin-top: 0.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="stopQRScan()">Stop Scanning</button>
+            </div>
+            <p class="muted" style="margin-top: 0.5rem;">Position the QR code in front of your camera</p>
         </div>
     </article>
 </div>

@@ -112,6 +112,7 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/csrf-token", s.handleAPICSRFToken)
 	mux.HandleFunc("POST /api/invite/create", s.handleAPIInviteCreate)
 	mux.HandleFunc("POST /api/invite/accept", s.handleAPIInviteAccept)
+	mux.HandleFunc("POST /api/invite/qr", s.handleAPIInviteQR)
 
 	// Health check endpoints
 	mux.HandleFunc("GET /api/health", s.handleAPIHealth)
