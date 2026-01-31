@@ -1,0 +1,46 @@
+# Build artifacts
+i2plan
+*.exe
+*.deb
+*.rpm
+*.msi
+*.dmg
+
+# Test files
+*_test.go
+testdata/
+
+# Git
+.git/
+.gitignore
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Packaging
+installer/
+scripts/
+rpmbuild/
+debian-package/
+
+# Logs
+*.log
+
+# Development files
+.env
+*.local

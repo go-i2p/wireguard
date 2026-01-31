@@ -1,0 +1,31 @@
+[Unit]
+Description=i2plan WireGuard Mesh VPN over I2P
+Documentation=https://github.com/go-i2p/wireguard
+After=network-online.target i2prouter.service i2pd.service
+Wants=network-online.target
+Requires=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/i2plan
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/i2plan
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=512
+
+[Install]
+WantedBy=multi-user.target

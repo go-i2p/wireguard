@@ -4,20 +4,75 @@ This guide covers deploying i2plan (WireGuard over I2P mesh VPN) on desktop comp
 
 ## Table of Contents
 
-1. [Prerequisites](#prerequisites)
-2. [Platform-Specific Setup](#platform-specific-setup)
+1. [Installation](#installation)
+2. [Prerequisites](#prerequisites)
+3. [Platform-Specific Setup](#platform-specific-setup)
    - [Linux](#linux)
    - [macOS](#macos)
    - [Windows](#windows)
    - [BSD (FreeBSD/OpenBSD)](#bsd-freebsdopenbsd)
-3. [Building i2plan](#building-i2plan)
-4. [Single-Node Setup](#single-node-setup)
-5. [Multi-Node Mesh Setup](#multi-node-mesh-setup)
-6. [Running as a Service](#running-as-a-service)
-7. [Docker Deployment](#docker-deployment)
-8. [Security Hardening](#security-hardening)
-9. [Monitoring and Logging](#monitoring-and-logging)
-10. [Maintenance](#maintenance)
+4. [Building i2plan](#building-i2plan)
+5. [Single-Node Setup](#single-node-setup)
+6. [Multi-Node Mesh Setup](#multi-node-mesh-setup)
+7. [Running as a Service](#running-as-a-service)
+8. [Docker Deployment](#docker-deployment)
+9. [Security Hardening](#security-hardening)
+10. [Monitoring and Logging](#monitoring-and-logging)
+11. [Maintenance](#maintenance)
+
+---
+
+## Installation
+
+### Pre-built Packages
+
+Download platform-specific packages from the [Releases](https://github.com/go-i2p/wireguard/releases) page:
+
+**Linux:**
+```bash
+# Debian/Ubuntu
+wget https://github.com/go-i2p/wireguard/releases/latest/download/i2plan_VERSION_amd64.deb
+sudo dpkg -i i2plan_VERSION_amd64.deb
+
+# RHEL/CentOS/Fedora
+wget https://github.com/go-i2p/wireguard/releases/latest/download/i2plan-VERSION-1.x86_64.rpm
+sudo rpm -i i2plan-VERSION-1.x86_64.rpm
+
+# Verify installation
+i2plan --version
+```
+
+**macOS:**
+```bash
+# Download and open DMG
+wget https://github.com/go-i2p/wireguard/releases/latest/download/i2plan-VERSION-darwin-amd64.dmg
+open i2plan-VERSION-darwin-amd64.dmg
+
+# After installation, verify
+/Applications/i2plan.app/Contents/MacOS/i2plan --version
+```
+
+**Windows:**
+1. Download `i2plan-VERSION-windows-amd64.msi` from [Releases](https://github.com/go-i2p/wireguard/releases)
+2. Double-click the MSI file to install
+3. Installer will add i2plan to PATH
+4. Verify in PowerShell:
+```powershell
+i2plan.exe --version
+```
+
+**Docker:**
+```bash
+# Pull latest image
+docker pull ghcr.io/go-i2p/wireguard:latest
+
+# Run with network capabilities
+docker run --cap-add=NET_ADMIN ghcr.io/go-i2p/wireguard:latest --version
+```
+
+### From Source
+
+If pre-built packages are unavailable for your platform, see [Building i2plan](#building-i2plan) below.
 
 ---
 

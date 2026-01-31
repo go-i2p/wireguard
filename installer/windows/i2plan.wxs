@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" 
+           Name="i2plan" 
+           Version="$(var.Version)"
+           Manufacturer="go-i2p"
+           Language="1033"
+           UpgradeCode="E8F7A9B3-2C4D-4E5F-A1B6-3D7E9F2C8A5B">
+    
+    <Package InstallerVersion="200" 
+             Compressed="yes"
+             InstallScope="perMachine"
+             InstallPrivileges="elevated"
+             Description="WireGuard mesh VPN over I2P"
+             Comments="i2plan mesh VPN installer" />
+    
+    <Media Id="1" Cabinet="i2plan.cab" EmbedCab="yes" />
+    
+    <!-- Upgrade logic -->
+    <Upgrade Id="E8F7A9B3-2C4D-4E5F-A1B6-3D7E9F2C8A5B">
+      <UpgradeVersion OnlyDetect="no" 
+                      Property="PREVIOUSFOUND"
+                      Minimum="0.0.0" 
+                      IncludeMinimum="yes"
+                      Maximum="$(var.Version)" 
+                      IncludeMaximum="no" />
+    </Upgrade>
+    
+    <InstallExecuteSequence>
+      <RemoveExistingProducts After="InstallInitialize" />
+    </InstallExecuteSequence>
+    
+    <!-- Directory structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="i2plan">
+          <Component Id="i2planBinary" Guid="A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D">
+            <File Id="i2planExe" 
+                  Source="i2plan.exe" 
+                  KeyPath="yes"
+                  Checksum="yes" />
+            <Environment Id="PATH" 
+                         Name="PATH" 
+                         Value="[INSTALLFOLDER]" 
+                         Permanent="no" 
+                         Part="last" 
+                         Action="set" 
+                         System="yes" />
+          </Component>
+          
+          <Component Id="ConfigFiles" Guid="B2C3D4E5-F6A7-5B6C-9D0E-1F2A3B4C5D6E">
+            <File Id="ConfigExample" Source="config.example.toml" />
+            <File Id="ReadmeFile" Source="README.md" />
+            <File Id="LicenseFile" Source="LICENSE" />
+          </Component>
+        </Directory>
+      </Directory>
+      
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="I2PLANDATA" Name="i2plan">
+          <Component Id="DataDirectory" Guid="C3D4E5F6-A7B8-6C7D-0E1F-2A3B4C5D6E7F">
+            <CreateFolder>
+              <Permission User="Administrators" GenericAll="yes" />
+              <Permission User="SYSTEM" GenericAll="yes" />
+            </CreateFolder>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+    
+    <!-- Features -->
+    <Feature Id="Complete" 
+             Title="i2plan" 
+             Description="WireGuard mesh VPN over I2P"
+             Level="1"
+             ConfigurableDirectory="INSTALLFOLDER">
+      <ComponentRef Id="i2planBinary" />
+      <ComponentRef Id="ConfigFiles" />
+      <ComponentRef Id="DataDirectory" />
+    </Feature>
+    
+    <!-- UI and properties -->
+    <UIRef Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="installer/windows/License.rtf" />
+    
+    <!-- Registry for uninstall -->
+    <Property Id="ARPPRODUCTICON" Value="i2plan.exe" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/go-i2p/wireguard" />
+    <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
+    
+  </Product>
+</Wix>

@@ -43,6 +43,10 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed platform-specific setup instruct
 
 ## Installation
 
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed installation instructions including pre-built packages for Linux, macOS, Windows, and Docker.
+
+### Quick Install from Source
+
 ```bash
 go get github.com/go-i2p/wireguard
 ```
