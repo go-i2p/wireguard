@@ -159,7 +159,9 @@ func (s *Server) startUnixListener(ctx context.Context, socketPath string) error
 		return fmt.Errorf("chmod socket: %w", err)
 	}
 
+	s.mu.Lock()
 	s.unixListener = listener
+	s.mu.Unlock()
 	s.wg.Add(1)
 	go s.acceptLoop(ctx, listener, "unix")
 
@@ -174,7 +176,9 @@ func (s *Server) startTCPListener(ctx context.Context, address string) error {
 		return fmt.Errorf("listen tcp: %w", err)
 	}
 
+	s.mu.Lock()
 	s.tcpListener = listener
+	s.mu.Unlock()
 	s.wg.Add(1)
 	go s.acceptLoop(ctx, listener, "tcp")
 
@@ -451,17 +455,17 @@ func (s *Server) StopWithContext(ctx context.Context) error {
 		return nil
 	}
 	s.running = false
-	s.mu.Unlock()
 
-	log.Info("stopping RPC server, draining in-flight requests")
-
-	// Close listeners to stop accepting new connections
+	// Close listeners to stop accepting new connections (under mutex protection)
 	if s.unixListener != nil {
 		s.unixListener.Close()
 	}
 	if s.tcpListener != nil {
 		s.tcpListener.Close()
 	}
+	s.mu.Unlock()
+
+	log.Info("stopping RPC server, draining in-flight requests")
 
 	// Wait for all handlers to finish or context to cancel
 	done := make(chan struct{})
@@ -498,6 +502,8 @@ func (s *Server) AuthToken() string {
 
 // UnixSocketPath returns the Unix socket path if listening.
 func (s *Server) UnixSocketPath() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.unixListener != nil {
 		return s.unixListener.Addr().String()
 	}
@@ -506,6 +512,8 @@ func (s *Server) UnixSocketPath() string {
 
 // TCPAddress returns the TCP address if listening.
 func (s *Server) TCPAddress() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.tcpListener != nil {
 		return s.tcpListener.Addr().String()
 	}
