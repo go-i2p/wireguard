@@ -20,9 +20,9 @@
     <Upgrade Id="E8F7A9B3-2C4D-4E5F-A1B6-3D7E9F2C8A5B">
       <UpgradeVersion OnlyDetect="no" 
                       Property="PREVIOUSFOUND"
-                      Minimum="0.0.0" 
+                      Minimum="0.0.0.0" 
                       IncludeMinimum="yes"
-                      Maximum="$(var.Version)" 
+                      Maximum="999.999.999.999" 
                       IncludeMaximum="no" />
     </Upgrade>
     
