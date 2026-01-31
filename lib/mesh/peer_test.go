@@ -424,12 +424,12 @@ func TestPeerManager_AddValidToken_RejectsEmpty(t *testing.T) {
 		t.Fatalf("HandleHandshakeInit() error = %v", err)
 	}
 
-	// Should be rejected because empty token doesn't match any valid token
+	// Should be rejected because empty token is rejected immediately
 	if resp.Accepted {
 		t.Error("Handshake with empty token should be rejected")
 	}
-	if resp.RejectReason != "invalid auth token" {
-		t.Errorf("RejectReason = %q, want %q", resp.RejectReason, "invalid auth token")
+	if resp.RejectReason != "empty auth token" {
+		t.Errorf("RejectReason = %q, want %q", resp.RejectReason, "empty auth token")
 	}
 }
 
