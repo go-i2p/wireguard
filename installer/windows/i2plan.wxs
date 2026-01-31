@@ -22,7 +22,7 @@
                       Property="PREVIOUSFOUND"
                       Minimum="0.0.0.0" 
                       IncludeMinimum="yes"
-                      Maximum="999.999.999.999" 
+                      Maximum="255.255.255.255" 
                       IncludeMaximum="no" />
     </Upgrade>
     
