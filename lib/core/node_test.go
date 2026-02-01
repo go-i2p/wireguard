@@ -14,7 +14,7 @@ func TestNewNode_RequiresConfig(t *testing.T) {
 }
 
 func TestNewNode_ValidatesConfig(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := testConfig(t)
 	cfg.Node.Name = "" // Invalid
 
 	_, err := NewNode(cfg)
@@ -24,8 +24,7 @@ func TestNewNode_ValidatesConfig(t *testing.T) {
 }
 
 func TestNewNode_Success(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
@@ -38,8 +37,7 @@ func TestNewNode_Success(t *testing.T) {
 }
 
 func TestNewNode_WithCustomLogger(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	// Logger is now configured via DEBUG_I2P environment variable
 	node, err := NewNode(cfg)
@@ -53,13 +51,13 @@ func TestNewNode_WithCustomLogger(t *testing.T) {
 }
 
 func TestNode_StartAndStop(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
+	defer cleanupNode(t, node)
 
 	ctx := context.Background()
 
@@ -86,8 +84,7 @@ func TestNode_StartAndStop(t *testing.T) {
 }
 
 func TestNode_CannotStartTwice(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
@@ -99,11 +96,7 @@ func TestNode_CannotStartTwice(t *testing.T) {
 	if err := node.Start(ctx); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		node.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node)
 
 	// Second start should fail
 	if err := node.Start(ctx); err == nil {
@@ -112,8 +105,7 @@ func TestNode_CannotStartTwice(t *testing.T) {
 }
 
 func TestNode_CannotStopWhenNotRunning(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
@@ -130,13 +122,13 @@ func TestNode_CannotStopWhenNotRunning(t *testing.T) {
 }
 
 func TestNode_RestartAfterStop(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
+	defer cleanupNode(t, node)
 
 	ctx := context.Background()
 
@@ -165,8 +157,7 @@ func TestNode_RestartAfterStop(t *testing.T) {
 }
 
 func TestNode_Config(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 	cfg.Node.Name = "test-config-node"
 
 	node, err := NewNode(cfg)
@@ -181,13 +172,13 @@ func TestNode_Config(t *testing.T) {
 }
 
 func TestNode_DoneChannel(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
+	defer cleanupNode(t, node)
 
 	ctx := context.Background()
 
@@ -238,8 +229,7 @@ func TestNodeState_String(t *testing.T) {
 }
 
 func TestNode_GetConfig(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 	cfg.Node.Name = "test-node"
 
 	node, err := NewNode(cfg)
@@ -286,8 +276,7 @@ func TestNode_GetConfig(t *testing.T) {
 }
 
 func TestNode_SetConfig(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
@@ -338,8 +327,7 @@ func TestNode_SetConfig(t *testing.T) {
 }
 
 func TestNode_PeerCount(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {
@@ -353,8 +341,7 @@ func TestNode_PeerCount(t *testing.T) {
 }
 
 func TestNode_I2PAddress(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 
 	node, err := NewNode(cfg)
 	if err != nil {

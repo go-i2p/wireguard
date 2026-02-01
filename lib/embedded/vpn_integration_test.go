@@ -8,15 +8,10 @@ import (
 
 // TestVPN_Integration_FullLifecycle tests the complete VPN lifecycle with real I2P
 func TestVPN_Integration_FullLifecycle(t *testing.T) {
-	cfg := Config{
-		NodeName:        "integration-test-vpn",
-		DataDir:         t.TempDir(),
-		SAMAddress:      "127.0.0.1:7656",
-		TunnelSubnet:    "10.42.0.0/16",
-		TunnelLength:    1,
-		MaxPeers:        10,
-		EventBufferSize: 100,
-	}
+	cfg := testConfig(t)
+	cfg.TunnelLength = 1
+	cfg.MaxPeers = 10
+	cfg.EventBufferSize = 100
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -107,10 +102,13 @@ func TestVPN_Integration_FullLifecycle(t *testing.T) {
 		t.Error("Done() returned nil channel")
 	}
 
-	// Close the VPN
-	if err := vpn.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
+	// Stop the VPN properly
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := vpn.Stop(ctx); err != nil {
+		t.Errorf("Stop() error = %v", err)
 	}
+	defer cleanupVPN(t, vpn)
 
 	if vpn.State() != StateStopped {
 		t.Errorf("State after Close = %s, want %s", vpn.State(), StateStopped)
@@ -127,13 +125,8 @@ func TestVPN_Integration_FullLifecycle(t *testing.T) {
 
 // TestVPN_Integration_Peers tests peer management functionality
 func TestVPN_Integration_Peers(t *testing.T) {
-	cfg := Config{
-		NodeName:     "peers-test-vpn",
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.42.0.0/16",
-		TunnelLength: 1,
-	}
+	cfg := testConfig(t)
+	cfg.TunnelLength = 1
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -144,7 +137,7 @@ func TestVPN_Integration_Peers(t *testing.T) {
 	if err := vpn.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
@@ -169,13 +162,8 @@ func TestVPN_Integration_Peers(t *testing.T) {
 
 // TestVPN_Integration_CreateInvite tests invite creation
 func TestVPN_Integration_CreateInvite(t *testing.T) {
-	cfg := Config{
-		NodeName:     "invites-test-vpn",
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.42.0.0/16",
-		TunnelLength: 1,
-	}
+	cfg := testConfig(t)
+	cfg.TunnelLength = 1
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -186,7 +174,7 @@ func TestVPN_Integration_CreateInvite(t *testing.T) {
 	if err := vpn.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
@@ -237,13 +225,8 @@ func TestVPN_Integration_CreateInvite(t *testing.T) {
 
 // TestVPN_Integration_Routes tests route listing
 func TestVPN_Integration_Routes(t *testing.T) {
-	cfg := Config{
-		NodeName:     "routes-test-vpn",
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.42.0.0/16",
-		TunnelLength: 1,
-	}
+	cfg := testConfig(t)
+	cfg.TunnelLength = 1
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -254,7 +237,7 @@ func TestVPN_Integration_Routes(t *testing.T) {
 	if err := vpn.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
@@ -273,13 +256,8 @@ func TestVPN_Integration_Routes(t *testing.T) {
 
 // TestVPN_Integration_Bans tests ban management
 func TestVPN_Integration_Bans(t *testing.T) {
-	cfg := Config{
-		NodeName:     "bans-test-vpn",
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.42.0.0/16",
-		TunnelLength: 1,
-	}
+	cfg := testConfig(t)
+	cfg.TunnelLength = 1
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -290,7 +268,7 @@ func TestVPN_Integration_Bans(t *testing.T) {
 	if err := vpn.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
@@ -346,13 +324,8 @@ func TestVPN_Integration_Bans(t *testing.T) {
 // TestVPN_Integration_AcceptInvite tests accepting an invite
 func TestVPN_Integration_AcceptInvite(t *testing.T) {
 	// Create inviter VPN
-	cfg1 := Config{
-		NodeName:     "inviter-vpn",
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.42.0.0/16",
-		TunnelLength: 1,
-	}
+	cfg1 := testConfig(t)
+	cfg1.TunnelLength = 1
 
 	vpn1, err := New(cfg1)
 	if err != nil {
@@ -363,7 +336,7 @@ func TestVPN_Integration_AcceptInvite(t *testing.T) {
 	if err := vpn1.Start(ctx); err != nil {
 		t.Fatalf("Start inviter failed: %v", err)
 	}
-	defer vpn1.Close()
+	defer cleanupVPN(t, vpn1)
 
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
@@ -376,13 +349,8 @@ func TestVPN_Integration_AcceptInvite(t *testing.T) {
 	t.Logf("Created invite: %s", inviteCode)
 
 	// Create invitee VPN
-	cfg2 := Config{
-		NodeName:     "invitee-vpn",
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.42.0.0/16",
-		TunnelLength: 1,
-	}
+	cfg2 := testConfig(t)
+	cfg2.TunnelLength = 1
 
 	vpn2, err := New(cfg2)
 	if err != nil {
@@ -392,7 +360,7 @@ func TestVPN_Integration_AcceptInvite(t *testing.T) {
 	if err := vpn2.Start(ctx); err != nil {
 		t.Fatalf("Start invitee failed: %v", err)
 	}
-	defer vpn2.Close()
+	defer cleanupVPN(t, vpn2)
 
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
@@ -409,13 +377,9 @@ func TestVPN_Integration_AcceptInvite(t *testing.T) {
 // TestVPN_Integration_ConfigOptions tests various config options
 func TestVPN_Integration_ConfigOptions(t *testing.T) {
 	// Test WithRPC option - signature: WithRPC(enabled bool) Option
-	cfg1 := Config{
-		NodeName:   "rpc-test-vpn",
-		DataDir:    t.TempDir(),
-		SAMAddress: "127.0.0.1:7656",
-		EnableRPC:  true,
-		RPCSocket:  "test-rpc.sock",
-	}
+	cfg1 := testConfig(t)
+	cfg1.EnableRPC = true
+	cfg1.RPCSocket = "test-rpc.sock"
 
 	vpn1, err := New(cfg1)
 	if err != nil {
@@ -429,13 +393,9 @@ func TestVPN_Integration_ConfigOptions(t *testing.T) {
 	vpn1.Close()
 
 	// Test WithWeb option - signature: WithWeb(enabled bool, listenAddr string) Option
-	cfg2 := Config{
-		NodeName:      "web-test-vpn",
-		DataDir:       t.TempDir(),
-		SAMAddress:    "127.0.0.1:7656",
-		EnableWeb:     true,
-		WebListenAddr: "127.0.0.1:18080",
-	}
+	cfg2 := testConfig(t)
+	cfg2.EnableWeb = true
+	cfg2.WebListenAddr = "127.0.0.1:18080"
 
 	vpn2, err := New(cfg2)
 	if err != nil {
@@ -445,7 +405,7 @@ func TestVPN_Integration_ConfigOptions(t *testing.T) {
 	if err := vpn2.Start(ctx); err != nil {
 		t.Fatalf("Start with Web failed: %v", err)
 	}
-	defer vpn2.Close()
+	defer cleanupVPN(t, vpn2)
 
 	// Wait for web server to start
 	time.Sleep(2 * time.Second)

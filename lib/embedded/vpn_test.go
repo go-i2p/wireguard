@@ -119,13 +119,13 @@ func TestNew_ValidationErrors(t *testing.T) {
 }
 
 func TestVPN_StateTransitions(t *testing.T) {
-	vpn, err := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg := testConfig(t)
+
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Initial state
 	if vpn.State() != StateInitial {
@@ -170,21 +170,20 @@ func TestVPN_StateTransitions(t *testing.T) {
 }
 
 func TestVPN_Status(t *testing.T) {
-	vpn, err := New(Config{
-		NodeName: "status-test",
-		DataDir:  t.TempDir(),
-	})
+	cfg := testConfig(t)
+
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	status := vpn.Status()
 	if status.State != StateInitial {
 		t.Errorf("expected Initial state, got %s", status.State)
 	}
-	if status.NodeName != "status-test" {
-		t.Errorf("expected node name status-test, got %s", status.NodeName)
+	if status.NodeName != cfg.NodeName {
+		t.Errorf("expected node name %s, got %s", cfg.NodeName, status.NodeName)
 	}
 	if status.Uptime != 0 {
 		t.Errorf("expected zero uptime before start, got %v", status.Uptime)
@@ -210,14 +209,14 @@ func TestVPN_Status(t *testing.T) {
 }
 
 func TestVPN_Events(t *testing.T) {
-	vpn, err := New(Config{
-		DataDir:         t.TempDir(),
-		EventBufferSize: 10,
-	})
+	cfg := testConfig(t)
+	cfg.EventBufferSize = 10
+
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	events := vpn.Events()
 
@@ -271,12 +270,13 @@ collectEvents:
 }
 
 func TestVPN_Done(t *testing.T) {
-	vpn, err := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg := testConfig(t)
+
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
+	defer cleanupVPN(t, vpn)
 
 	ctx := context.Background()
 	if err := vpn.Start(ctx); err != nil {
@@ -308,13 +308,13 @@ func TestVPN_Done(t *testing.T) {
 }
 
 func TestVPN_RestartAfterStop(t *testing.T) {
-	vpn, err := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg := testConfig(t)
+
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	ctx := context.Background()
 
@@ -354,10 +354,10 @@ func TestVPN_CloseIdempotent(t *testing.T) {
 	}
 
 	// Start fresh VPN
-	vpn2, _ := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg2 := testConfig(t)
+	vpn2, _ := New(cfg2)
 	vpn2.Start(context.Background())
+	defer cleanupVPN(t, vpn2)
 
 	// Multiple closes should not panic
 	vpn2.Close()

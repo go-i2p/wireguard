@@ -12,8 +12,7 @@ func TestNode_Integration_CreateAndAcceptInvite(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
 	// Create first node (inviter)
-	cfg1 := DefaultConfig()
-	cfg1.Node.DataDir = t.TempDir()
+	cfg1 := testConfig(t)
 	cfg1.Node.Name = "node1"
 	cfg1.I2P.SAMAddress = samAddr
 	cfg1.RPC.Enabled = false
@@ -28,11 +27,7 @@ func TestNode_Integration_CreateAndAcceptInvite(t *testing.T) {
 	if err := node1.Start(ctx); err != nil {
 		t.Fatalf("Start node1 failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		node1.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node1)
 
 	// Wait for I2P tunnel to be ready
 	time.Sleep(3 * time.Second)
@@ -53,8 +48,7 @@ func TestNode_Integration_CreateAndAcceptInvite(t *testing.T) {
 	t.Logf("Created invite: %s (max uses: %d)", result.InviteCode, result.MaxUses)
 
 	// Create second node (invitee)
-	cfg2 := DefaultConfig()
-	cfg2.Node.DataDir = t.TempDir()
+	cfg2 := testConfig(t)
 	cfg2.Node.Name = "node2"
 	cfg2.I2P.SAMAddress = samAddr
 	cfg2.RPC.Enabled = false
@@ -68,11 +62,7 @@ func TestNode_Integration_CreateAndAcceptInvite(t *testing.T) {
 	if err := node2.Start(ctx); err != nil {
 		t.Fatalf("Start node2 failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		node2.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node2)
 
 	// Wait for I2P tunnel to be ready
 	time.Sleep(3 * time.Second)
@@ -101,8 +91,7 @@ func TestNode_Integration_CreateAndAcceptInvite(t *testing.T) {
 func TestNode_Integration_ListRoutes(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 	cfg.Node.Name = "route-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
@@ -117,11 +106,7 @@ func TestNode_Integration_ListRoutes(t *testing.T) {
 	if err := node.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		node.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node)
 
 	// Wait for initialization
 	time.Sleep(2 * time.Second)
@@ -139,8 +124,7 @@ func TestNode_Integration_ListRoutes(t *testing.T) {
 func TestNode_Integration_BanManagement(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 	cfg.Node.Name = "ban-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
@@ -155,11 +139,7 @@ func TestNode_Integration_BanManagement(t *testing.T) {
 	if err := node.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		node.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node)
 
 	// Wait for initialization
 	time.Sleep(2 * time.Second)
@@ -220,8 +200,7 @@ func TestNode_Integration_BanManagement(t *testing.T) {
 func TestNode_Integration_AccessorMethods(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 	cfg.Node.Name = "accessor-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
@@ -236,11 +215,7 @@ func TestNode_Integration_AccessorMethods(t *testing.T) {
 	if err := node.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		node.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node)
 
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
@@ -294,8 +269,7 @@ func TestNode_Integration_AccessorMethods(t *testing.T) {
 func TestNode_Integration_ConfigManagement(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 	cfg.Node.Name = "config-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
@@ -310,11 +284,7 @@ func TestNode_Integration_ConfigManagement(t *testing.T) {
 	if err := node.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		node.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node)
 
 	// Test GetConfig for various keys
 	testCases := []struct {
@@ -355,8 +325,7 @@ func TestNode_Integration_ConfigManagement(t *testing.T) {
 func TestNode_Integration_ListPeers(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
-	cfg := DefaultConfig()
-	cfg.Node.DataDir = t.TempDir()
+	cfg := testConfig(t)
 	cfg.Node.Name = "peers-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
@@ -371,11 +340,7 @@ func TestNode_Integration_ListPeers(t *testing.T) {
 	if err := node.Start(ctx); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		node.Stop(stopCtx)
-	}()
+	defer cleanupNode(t, node)
 
 	// Wait for initialization
 	time.Sleep(2 * time.Second)
