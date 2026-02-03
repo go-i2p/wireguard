@@ -202,7 +202,8 @@ func (n *EmbeddedTestNode) AcceptInvite(ctx context.Context, inviteCode string) 
 		return fmt.Errorf("node %s not started", n.ID)
 	}
 
-	return vpn.AcceptInvite(ctx, inviteCode)
+	_, err := vpn.AcceptInvite(ctx, inviteCode)
+	return err
 }
 
 // Events returns the VPN event channel.
