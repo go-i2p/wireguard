@@ -7,14 +7,19 @@ import (
 )
 
 func TestNew_DefaultConfig(t *testing.T) {
-	vpn, err := New(Config{})
+	cfg := testConfig(t)
+	// Reset to defaults but keep unique node name
+	cfg.SAMAddress = ""
+	cfg.TunnelSubnet = ""
+
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New with default config failed: %v", err)
 	}
 	if vpn == nil {
 		t.Fatal("New returned nil VPN")
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	if vpn.State() != StateInitial {
 		t.Errorf("expected state Initial, got %s", vpn.State())
@@ -22,23 +27,19 @@ func TestNew_DefaultConfig(t *testing.T) {
 }
 
 func TestNew_CustomConfig(t *testing.T) {
-	cfg := Config{
-		NodeName:     "test-node",
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.42.0.0/16",
-		MaxPeers:     100,
-	}
+	cfg := testConfig(t)
+	cfg.TunnelSubnet = "10.42.0.0/16"
+	cfg.MaxPeers = 100
 
 	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New with custom config failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	gotCfg := vpn.Config()
-	if gotCfg.NodeName != "test-node" {
-		t.Errorf("expected node name test-node, got %s", gotCfg.NodeName)
+	if gotCfg.TunnelSubnet != "10.42.0.0/16" {
+		t.Errorf("expected tunnel subnet 10.42.0.0/16, got %s", gotCfg.TunnelSubnet)
 	}
 	if gotCfg.MaxPeers != 100 {
 		t.Errorf("expected max peers 100, got %d", gotCfg.MaxPeers)
@@ -46,19 +47,20 @@ func TestNew_CustomConfig(t *testing.T) {
 }
 
 func TestNewWithOptions(t *testing.T) {
+	baseCfg := testConfig(t)
 	vpn, err := NewWithOptions(
-		WithNodeName("options-test"),
-		WithDataDir(t.TempDir()),
+		WithNodeName(baseCfg.NodeName), // Use unique name from testConfig
+		WithDataDir(baseCfg.DataDir),
 		WithMaxPeers(25),
 	)
 	if err != nil {
 		t.Fatalf("NewWithOptions failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	cfg := vpn.Config()
-	if cfg.NodeName != "options-test" {
-		t.Errorf("expected node name options-test, got %s", cfg.NodeName)
+	if cfg.NodeName != baseCfg.NodeName {
+		t.Errorf("expected node name %s, got %s", baseCfg.NodeName, cfg.NodeName)
 	}
 	if cfg.MaxPeers != 25 {
 		t.Errorf("expected max peers 25, got %d", cfg.MaxPeers)
@@ -365,13 +367,12 @@ func TestVPN_CloseIdempotent(t *testing.T) {
 }
 
 func TestVPN_PeersWhenNotRunning(t *testing.T) {
-	vpn, err := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg := testConfig(t)
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Should return empty, not panic
 	peers := vpn.Peers()
@@ -434,14 +435,14 @@ func TestEventType_String(t *testing.T) {
 
 func TestVPN_DroppedEventCount(t *testing.T) {
 	// Create VPN with minimal event buffer to force drops
-	vpn, err := New(Config{
-		DataDir:         t.TempDir(),
-		EventBufferSize: 1, // Very small buffer
-	})
+	cfg := testConfig(t)
+	cfg.EventBufferSize = 1 // Very small buffer
+
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Initially no events are dropped
 	if count := vpn.DroppedEventCount(); count != 0 {

@@ -15,12 +15,12 @@ func TestVPN_MonitorRaceCondition(t *testing.T) {
 	// Run the test multiple times to increase chance of detecting races
 	for iteration := 0; iteration < 10; iteration++ {
 		t.Run("iteration", func(t *testing.T) {
-			vpn, err := New(Config{
-				DataDir: t.TempDir(),
-			})
+			cfg := testConfig(t)
+			vpn, err := New(cfg)
 			if err != nil {
 				t.Fatalf("New failed: %v", err)
 			}
+			defer cleanupVPN(t, vpn)
 
 			// Start and stop rapidly to try to trigger race between monitor accessing
 			// v.node/v.ctx and Stop() clearing them
