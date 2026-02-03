@@ -1,6 +1,8 @@
 package core
 
 import (
+	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -58,9 +60,19 @@ func TestPolicyRoutingManagerInterface(t *testing.T) {
 
 // TestExitNodePolicyRouting tests policy routing integration with ExitNode.
 func TestExitNodePolicyRouting(t *testing.T) {
+	// Skip if not root (can't test iptables/sysctl without root)
+	if os.Geteuid() != 0 {
+		t.Skip("Skipping test: requires root privileges")
+	}
+
+	// Skip if required tools are not available
+	if _, err := exec.LookPath("iptables"); err != nil {
+		t.Skip("Skipping test: iptables not found")
+	}
+
 	config := ExitNodeConfig{
 		Enabled:          true,
-		PublicInterface:  "eth0",
+		PublicInterface:  "lo", // Use loopback for testing
 		AutoDetect:       false,
 		FallbackBehavior: "direct",
 	}
@@ -95,9 +107,19 @@ func TestExitNodePolicyRouting(t *testing.T) {
 
 // TestExitNodeAutoDetection tests VPN auto-detection functionality.
 func TestExitNodeAutoDetection(t *testing.T) {
+	// Skip if not root (can't test iptables/sysctl without root)
+	if os.Geteuid() != 0 {
+		t.Skip("Skipping test: requires root privileges")
+	}
+
+	// Skip if required tools are not available
+	if _, err := exec.LookPath("iptables"); err != nil {
+		t.Skip("Skipping test: iptables not found")
+	}
+
 	config := ExitNodeConfig{
 		Enabled:          true,
-		PublicInterface:  "eth0",
+		PublicInterface:  "lo", // Use loopback for testing
 		AutoDetect:       true,
 		FallbackBehavior: "direct",
 	}
@@ -122,9 +144,19 @@ func TestExitNodeAutoDetection(t *testing.T) {
 
 // TestExitNodeBlockFallback tests the "block" fallback behavior.
 func TestExitNodeBlockFallback(t *testing.T) {
+	// Skip if not root (can't test iptables/sysctl without root)
+	if os.Geteuid() != 0 {
+		t.Skip("Skipping test: requires root privileges")
+	}
+
+	// Skip if required tools are not available
+	if _, err := exec.LookPath("iptables"); err != nil {
+		t.Skip("Skipping test: iptables not found")
+	}
+
 	config := ExitNodeConfig{
 		Enabled:          true,
-		PublicInterface:  "eth0",
+		PublicInterface:  "lo", // Use loopback for testing
 		AutoDetect:       true,
 		FallbackBehavior: "block",
 	}
