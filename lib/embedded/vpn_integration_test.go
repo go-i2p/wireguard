@@ -12,6 +12,7 @@ func TestVPN_Integration_FullLifecycle(t *testing.T) {
 	cfg.TunnelLength = 1
 	cfg.MaxPeers = 10
 	cfg.EventBufferSize = 100
+	expectedNodeName := cfg.NodeName // Store for later validation
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -72,8 +73,8 @@ func TestVPN_Integration_FullLifecycle(t *testing.T) {
 
 	// Test Status - signature: Status() Status (no context parameter)
 	status := vpn.Status()
-	if status.NodeName != "integration-test-vpn" {
-		t.Errorf("Status NodeName = %s, want integration-test-vpn", status.NodeName)
+	if status.NodeName != expectedNodeName {
+		t.Errorf("Status NodeName = %s, want %s", status.NodeName, expectedNodeName)
 	}
 	if status.State != StateRunning {
 		t.Errorf("Status State = %s, want %s", status.State, StateRunning)

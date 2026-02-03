@@ -77,6 +77,6 @@ func cleanupVPN(t testing.TB, vpn *VPN) {
 	// This is necessary because SAM sessions don't close immediately
 	// and we have a limited number of concurrent sessions available
 	// I2P tunnel teardown can take 5-8 seconds, especially under load
-	// Extra time needed for session cleanup after Stop()
-	time.Sleep(8 * time.Second)
+	// Extra time needed for session cleanup after Stop() - increased to 12 seconds for reliability
+	time.Sleep(12 * time.Second)
 }
