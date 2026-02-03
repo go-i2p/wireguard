@@ -49,13 +49,12 @@ func TestVPN_ConcurrentStartStopMonitor(t *testing.T) {
 		t.Skip("skipping race detection test in short mode")
 	}
 
-	vpn, err := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg := testConfig(t)
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -108,13 +107,12 @@ func TestVPN_ConcurrentStartStopMonitor(t *testing.T) {
 // the case where v.node is nil, which could happen during initialization failures.
 func TestVPN_MonitorNilNodeHandling(t *testing.T) {
 	// This test verifies the nil check still works correctly with the mutex protection
-	vpn, err := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg := testConfig(t)
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer vpn.Close()
+	defer cleanupVPN(t, vpn)
 
 	// Don't start the VPN - node should remain nil
 	// Call monitor directly (normally called by Start)

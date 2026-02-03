@@ -342,12 +342,12 @@ func TestVPN_RestartAfterStop(t *testing.T) {
 }
 
 func TestVPN_CloseIdempotent(t *testing.T) {
-	vpn, err := New(Config{
-		DataDir: t.TempDir(),
-	})
+	cfg := testConfig(t)
+	vpn, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
+	defer cleanupVPN(t, vpn)
 
 	// Close before start should work
 	err = vpn.Close()
@@ -358,8 +358,8 @@ func TestVPN_CloseIdempotent(t *testing.T) {
 	// Start fresh VPN
 	cfg2 := testConfig(t)
 	vpn2, _ := New(cfg2)
-	vpn2.Start(context.Background())
 	defer cleanupVPN(t, vpn2)
+	vpn2.Start(context.Background())
 
 	// Multiple closes should not panic
 	vpn2.Close()

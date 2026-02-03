@@ -46,15 +46,12 @@ func TestCreateInvite_InvalidMaxUses(t *testing.T) {
 			// would require a full node setup which is tested in integration tests.
 
 			// Create a VPN instance (won't be started, just for API validation)
-			cfg := Config{
-				NodeName: "test-node",
-				DataDir:  t.TempDir(),
-			}
+			cfg := testConfig(t)
 			vpn, err := New(cfg)
 			if err != nil {
 				t.Fatalf("New() failed: %v", err)
 			}
-			defer vpn.Close()
+			defer cleanupVPN(t, vpn)
 
 			// Try to create invite (will fail because VPN not started, but parameter validation happens first)
 			_, err = vpn.CreateInvite(24*3600*1000000000, tt.maxUses) // 24 hours in nanoseconds
