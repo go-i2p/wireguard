@@ -15,6 +15,12 @@ type bsdNATManager struct {
 	rulesActive bool
 }
 
+// bsdPolicyRoutingManager implements policy routing for BSD systems using route command.
+type bsdPolicyRoutingManager struct {
+	routes   []string // Routes added (for cleanup)
+	isActive bool     // Whether policy routing is currently configured
+}
+
 func newBSDNATManager() (NATManager, error) {
 	// Check if pfctl is available
 	if _, err := exec.LookPath("pfctl"); err != nil {
@@ -176,6 +182,42 @@ func newBSDPolicyRoutingManager() (PolicyRoutingManager, error) {
 		routes:   make([]string, 0),
 		isActive: false,
 	}, nil
+}
+
+// Setup configures policy routing on BSD systems (placeholder implementation).
+func (b *bsdPolicyRoutingManager) Setup(upstreamInterface, meshInterface string) error {
+	if b.isActive {
+		return fmt.Errorf("policy routing is already configured")
+	}
+
+	if upstreamInterface == "" {
+		return fmt.Errorf("upstream interface cannot be empty")
+	}
+
+	if meshInterface == "" {
+		return fmt.Errorf("mesh interface cannot be empty")
+	}
+
+	// TODO: Implement BSD policy routing using route command
+	// For now, return not implemented error
+	return fmt.Errorf("policy routing not yet implemented on BSD")
+}
+
+// Teardown removes policy routing configuration on BSD systems.
+func (b *bsdPolicyRoutingManager) Teardown() error {
+	if !b.isActive {
+		return nil // Already torn down
+	}
+
+	// TODO: Remove routes added during setup
+	b.routes = nil
+	b.isActive = false
+	return nil
+}
+
+// IsActive returns whether policy routing is currently configured.
+func (b *bsdPolicyRoutingManager) IsActive() bool {
+	return b.isActive
 }
 
 // Policy routing manager stubs for other platforms
