@@ -365,10 +365,10 @@ func TestVPN_Integration_AcceptInvite(t *testing.T) {
 	// Wait for initialization
 	time.Sleep(3 * time.Second)
 
-	// Test AcceptInvite - signature: AcceptInvite(ctx context.Context, inviteCode string) error
-	err = vpn2.AcceptInvite(ctx, inviteCode)
+	// Test AcceptInvite - using backward compatibility method that maintains error-only return
+	err = vpn2.AcceptInviteSimple(ctx, inviteCode)
 	if err != nil {
-		t.Fatalf("AcceptInvite() error = %v", err)
+		t.Fatalf("AcceptInviteSimple() error = %v", err)
 	}
 
 	t.Logf("Successfully accepted invite: %s", inviteCode)

@@ -184,11 +184,34 @@ func (v *VPN) convertRPCPeerInfoToInfo(p rpc.PeerInfo) *PeerInfo {
 	}
 }
 
+// CreateInviteResult contains the result of creating an invite.
+type CreateInviteResult struct {
+	// InviteCode is the generated invite code ready to share
+	InviteCode string
+	// ExpiresAt is when the invite expires (RFC3339 format)
+	ExpiresAt string
+	// MaxUses is the maximum number of times this invite can be used
+	MaxUses int
+}
+
 // CreateInvite generates an invite code for a new peer to join the network.
 // The invite expires after the specified duration and can be used up to maxUses times.
 // Use identity.UnlimitedUses (-1) for unlimited uses (not recommended for security).
 // maxUses=0 is invalid and will return an error.
+//
+// This method returns just the invite code string for README documentation compatibility.
+// Use CreateInviteDetailed() for full result information including expiry details.
 func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
+	result, err := v.CreateInviteDetailed(expiry, maxUses)
+	if err != nil {
+		return "", err
+	}
+	return result.InviteCode, nil
+}
+
+// CreateInviteDetailed generates an invite code with full result information.
+// This provides API compatibility with RPC clients expecting detailed results.
+func (v *VPN) CreateInviteDetailed(expiry time.Duration, maxUses int) (*CreateInviteResult, error) {
 	log.WithFields(map[string]interface{}{
 		"expiry":   expiry.String(),
 		"max_uses": maxUses,
@@ -196,10 +219,10 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 
 	// Validate maxUses parameter early (before checking VPN state)
 	if maxUses == 0 {
-		return "", errors.New("maxUses=0 is invalid; use identity.UnlimitedUses (-1) for unlimited invites or a positive number for limited uses")
+		return nil, errors.New("maxUses=0 is invalid; use identity.UnlimitedUses (-1) for unlimited invites or a positive number for limited uses")
 	}
 	if maxUses < -1 {
-		return "", errors.New("maxUses must be positive, -1 (unlimited), or omitted (defaults to 1)")
+		return nil, errors.New("maxUses must be positive, -1 (unlimited), or omitted (defaults to 1)")
 	}
 
 	v.mu.RLock()
@@ -209,7 +232,7 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 
 	if state != StateRunning || node == nil {
 		log.Warn("CreateInvite called while VPN not running")
-		return "", errors.New("VPN is not running")
+		return nil, errors.New("VPN is not running")
 	}
 
 	if expiry <= 0 {
@@ -220,17 +243,36 @@ func (v *VPN) CreateInvite(expiry time.Duration, maxUses int) (string, error) {
 	result, err := node.CreateInvite(expiry, maxUses)
 	if err != nil {
 		log.WithError(err).Error("Failed to create invite")
-		return "", err
+		return nil, err
 	}
 
 	log.Debug("Invite created successfully")
 	v.emitter.emitSimple(EventInviteCreated, "Created invite code")
-	return result.InviteCode, nil
+
+	// Convert RPC result to embedded API result for consistency
+	return &CreateInviteResult{
+		InviteCode: result.InviteCode,
+		ExpiresAt:  result.ExpiresAt,
+		MaxUses:    result.MaxUses,
+	}, nil
+}
+
+// AcceptInviteResult contains the result of accepting an invite.
+type AcceptInviteResult struct {
+	// NetworkID is the network ID that was joined
+	NetworkID string
+	// PeerNodeID is the node ID of the inviting peer
+	PeerNodeID string
+	// TunnelIP is the tunnel IP assigned to this node
+	TunnelIP string
+	// Message contains a human-readable success message
+	Message string
 }
 
 // AcceptInvite connects to a network using an invite code.
 // This will establish a connection to the inviting peer and join their mesh network.
-func (v *VPN) AcceptInvite(ctx context.Context, inviteCode string) error {
+// Returns detailed information about the connection for both embedded and RPC API compatibility.
+func (v *VPN) AcceptInvite(ctx context.Context, inviteCode string) (*AcceptInviteResult, error) {
 	log.Debug("Accepting invite code")
 
 	v.mu.RLock()
@@ -240,24 +282,39 @@ func (v *VPN) AcceptInvite(ctx context.Context, inviteCode string) error {
 
 	if state != StateRunning || node == nil {
 		log.Warn("AcceptInvite called while VPN not running")
-		return errors.New("VPN is not running")
+		return nil, errors.New("VPN is not running")
 	}
 
 	if inviteCode == "" {
 		log.Warn("AcceptInvite called with empty invite code")
-		return errors.New("invite code is required")
+		return nil, errors.New("invite code is required")
 	}
 
 	// Delegate to core.Node's AcceptInvite
-	_, err := node.AcceptInvite(ctx, inviteCode)
+	result, err := node.AcceptInvite(ctx, inviteCode)
 	if err != nil {
 		log.WithError(err).Error("Failed to accept invite")
-		return err
+		return nil, err
 	}
 
 	log.Debug("Invite accepted successfully, joined network")
 	v.emitter.emitSimple(EventInviteAccepted, "Successfully joined network")
-	return nil
+
+	// Convert RPC result to embedded API result for consistency
+	return &AcceptInviteResult{
+		NetworkID:  result.NetworkID,
+		PeerNodeID: result.PeerNodeID,
+		TunnelIP:   result.TunnelIP,
+		Message:    result.Message,
+	}, nil
+}
+
+// AcceptInviteSimple provides backward compatibility for the original simple API.
+// This method matches the documented README behavior: AcceptInvite(ctx, inviteCode) error
+// Use AcceptInvite() for full result information.
+func (v *VPN) AcceptInviteSimple(ctx context.Context, inviteCode string) error {
+	_, err := v.AcceptInvite(ctx, inviteCode)
+	return err
 }
 
 // Routes returns a list of all known routes.

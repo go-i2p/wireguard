@@ -151,6 +151,34 @@ type ExitNodeAdvertisement struct {
 	Location string `json:"location,omitempty"`
 	// AllowedClients lists node IDs that can use this exit (empty = all allowed)
 	AllowedClients []string `json:"allowed_clients,omitempty"`
+	// UpstreamVPN contains information about upstream VPN connection if available
+	UpstreamVPN *UpstreamVPNInfo `json:"upstream_vpn,omitempty"`
+	// AvailableRoutes lists the routing options available through this exit node
+	AvailableRoutes []RouteSpec `json:"available_routes"`
+}
+
+// UpstreamVPNInfo contains information about an upstream VPN connection
+// that the exit node uses to route traffic through.
+type UpstreamVPNInfo struct {
+	// Provider is the VPN provider name (e.g., "Mullvad", "ProtonVPN", "Direct")
+	Provider string `json:"provider"`
+	// Country is the exit location/country code (e.g., "SE", "US", "DE")
+	Country string `json:"country"`
+	// Verified indicates whether the upstream VPN connection has been health-checked
+	Verified bool `json:"verified"`
+}
+
+// RouteSpec describes a specific routing option available through an exit node.
+// Each route represents a different way traffic can be routed (direct, via different VPNs, etc.).
+type RouteSpec struct {
+	// Name is the human-readable route identifier (e.g., "mullvad-sweden", "direct")
+	Name string `json:"name"`
+	// Priority indicates route preference (higher values = more preferred)
+	Priority int `json:"priority"`
+	// Bandwidth is the estimated available bandwidth in Mbps
+	Bandwidth int `json:"bandwidth"`
+	// Latency is the estimated additional latency in milliseconds
+	Latency int `json:"latency"`
 }
 
 // MessageSigner provides signing capability for messages.
