@@ -32,7 +32,7 @@ type ExitMetrics struct {
 	startTime time.Time
 
 	// LastUpdate records the last time metrics were updated
-	lastUpdate atomic.Int64 // Unix timestamp in seconds
+	lastUpdate atomic.Int64 // Unix timestamp in nanoseconds
 }
 
 // ExitMetricsCollector manages metrics collection for an exit node.
@@ -61,7 +61,7 @@ func NewExitMetrics() *ExitMetrics {
 	m := &ExitMetrics{
 		startTime: time.Now(),
 	}
-	m.lastUpdate.Store(time.Now().Unix())
+	m.lastUpdate.Store(time.Now().UnixNano())
 	return m
 }
 
@@ -125,7 +125,7 @@ func (m *ExitMetrics) Uptime() time.Duration {
 
 // LastUpdate returns the time of the last metrics update.
 func (m *ExitMetrics) LastUpdate() time.Time {
-	return time.Unix(m.lastUpdate.Load(), 0)
+	return time.Unix(0, m.lastUpdate.Load())
 }
 
 // Load returns the current load as a float between 0.0 and 1.0.
@@ -187,7 +187,7 @@ func (c *ExitMetricsCollector) RecordBytesSent(clientID string, bytes uint64) {
 		stats.LastActivity = time.Now()
 	}
 	c.metrics.bytesForwarded.Add(bytes)
-	c.metrics.lastUpdate.Store(time.Now().Unix())
+	c.metrics.lastUpdate.Store(time.Now().UnixNano())
 }
 
 // RecordBytesReceived records bytes received from a client.
@@ -200,7 +200,7 @@ func (c *ExitMetricsCollector) RecordBytesReceived(clientID string, bytes uint64
 		stats.LastActivity = time.Now()
 	}
 	c.metrics.bytesReceived.Add(bytes)
-	c.metrics.lastUpdate.Store(time.Now().Unix())
+	c.metrics.lastUpdate.Store(time.Now().UnixNano())
 }
 
 // RecordPacketDrop records a dropped packet for a client.
@@ -212,7 +212,7 @@ func (c *ExitMetricsCollector) RecordPacketDrop(clientID string) {
 		stats.PacketsDropped++
 	}
 	c.metrics.droppedPackets.Add(1)
-	c.metrics.lastUpdate.Store(time.Now().Unix())
+	c.metrics.lastUpdate.Store(time.Now().UnixNano())
 }
 
 // RecordLatency records a latency sample for a client.
@@ -231,7 +231,7 @@ func (c *ExitMetricsCollector) RecordLatency(clientID string, latency time.Durat
 
 	// Calculate average latency across all clients
 	c.updateAverageLatency()
-	c.metrics.lastUpdate.Store(time.Now().Unix())
+	c.metrics.lastUpdate.Store(time.Now().UnixNano())
 }
 
 // updateAverageLatency calculates the average latency across all clients.
