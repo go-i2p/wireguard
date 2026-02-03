@@ -238,14 +238,17 @@ func serversMatch(current, expected []string) bool {
 // isValidDNSServer performs basic validation on DNS server addresses.
 // Accepts IPv4, IPv6, and hostnames.
 func isValidDNSServer(server string) bool {
-	server = strings.TrimSpace(server)
 	if server == "" {
 		return false
 	}
 
-	// Basic validation - check it's not obviously invalid
-	// Allow IPv4, IPv6, and domain names
-	if strings.Contains(server, " ") || strings.Contains(server, "\n") {
+	// Check for invalid characters before trimming
+	if strings.Contains(server, " ") || strings.Contains(server, "\n") || strings.Contains(server, "\t") {
+		return false
+	}
+
+	server = strings.TrimSpace(server)
+	if server == "" {
 		return false
 	}
 
