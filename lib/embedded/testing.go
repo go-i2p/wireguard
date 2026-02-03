@@ -32,8 +32,9 @@ func testConfig(t *testing.T) Config {
 		testMutex.Unlock()
 	})
 
-	// Add timestamp and PID to ensure absolutely unique session names
-	timestamp := time.Now().Unix()
+	// Add microsecond timestamp and PID to ensure absolutely unique session names
+	// This prevents any possibility of session name conflicts even in rapid test execution
+	timestamp := time.Now().UnixNano() / 1000 // microseconds
 	pid := os.Getpid()
 	cfg := Config{
 		NodeName:     fmt.Sprintf("test-vpn-%d-%d-%d", testVPNCounter.Add(1), timestamp, pid),
