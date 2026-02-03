@@ -1,12 +1,32 @@
 package i2pbind
 
 import (
+	"fmt"
 	"net/netip"
+	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-i2p/i2pkeys"
 )
+
+var (
+	// testMutex ensures only one integration test runs at a time
+	testMutex sync.Mutex
+)
+
+// uniqueTestName generates a unique session name for tests to avoid SAM session conflicts
+func uniqueTestName(prefix string) string {
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
+	// Use PID and microseconds for uniqueness across processes and time
+	pid := os.Getpid()
+	microseconds := time.Now().UnixMicro()
+	return fmt.Sprintf("%s-%d-%d", prefix, pid, microseconds)
+}
 
 // testI2PDestination is a valid base64-encoded I2P destination for testing.
 // This is a 516-character base64 string that represents a minimal valid destination.
@@ -197,14 +217,15 @@ func TestNewI2PBindWithSAM(t *testing.T) {
 func TestNewI2PBindWithOptions(t *testing.T) {
 	customSAM := "192.168.1.1:7656"
 	customOptions := []string{"inbound.length=2", "outbound.length=2"}
+	uniqueName := uniqueTestName("test-tunnel")
 
-	bind := NewI2PBindWithOptions("test-tunnel", customSAM, customOptions)
+	bind := NewI2PBindWithOptions(uniqueName, customSAM, customOptions)
 	if bind == nil {
 		t.Fatal("NewI2PBindWithOptions returned nil")
 	}
 
-	if bind.name != "test-tunnel" {
-		t.Errorf("Expected name 'test-tunnel', got '%s'", bind.name)
+	if bind.name != uniqueName {
+		t.Errorf("Expected name '%s', got '%s'", uniqueName, bind.name)
 	}
 
 	if bind.samAddr != customSAM {
@@ -224,7 +245,7 @@ func TestNewI2PBindWithOptions(t *testing.T) {
 
 func TestNewI2PBindWithOptions_NilOptions(t *testing.T) {
 	// Test that nil options are handled correctly (should use defaults in Open)
-	bind := NewI2PBindWithOptions("test-tunnel", DefaultSAMAddress, nil)
+	bind := NewI2PBindWithOptions(uniqueTestName("test-tunnel"), DefaultSAMAddress, nil)
 	if bind == nil {
 		t.Fatal("NewI2PBindWithOptions returned nil")
 	}
@@ -554,7 +575,7 @@ func TestI2PBind_Integration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	bind := NewI2PBind("test-tunnel-integration")
+	bind := NewI2PBind(uniqueTestName("test-tunnel-integration"))
 
 	// Test Open
 	recvFuncs, port, err := bind.Open(0)
@@ -636,7 +657,7 @@ func TestI2PBind_SendOversizePacket(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	bind := NewI2PBind("test-tunnel-oversize")
+	bind := NewI2PBind(uniqueTestName("test-tunnel-oversize"))
 	_, _, err := bind.Open(0)
 	if err != nil {
 		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)
@@ -663,7 +684,7 @@ func TestI2PBind_ReceiveFunc(t *testing.T) {
 	}
 
 	// Create sender bind
-	sender := NewI2PBind("test-sender")
+	sender := NewI2PBind(uniqueTestName("test-sender"))
 	recvFuncs, _, err := sender.Open(0)
 	if err != nil {
 		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)
@@ -675,7 +696,7 @@ func TestI2PBind_ReceiveFunc(t *testing.T) {
 	}
 
 	// Create receiver bind with mesh handler
-	receiver := NewI2PBind("test-receiver")
+	receiver := NewI2PBind(uniqueTestName("test-receiver"))
 
 	meshReceived := make(chan []byte, 1)
 	receiver.SetMeshHandler(func(data []byte, from i2pkeys.I2PAddr) {
@@ -716,7 +737,7 @@ func TestI2PBind_CloseCleansUp(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	bind := NewI2PBind("test-cleanup")
+	bind := NewI2PBind(uniqueTestName("test-cleanup"))
 	_, _, err := bind.Open(0)
 	if err != nil {
 		t.Skipf("Skipping integration test: SAM bridge not available: %v", err)

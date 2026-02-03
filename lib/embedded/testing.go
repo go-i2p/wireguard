@@ -23,7 +23,7 @@ var testMutex sync.Mutex
 // This prevents "duplicate destination" errors when multiple tests run sequentially,
 // as each I2P session needs a unique identity.
 // It also acquires a global mutex to prevent concurrent SAM usage.
-func testConfig(t *testing.T) Config {
+func testConfig(t testing.TB) Config {
 	t.Helper()
 
 	// Acquire global test mutex to prevent concurrent SAM usage
@@ -50,7 +50,7 @@ func testConfig(t *testing.T) Config {
 // This prevents "session limit exceeded" errors when running multiple tests sequentially.
 // I2P SAM has a limited number of concurrent sessions (typically 3-16), and sessions
 // take time to fully close after Stop() is called.
-func cleanupVPN(t *testing.T, vpn *VPN) {
+func cleanupVPN(t testing.TB, vpn *VPN) {
 	t.Helper()
 
 	if vpn == nil {

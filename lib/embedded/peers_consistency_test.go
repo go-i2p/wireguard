@@ -20,11 +20,9 @@ func errorContains(err error, substring string) bool {
 // TestAPIConsistency_InviteCreation tests that embedded and RPC APIs have consistent behavior
 func TestAPIConsistency_InviteCreation(t *testing.T) {
 	// Create test VPN instance with minimal config
-	cfg := Config{
-		NodeName:  "test-node",
-		EnableRPC: false,
-		EnableWeb: false,
-	}
+	cfg := testConfig(t)
+	cfg.EnableRPC = false
+	cfg.EnableWeb = false
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -132,11 +130,9 @@ func TestAPIConsistency_AcceptInvite(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test VPN instance
-	cfg := Config{
-		NodeName:  "test-node-accept",
-		EnableRPC: false,
-		EnableWeb: false,
-	}
+	cfg := testConfig(t)
+	cfg.EnableRPC = false
+	cfg.EnableWeb = false
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -210,11 +206,9 @@ func TestAPIConsistency_AcceptInvite(t *testing.T) {
 func TestBackwardCompatibility(t *testing.T) {
 	ctx := context.Background()
 
-	cfg := Config{
-		NodeName:  "test-backward-compat",
-		EnableRPC: false,
-		EnableWeb: false,
-	}
+	cfg := testConfig(t)
+	cfg.EnableRPC = false
+	cfg.EnableWeb = false
 
 	vpn, err := New(cfg)
 	if err != nil {
@@ -253,11 +247,9 @@ func TestBackwardCompatibility(t *testing.T) {
 
 // BenchmarkCreateInviteAPIs compares performance of simple vs detailed invite creation
 func BenchmarkCreateInviteAPIs(b *testing.B) {
-	cfg := Config{
-		NodeName:  "benchmark-test",
-		EnableRPC: false,
-		EnableWeb: false,
-	}
+	cfg := testConfig(b)
+	cfg.EnableRPC = false
+	cfg.EnableWeb = false
 
 	vpn, err := New(cfg)
 	if err != nil {

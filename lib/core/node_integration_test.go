@@ -13,7 +13,6 @@ func TestNode_Integration_CreateAndAcceptInvite(t *testing.T) {
 
 	// Create first node (inviter)
 	cfg1 := testConfig(t)
-	cfg1.Node.Name = "node1"
 	cfg1.I2P.SAMAddress = samAddr
 	cfg1.RPC.Enabled = false
 	cfg1.Web.Enabled = false
@@ -49,7 +48,6 @@ func TestNode_Integration_CreateAndAcceptInvite(t *testing.T) {
 
 	// Create second node (invitee)
 	cfg2 := testConfig(t)
-	cfg2.Node.Name = "node2"
 	cfg2.I2P.SAMAddress = samAddr
 	cfg2.RPC.Enabled = false
 	cfg2.Web.Enabled = false
@@ -92,7 +90,6 @@ func TestNode_Integration_ListRoutes(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
 	cfg := testConfig(t)
-	cfg.Node.Name = "route-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
 	cfg.Web.Enabled = false
@@ -125,7 +122,6 @@ func TestNode_Integration_BanManagement(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
 	cfg := testConfig(t)
-	cfg.Node.Name = "ban-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
 	cfg.Web.Enabled = false
@@ -201,7 +197,6 @@ func TestNode_Integration_AccessorMethods(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
 	cfg := testConfig(t)
-	cfg.Node.Name = "accessor-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
 	cfg.Web.Enabled = false
@@ -270,7 +265,6 @@ func TestNode_Integration_ConfigManagement(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
 	cfg := testConfig(t)
-	cfg.Node.Name = "config-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
 	cfg.Web.Enabled = false
@@ -326,7 +320,6 @@ func TestNode_Integration_ListPeers(t *testing.T) {
 	samAddr := "127.0.0.1:7656"
 
 	cfg := testConfig(t)
-	cfg.Node.Name = "peers-test-node"
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
 	cfg.Web.Enabled = false

@@ -15,7 +15,7 @@ var testNodeCounter atomic.Uint64
 // Each call generates a name like "test-node-1", "test-node-2", etc.
 // This prevents "duplicate destination" errors when multiple tests run sequentially,
 // as each I2P session needs a unique identity.
-func testConfig(t *testing.T) *Config {
+func testConfig(t testing.TB) *Config {
 	t.Helper()
 
 	cfg := DefaultConfig()
@@ -33,7 +33,7 @@ func testConfig(t *testing.T) *Config {
 // This prevents "session limit exceeded" errors when running multiple tests sequentially.
 // I2P SAM has a limited number of concurrent sessions (typically 3-16), and sessions
 // take time to fully close after Stop() is called.
-func cleanupNode(t *testing.T, node *Node) {
+func cleanupNode(t testing.TB, node *Node) {
 	t.Helper()
 
 	if node == nil {
