@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,8 +21,60 @@ var testVPNCounter atomic.Uint64
 // tests concurrently can cause "Session already exists" or "duplicate destination" errors.
 var testMutex sync.Mutex
 
+// verifySAMSessionAvailable checks if a session name is available by attempting to create
+// a temporary session and immediately destroying it. This helps detect hanging sessions.
+func verifySAMSessionAvailable(sessionName, samAddress string) error {
+	conn, err := net.DialTimeout("tcp", samAddress, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to connect to SAM: %w", err)
+	}
+	defer conn.Close()
+
+	// SAM handshake
+	_, err = conn.Write([]byte("HELLO VERSION MIN=3.0 MAX=3.3\n"))
+	if err != nil {
+		return fmt.Errorf("failed to send HELLO: %w", err)
+	}
+
+	buffer := make([]byte, 1024)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		return fmt.Errorf("failed to read HELLO response: %w", err)
+	}
+
+	response := string(buffer[:n])
+	if !strings.Contains(response, "RESULT=OK") {
+		return fmt.Errorf("SAM handshake failed: %s", response)
+	}
+
+	// Try to create a temporary session to check availability
+	sessionCmd := fmt.Sprintf("SESSION CREATE STYLE=DATAGRAM ID=%s DESTINATION=TRANSIENT\n", sessionName)
+	_, err = conn.Write([]byte(sessionCmd))
+	if err != nil {
+		return fmt.Errorf("failed to send session create: %w", err)
+	}
+
+	n, err = conn.Read(buffer)
+	if err != nil {
+		return fmt.Errorf("failed to read session create response: %w", err)
+	}
+
+	response = string(buffer[:n])
+	if strings.Contains(response, "already exists") {
+		return fmt.Errorf("session name %s is not available", sessionName)
+	}
+
+	// If session was created, immediately destroy it
+	if strings.Contains(response, "RESULT=OK") {
+		_, _ = conn.Write([]byte("SESSION REMOVE\n"))
+		conn.Read(buffer) // Read response but ignore errors
+	}
+
+	return nil
+}
+
 // testConfig creates a test configuration with a unique node name.
-// Each call generates a name like "test-vpn-1-1738438800-12345", including PID and timestamp.
+// Each call generates a name with counter, timestamp, PID, and random component.
 // This prevents "duplicate destination" errors when multiple tests run sequentially,
 // as each I2P session needs a unique identity.
 // It also acquires a global mutex to prevent concurrent SAM usage.
@@ -33,18 +87,38 @@ func testConfig(t testing.TB) Config {
 		testMutex.Unlock()
 	})
 
-	// Add microsecond timestamp, PID, and random number to ensure absolutely unique session names
-	// This prevents any possibility of session name conflicts even in rapid test execution
-	timestamp := time.Now().UnixNano() / 1000 // microseconds
-	pid := os.Getpid()
-	random := rand.Intn(999999) // 6-digit random number
-	cfg := Config{
-		NodeName:     fmt.Sprintf("test-vpn-%d-%d-%d-%d", testVPNCounter.Add(1), timestamp, pid, random),
-		DataDir:      t.TempDir(),
-		SAMAddress:   "127.0.0.1:7656",
-		TunnelSubnet: "10.79.0.0/16",
+	// Generate unique session name with multiple sources of entropy
+	// Try up to 3 times if there are any conflicts (shouldn't happen with this level of uniqueness)
+	var cfg Config
+	for attempt := 0; attempt < 3; attempt++ {
+		timestamp := time.Now().UnixNano() / 1000 // microseconds
+		pid := os.Getpid()
+		random := rand.Intn(999999) // 6-digit random number
+		counter := testVPNCounter.Add(1)
+
+		sessionName := fmt.Sprintf("test-vpn-%d-%d-%d-%d", counter, timestamp, pid, random)
+
+		cfg = Config{
+			NodeName:     sessionName,
+			DataDir:      t.TempDir(),
+			SAMAddress:   "127.0.0.1:7656",
+			TunnelSubnet: "10.79.0.0/16",
+		}
+
+		// Verify the session name is available
+		if err := verifySAMSessionAvailable(sessionName, cfg.SAMAddress); err != nil {
+			t.Logf("Session name %s not available (attempt %d): %v", sessionName, attempt+1, err)
+			if attempt < 2 {
+				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Increasing delay
+				continue
+			}
+			// If all attempts failed, still try to use it (maybe verification is wrong)
+			t.Logf("Using session name %s despite verification failure", sessionName)
+		}
+		break
 	}
 
+	t.Logf("Generated test config with NodeName: %s", cfg.NodeName)
 	return cfg
 }
 
