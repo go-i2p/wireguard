@@ -1,4 +1,14 @@
 // Package core provides upstream VPN detection for exit nodes.
+//
+// CROSS-PLATFORM DESIGN:
+// VPN interface detection is platform-specific due to different naming conventions:
+//   - Linux/Unix: tun0, wg0, etc.
+//   - macOS: utun0, utun1, etc. (plus standard tun/wg)
+//   - Windows: adapter GUIDs or friendly names
+//   - BSD: tun0, wg0 (similar to Linux)
+//
+// The main file contains common types and cross-platform helpers.
+// Platform-specific detection logic is in upstream_vpn_*.go files with build tags.
 package core
 
 import (
@@ -22,15 +32,14 @@ type UpstreamVPN struct {
 }
 
 // DetectUpstreamVPNs scans the system for common VPN interfaces and returns
-// a list of detected VPNs. This function checks for known VPN interface
-// naming patterns used by popular VPN providers and protocols.
+// a list of detected VPNs. This function uses platform-specific VPN interface
+// patterns defined in upstream_vpn_*.go files.
 //
-// Detected patterns:
-//   - tun0-9: Common OpenVPN and generic tunnel interfaces
-//   - wg*: WireGuard interfaces (mullvad, proton, etc.)
-//   - proton*: ProtonVPN interfaces
-//   - nordlynx: NordVPN WireGuard interface
-//   - tailscale*: Tailscale mesh VPN
+// Platform-specific patterns:
+//   - Linux: tun*, wg*, proton*, nordlynx, tailscale*
+//   - macOS: utun*, tun*, wg*, tailscale*
+//   - Windows: adapter names matching VPN patterns
+//   - BSD: tun*, wg*, (similar to Linux)
 //
 // This function only detects interfaces; it does not verify they are
 // actually connected to the internet or functioning correctly.
@@ -42,29 +51,29 @@ func DetectUpstreamVPNs() ([]*UpstreamVPN, error) {
 		return nil, fmt.Errorf("list network interfaces: %w", err)
 	}
 
-	// Known VPN interface patterns to check
-	vpnPatterns := []string{
-		"tun0", "tun1", "tun2", "tun3", "tun4", "tun5", "tun6", "tun7", "tun8", "tun9",
-		"wg-mullvad", "wg-quick", "wg0", "wg1", "wg2",
-		"proton0", "proton1", "protonvpn",
-		"nordlynx",
-		"tailscale0",
-	}
+	// Get platform-specific VPN patterns
+	vpnPatterns := getPlatformVPNPatterns()
 
-	var vpns []*UpstreamVPN
+	vpns := make([]*UpstreamVPN, 0) // Initialize as empty slice, not nil
+	seen := make(map[string]bool)   // Prevent duplicates
 
 	// Check each pattern against actual interfaces
 	for _, pattern := range vpnPatterns {
 		for _, iface := range interfaces {
+			// Skip if already added
+			if seen[iface.Name] {
+				continue
+			}
+
 			// Match exact name or prefix for flexible matching
-			if iface.Name == pattern || strings.HasPrefix(iface.Name, pattern) {
+			if matchesVPNPattern(iface.Name, pattern) {
 				vpn := &UpstreamVPN{
 					Interface: iface.Name,
 					Type:      detectVPNType(iface.Name),
 					IsActive:  isInterfaceUp(iface),
 				}
 				vpns = append(vpns, vpn)
-				break // Found this pattern, move to next
+				seen[iface.Name] = true
 			}
 		}
 	}
@@ -72,9 +81,23 @@ func DetectUpstreamVPNs() ([]*UpstreamVPN, error) {
 	return vpns, nil
 }
 
+// matchesVPNPattern checks if an interface name matches a VPN pattern.
+// Supports exact matches and prefix matching (pattern ending with *).
+func matchesVPNPattern(interfaceName, pattern string) bool {
+	if strings.HasSuffix(pattern, "*") {
+		// Prefix matching
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(interfaceName, prefix)
+	}
+	// Exact match
+	return interfaceName == pattern
+}
+
 // detectVPNType attempts to identify the VPN type based on interface name patterns.
 // This is heuristic-based and may not always be accurate, but provides useful
 // information for route selection and troubleshooting.
+//
+// CROSS-PLATFORM: This function works with interface names from any platform.
 func detectVPNType(interfaceName string) string {
 	name := strings.ToLower(interfaceName)
 
@@ -85,7 +108,9 @@ func detectVPNType(interfaceName string) string {
 	}
 
 	// OpenVPN detection (tun/tap interfaces are commonly used by OpenVPN)
-	if strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap") {
+	// Note: utun on macOS can be either WireGuard or OpenVPN
+	if strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap") ||
+		strings.HasPrefix(name, "utun") {
 		return "openvpn"
 	}
 

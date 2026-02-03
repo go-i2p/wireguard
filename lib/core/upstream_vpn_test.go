@@ -2,12 +2,16 @@ package core
 
 import (
 	"net"
+	"runtime"
 	"testing"
 )
 
 // TestDetectUpstreamVPNs tests the basic VPN detection functionality.
 // It verifies that the function can execute without errors and returns
 // a valid (possibly empty) list of VPNs.
+//
+// CROSS-PLATFORM: This test works on all platforms but may detect
+// different interfaces depending on the OS and installed VPNs.
 func TestDetectUpstreamVPNs(t *testing.T) {
 	vpns, err := DetectUpstreamVPNs()
 	if err != nil {
@@ -16,7 +20,8 @@ func TestDetectUpstreamVPNs(t *testing.T) {
 
 	// Should return a non-nil slice even if empty
 	if vpns == nil {
-		t.Error("DetectUpstreamVPNs() returned nil slice")
+		t.Error("DetectUpstreamVPNs() returned nil slice, expected empty slice")
+		return
 	}
 
 	// Verify structure of each detected VPN
@@ -28,7 +33,161 @@ func TestDetectUpstreamVPNs(t *testing.T) {
 			t.Errorf("VPN %d: Type is empty", i)
 		}
 		// IsActive and PublicIP can be any value, just check they exist
-		t.Logf("Detected VPN %d: %s (type: %s, active: %v)", i, vpn.Interface, vpn.Type, vpn.IsActive)
+		t.Logf("Detected VPN %d: %s (type: %s, active: %v) on %s", i, vpn.Interface, vpn.Type, vpn.IsActive, runtime.GOOS)
+	}
+}
+
+// TestMatchesVPNPattern tests the VPN pattern matching functionality.
+func TestMatchesVPNPattern(t *testing.T) {
+	tests := []struct {
+		name          string
+		interfaceName string
+		pattern       string
+		wantMatch     bool
+	}{
+		// Exact matches
+		{
+			name:          "exact match tun0",
+			interfaceName: "tun0",
+			pattern:       "tun0",
+			wantMatch:     true,
+		},
+		{
+			name:          "exact match wg-mullvad",
+			interfaceName: "wg-mullvad",
+			pattern:       "wg-mullvad",
+			wantMatch:     true,
+		},
+		{
+			name:          "no exact match",
+			interfaceName: "eth0",
+			pattern:       "tun0",
+			wantMatch:     false,
+		},
+
+		// Prefix matches (with *)
+		{
+			name:          "prefix match tailscale",
+			interfaceName: "tailscale0",
+			pattern:       "tailscale*",
+			wantMatch:     true,
+		},
+		{
+			name:          "prefix match wg",
+			interfaceName: "wg-custom",
+			pattern:       "wg*",
+			wantMatch:     true,
+		},
+		{
+			name:          "prefix match single char",
+			interfaceName: "wg0",
+			pattern:       "wg*",
+			wantMatch:     true,
+		},
+		{
+			name:          "prefix no match",
+			interfaceName: "eth0",
+			pattern:       "wg*",
+			wantMatch:     false,
+		},
+
+		// Edge cases
+		{
+			name:          "empty pattern",
+			interfaceName: "tun0",
+			pattern:       "",
+			wantMatch:     false,
+		},
+		{
+			name:          "empty interface name",
+			interfaceName: "",
+			pattern:       "tun0",
+			wantMatch:     false,
+		},
+		{
+			name:          "wildcard only",
+			interfaceName: "anything",
+			pattern:       "*",
+			wantMatch:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesVPNPattern(tt.interfaceName, tt.pattern)
+			if got != tt.wantMatch {
+				t.Errorf("matchesVPNPattern(%q, %q) = %v, want %v",
+					tt.interfaceName, tt.pattern, got, tt.wantMatch)
+			}
+		})
+	}
+}
+
+// TestGetPlatformVPNPatterns tests that platform-specific patterns are returned.
+func TestGetPlatformVPNPatterns(t *testing.T) {
+	patterns := getPlatformVPNPatterns()
+
+	if len(patterns) == 0 {
+		t.Error("getPlatformVPNPatterns() returned empty list")
+	}
+
+	// Verify patterns are non-empty strings
+	for i, pattern := range patterns {
+		if pattern == "" {
+			t.Errorf("Pattern %d is empty", i)
+		}
+	}
+
+	// Log platform-specific patterns for visibility
+	t.Logf("Platform %s has %d VPN patterns:", runtime.GOOS, len(patterns))
+	for i, pattern := range patterns {
+		t.Logf("  %d: %s", i, pattern)
+	}
+
+	// Platform-specific validation
+	switch runtime.GOOS {
+	case "linux":
+		// Linux should have tun and wg patterns
+		hasTun := false
+		hasWg := false
+		for _, pattern := range patterns {
+			if pattern == "tun0" || pattern == "tun*" {
+				hasTun = true
+			}
+			if pattern == "wg0" || pattern == "wg*" {
+				hasWg = true
+			}
+		}
+		if !hasTun {
+			t.Error("Linux patterns should include tun interfaces")
+		}
+		if !hasWg {
+			t.Error("Linux patterns should include WireGuard interfaces")
+		}
+
+	case "darwin":
+		// macOS should have utun patterns
+		hasUtun := false
+		for _, pattern := range patterns {
+			if pattern == "utun0" || pattern == "utun*" {
+				hasUtun = true
+			}
+		}
+		if !hasUtun {
+			t.Error("macOS patterns should include utun interfaces")
+		}
+
+	case "windows":
+		// Windows should have Windows-specific patterns
+		hasWindowsPattern := false
+		for _, pattern := range patterns {
+			if pattern == "WireGuard*" || pattern == "TAP-Windows*" {
+				hasWindowsPattern = true
+			}
+		}
+		if !hasWindowsPattern {
+			t.Error("Windows patterns should include Windows-specific interface names")
+		}
 	}
 }
 
@@ -66,7 +225,7 @@ func TestDetectVPNType(t *testing.T) {
 			wantType:      "wireguard",
 		},
 
-		// OpenVPN interfaces
+		// OpenVPN/generic tunnel interfaces
 		{
 			name:          "OpenVPN tun0",
 			interfaceName: "tun0",
@@ -80,6 +239,11 @@ func TestDetectVPNType(t *testing.T) {
 		{
 			name:          "OpenVPN tap0",
 			interfaceName: "tap0",
+			wantType:      "openvpn",
+		},
+		{
+			name:          "macOS utun0 (detected as OpenVPN)",
+			interfaceName: "utun0",
 			wantType:      "openvpn",
 		},
 		{
@@ -293,6 +457,7 @@ func TestUpstreamVPNStructure(t *testing.T) {
 }
 
 // TestDetectUpstreamVPNsNoMatches tests behavior when no VPN interfaces exist.
+// CROSS-PLATFORM: This test documents expected behavior rather than forcing it.
 func TestDetectUpstreamVPNsNoMatches(t *testing.T) {
 	// This test documents expected behavior rather than forcing it
 	// In a system without VPNs, we should get an empty list, not an error
@@ -304,9 +469,10 @@ func TestDetectUpstreamVPNsNoMatches(t *testing.T) {
 	// Result should be a valid empty slice, not nil
 	if vpns == nil {
 		t.Error("DetectUpstreamVPNs() returned nil, want empty slice")
+		return
 	}
 
-	t.Logf("Detected %d VPN interface(s)", len(vpns))
+	t.Logf("Detected %d VPN interface(s) on %s", len(vpns), runtime.GOOS)
 }
 
 // BenchmarkDetectUpstreamVPNs benchmarks the VPN detection performance.
