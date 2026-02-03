@@ -3,6 +3,7 @@ package embedded
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -32,12 +33,13 @@ func testConfig(t testing.TB) Config {
 		testMutex.Unlock()
 	})
 
-	// Add microsecond timestamp and PID to ensure absolutely unique session names
+	// Add microsecond timestamp, PID, and random number to ensure absolutely unique session names
 	// This prevents any possibility of session name conflicts even in rapid test execution
 	timestamp := time.Now().UnixNano() / 1000 // microseconds
 	pid := os.Getpid()
+	random := rand.Intn(999999) // 6-digit random number
 	cfg := Config{
-		NodeName:     fmt.Sprintf("test-vpn-%d-%d-%d", testVPNCounter.Add(1), timestamp, pid),
+		NodeName:     fmt.Sprintf("test-vpn-%d-%d-%d-%d", testVPNCounter.Add(1), timestamp, pid, random),
 		DataDir:      t.TempDir(),
 		SAMAddress:   "127.0.0.1:7656",
 		TunnelSubnet: "10.79.0.0/16",
