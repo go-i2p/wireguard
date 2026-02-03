@@ -127,6 +127,30 @@ type PeerAnnounce struct {
 	NodeID string `json:"node_id"`
 	// PeerCount is how many peers this node knows
 	PeerCount int `json:"peer_count"`
+	// ExitNode contains exit node advertisement if this peer is an exit node
+	ExitNode *ExitNodeAdvertisement `json:"exit_node,omitempty"`
+}
+
+// ExitNodeAdvertisement contains information about an exit node's capabilities
+// and current status. This is included in PeerAnnounce messages when a node
+// is operating as an exit node.
+type ExitNodeAdvertisement struct {
+	// NodeID is the node identifier (redundant but convenient)
+	NodeID string `json:"node_id"`
+	// Capabilities lists supported features: "ipv4", "ipv6", "dns"
+	Capabilities []string `json:"capabilities"`
+	// BandwidthLimitMbps is the configured bandwidth limit (0 = unlimited)
+	BandwidthLimitMbps int `json:"bandwidth_limit_mbps"`
+	// CurrentLoad is the current resource usage (0.0-1.0)
+	CurrentLoad float64 `json:"current_load"`
+	// ActiveClients is the number of currently connected clients
+	ActiveClients int `json:"active_clients"`
+	// Uptime is seconds since the exit node was started
+	Uptime int64 `json:"uptime"`
+	// Location is optional geographic location hint (e.g., "US", "EU")
+	Location string `json:"location,omitempty"`
+	// AllowedClients lists node IDs that can use this exit (empty = all allowed)
+	AllowedClients []string `json:"allowed_clients,omitempty"`
 }
 
 // MessageSigner provides signing capability for messages.
