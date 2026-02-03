@@ -67,6 +67,8 @@ github.com/go-i2p/noise v0.0.0-20251212204422-ded862d8cdf9 h1:GB+OInR0InM9wXdHwY
 github.com/go-i2p/noise v0.0.0-20251212204422-ded862d8cdf9/go.mod h1:I7AHlf/Oq0r0wMwmjwLj+IceRGJMxRLQF1RBRxyCR0I=
 github.com/go-i2p/onramp v0.33.93-0.20260203033040-1796f7a808d8 h1:zfIJ7R1r455KIC8/D9ga17JEIf5oQHGMTpIxJtVOo1I=
 github.com/go-i2p/onramp v0.33.93-0.20260203033040-1796f7a808d8/go.mod h1:XYuwaP8LUa1Zs2w+E9OEIKuY1IEm9jVccZL/pqvAE8M=
+github.com/go-i2p/onramp v0.33.93-0.20260203040220-c6575966088c h1:6UypuMgPYpZpBe9CZRTYNzneMhDmH6PPQJPoUc2DBI4=
+github.com/go-i2p/onramp v0.33.93-0.20260203040220-c6575966088c/go.mod h1:XYuwaP8LUa1Zs2w+E9OEIKuY1IEm9jVccZL/pqvAE8M=
 github.com/go-i2p/su3 v0.0.1 h1:qiujRfdbXgJ5lCkuNG4P0q/LOl+miU50VpBNRsut8kA=
 github.com/go-i2p/su3 v0.0.1/go.mod h1:vyqEQFEbf5HvFeyD9VgT9Tro+E6R7etNavrsa+dMvzA=
 github.com/go-viper/mapstructure/v2 v2.5.0 h1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro=

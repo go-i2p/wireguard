@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/go-i2p/i2pkeys v0.33.92
 	github.com/go-i2p/logger v0.1.3
-	github.com/go-i2p/onramp v0.33.93-0.20260203033040-1796f7a808d8
+	github.com/go-i2p/onramp v0.33.93-0.20260203040220-c6575966088c
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
