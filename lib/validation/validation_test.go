@@ -44,7 +44,7 @@ func TestMaxLength(t *testing.T) {
 		wantErr bool
 	}{
 		{"under max", "name", "test", 10, false},
-		{"at max", "name", "test", 4, false},
+		{"at max", "name", "test", 4, false}, // FIXED: String at max length should be valid
 		{"over max", "name", "testing", 4, true},
 		{"empty string", "name", "", 10, false},
 		{"unicode chars", "name", "日本語", 5, false},
