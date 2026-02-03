@@ -85,3 +85,53 @@ enabled = true
 # Use "127.0.0.1:8080" for local-only access
 # Use "0.0.0.0:8080" to allow remote access (not recommended)
 listen = "127.0.0.1:8080"
+
+
+# Exit Node configuration
+# WARNING: Running an exit node forwards other users' traffic through your connection.
+# Understand the legal and security implications before enabling.
+[exit_node]
+# Enable exit node functionality
+# Requires CAP_NET_ADMIN or root privileges
+enabled = false
+
+# Network interface for outbound internet traffic (e.g., "eth0", "wlan0")
+# This interface is used for NAT/masquerading of mesh traffic
+# public_interface = "eth0"
+
+# List of peer public keys or names allowed to use this exit
+# Empty list allows all mesh peers
+# allowed_clients = []
+
+# Maximum bandwidth in Mbps for exit traffic (0 = unlimited)
+# Recommended to set a reasonable limit to prevent abuse
+bandwidth_limit_mbps = 0
+
+# Enable logging of client connections and traffic patterns
+# Useful for debugging but may impact privacy
+log_connections = false
+
+
+# Exit Client configuration
+# Route all internet traffic through another mesh node
+[exit_client]
+# Enable exit client mode
+enabled = false
+
+# Peer public key or name of the exit node to use
+# Leave empty to auto-select the best available exit node
+# exit_node_id = ""
+
+# Block all non-mesh traffic if exit node becomes unavailable
+# Prevents traffic leaks but blocks internet access until exit reconnects
+kill_switch = false
+
+# DNS servers to use via the exit node (prevents DNS leaks)
+# Empty list uses exit node's default DNS
+# Example: dns_servers = ["1.1.1.1", "8.8.8.8"]
+dns_servers = []
+
+# Local subnets to bypass the exit node
+# Useful for accessing local network resources (printers, file shares)
+# Example: exclude_routes = ["192.168.1.0/24", "10.0.0.0/8"]
+exclude_routes = []

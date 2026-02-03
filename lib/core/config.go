@@ -34,11 +34,13 @@ const (
 
 // Config holds all configuration for an i2plan node.
 type Config struct {
-	Node NodeConfig `toml:"node"`
-	I2P  I2PConfig  `toml:"i2p"`
-	Mesh MeshConfig `toml:"mesh"`
-	RPC  RPCConfig  `toml:"rpc"`
-	Web  WebConfig  `toml:"web"`
+	Node       NodeConfig       `toml:"node"`
+	I2P        I2PConfig        `toml:"i2p"`
+	Mesh       MeshConfig       `toml:"mesh"`
+	RPC        RPCConfig        `toml:"rpc"`
+	Web        WebConfig        `toml:"web"`
+	ExitNode   ExitNodeConfig   `toml:"exit_node"`
+	ExitClient ClientExitConfig `toml:"exit_client"`
 }
 
 // NodeConfig contains basic node identification settings.
@@ -95,6 +97,55 @@ type WebConfig struct {
 	Listen string `toml:"listen"`
 }
 
+// ExitNodeConfig contains settings for acting as an exit node.
+// An exit node forwards traffic from mesh clients to the public internet,
+// acting as a gateway for other nodes in the mesh.
+//
+// SECURITY WARNING: Running an exit node forwards other users' traffic through
+// your connection. Ensure you understand the legal and security implications.
+// Use bandwidth limits and client allowlists to control resource usage.
+//
+// SYSTEM REQUIREMENTS: Exit nodes require CAP_NET_ADMIN or root privileges to:
+//   - Enable IP forwarding (sysctl net.ipv4.ip_forward=1)
+//   - Configure NAT/masquerading (iptables/nftables)
+//   - Manage routing tables
+type ExitNodeConfig struct {
+	// Enabled controls whether this node acts as an exit node
+	Enabled bool `toml:"enabled"`
+	// PublicInterface is the network interface for outbound internet traffic (e.g., "eth0", "wlan0").
+	// This interface is used for NAT/masquerading of mesh traffic.
+	PublicInterface string `toml:"public_interface"`
+	// AllowedClients lists peer public keys or names allowed to use this exit.
+	// Empty list allows all mesh peers to use this exit node.
+	AllowedClients []string `toml:"allowed_clients"`
+	// BandwidthLimitMbps limits the maximum bandwidth in Mbps for exit traffic.
+	// 0 means unlimited. Recommended to set a reasonable limit to prevent abuse.
+	BandwidthLimitMbps int `toml:"bandwidth_limit_mbps"`
+	// LogConnections enables logging of client connections and traffic patterns.
+	// Useful for debugging and monitoring but may impact privacy.
+	LogConnections bool `toml:"log_connections"`
+}
+
+// ClientExitConfig contains settings for using another node as an exit.
+// When enabled, this node routes all internet traffic through a designated
+// exit node in the mesh, similar to a traditional VPN client.
+type ClientExitConfig struct {
+	// Enabled controls whether this node uses an exit node
+	Enabled bool `toml:"enabled"`
+	// ExitNodeID identifies the exit node by peer public key or name.
+	// Leave empty to auto-select the best available exit node.
+	ExitNodeID string `toml:"exit_node_id"`
+	// KillSwitch blocks all non-mesh traffic if the exit node becomes unavailable.
+	// Prevents traffic leaks but blocks internet access until exit reconnects.
+	KillSwitch bool `toml:"kill_switch"`
+	// DNSServers lists DNS servers to use via the exit node (e.g., ["1.1.1.1", "8.8.8.8"]).
+	// Empty list uses exit node's default DNS. Prevents DNS leaks.
+	DNSServers []string `toml:"dns_servers"`
+	// ExcludeRoutes lists local subnets to bypass the exit node (e.g., ["192.168.1.0/24"]).
+	// Useful for accessing local network resources (printers, file shares) while using exit mode.
+	ExcludeRoutes []string `toml:"exclude_routes"`
+}
+
 // Note: The TUI runs as a separate client connecting via RPC.
 // Use 'i2plan tui' to launch it - no configuration needed.
 
@@ -128,6 +179,15 @@ func DefaultConfig() *Config {
 			Enabled: true,
 			Listen:  DefaultWebListen,
 		},
+		ExitNode: ExitNodeConfig{
+			Enabled:            false,
+			BandwidthLimitMbps: 0,
+			LogConnections:     false,
+		},
+		ExitClient: ClientExitConfig{
+			Enabled:    false,
+			KillSwitch: false,
+		},
 	}
 }
 
@@ -151,6 +211,16 @@ func DefaultConfig() *Config {
 //   - I2PLAN_RPC_TCP_ADDRESS -> RPC.TCPAddress
 //   - I2PLAN_WEB_ENABLED -> Web.Enabled (true/false)
 //   - I2PLAN_WEB_LISTEN -> Web.Listen
+//   - I2PLAN_EXIT_NODE_ENABLED -> ExitNode.Enabled (true/false)
+//   - I2PLAN_EXIT_NODE_PUBLIC_INTERFACE -> ExitNode.PublicInterface
+//   - I2PLAN_EXIT_NODE_ALLOWED_CLIENTS -> ExitNode.AllowedClients (comma-separated)
+//   - I2PLAN_EXIT_NODE_BANDWIDTH_LIMIT_MBPS -> ExitNode.BandwidthLimitMbps
+//   - I2PLAN_EXIT_NODE_LOG_CONNECTIONS -> ExitNode.LogConnections (true/false)
+//   - I2PLAN_EXIT_CLIENT_ENABLED -> ExitClient.Enabled (true/false)
+//   - I2PLAN_EXIT_CLIENT_EXIT_NODE_ID -> ExitClient.ExitNodeID
+//   - I2PLAN_EXIT_CLIENT_KILL_SWITCH -> ExitClient.KillSwitch (true/false)
+//   - I2PLAN_EXIT_CLIENT_DNS_SERVERS -> ExitClient.DNSServers (comma-separated)
+//   - I2PLAN_EXIT_CLIENT_EXCLUDE_ROUTES -> ExitClient.ExcludeRoutes (comma-separated)
 func LoadConfig(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -207,7 +277,13 @@ func (c *Config) Validate() error {
 	if err := c.validateI2PConfig(); err != nil {
 		return err
 	}
-	return c.validateMeshConfig()
+	if err := c.validateMeshConfig(); err != nil {
+		return err
+	}
+	if err := c.validateExitNodeConfig(); err != nil {
+		return err
+	}
+	return c.validateExitClientConfig()
 }
 
 // validateNodeConfig checks the node configuration section for errors.
@@ -246,6 +322,54 @@ func (c *Config) validateMeshConfig() error {
 	return nil
 }
 
+// validateExitNodeConfig checks the exit node configuration section for errors.
+func (c *Config) validateExitNodeConfig() error {
+	if !c.ExitNode.Enabled {
+		return nil
+	}
+
+	if c.ExitNode.PublicInterface == "" {
+		return errors.New("exit_node.public_interface is required when exit node is enabled")
+	}
+
+	if c.ExitNode.BandwidthLimitMbps < 0 {
+		return errors.New("exit_node.bandwidth_limit_mbps must be non-negative")
+	}
+
+	return nil
+}
+
+// validateExitClientConfig checks the exit client configuration section for errors.
+func (c *Config) validateExitClientConfig() error {
+	if !c.ExitClient.Enabled {
+		return nil
+	}
+
+	// Validate exclude routes are valid CIDR notation if provided
+	for _, route := range c.ExitClient.ExcludeRoutes {
+		if route == "" {
+			return errors.New("exit_client.exclude_routes: empty route not allowed")
+		}
+		// Basic CIDR format check - more thorough validation happens at runtime
+		if !containsCIDRNotation(route) {
+			return fmt.Errorf("exit_client.exclude_routes: invalid CIDR format: %s", route)
+		}
+	}
+
+	return nil
+}
+
+// containsCIDRNotation checks if a string looks like CIDR notation (contains /).
+// More thorough validation is done by net.ParseCIDR at runtime.
+func containsCIDRNotation(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '/' {
+			return true
+		}
+	}
+	return false
+}
+
 // DataPath returns an absolute path within the data directory.
 func (c *Config) DataPath(elem ...string) string {
 	parts := append([]string{c.Node.DataDir}, elem...)
@@ -265,6 +389,8 @@ func applyEnvOverrides(cfg *Config) {
 	applyMeshEnvOverrides(&cfg.Mesh)
 	applyRPCEnvOverrides(&cfg.RPC)
 	applyWebEnvOverrides(&cfg.Web)
+	applyExitNodeEnvOverrides(&cfg.ExitNode)
+	applyExitClientEnvOverrides(&cfg.ExitClient)
 }
 
 // applyNodeEnvOverrides applies environment variable overrides to node configuration.
@@ -341,4 +467,77 @@ func applyBoolEnv(key string, target *bool) {
 			*target = b
 		}
 	}
+}
+
+// applyExitNodeEnvOverrides applies environment variable overrides to exit node configuration.
+func applyExitNodeEnvOverrides(exitNode *ExitNodeConfig) {
+	applyBoolEnv("I2PLAN_EXIT_NODE_ENABLED", &exitNode.Enabled)
+	if v := os.Getenv("I2PLAN_EXIT_NODE_PUBLIC_INTERFACE"); v != "" {
+		exitNode.PublicInterface = v
+	}
+	if v := os.Getenv("I2PLAN_EXIT_NODE_ALLOWED_CLIENTS"); v != "" {
+		// Parse comma-separated list
+		exitNode.AllowedClients = parseCommaSeparated(v)
+	}
+	applyIntEnv("I2PLAN_EXIT_NODE_BANDWIDTH_LIMIT_MBPS", &exitNode.BandwidthLimitMbps)
+	applyBoolEnv("I2PLAN_EXIT_NODE_LOG_CONNECTIONS", &exitNode.LogConnections)
+}
+
+// applyExitClientEnvOverrides applies environment variable overrides to exit client configuration.
+func applyExitClientEnvOverrides(exitClient *ClientExitConfig) {
+	applyBoolEnv("I2PLAN_EXIT_CLIENT_ENABLED", &exitClient.Enabled)
+	if v := os.Getenv("I2PLAN_EXIT_CLIENT_EXIT_NODE_ID"); v != "" {
+		exitClient.ExitNodeID = v
+	}
+	applyBoolEnv("I2PLAN_EXIT_CLIENT_KILL_SWITCH", &exitClient.KillSwitch)
+	if v := os.Getenv("I2PLAN_EXIT_CLIENT_DNS_SERVERS"); v != "" {
+		exitClient.DNSServers = parseCommaSeparated(v)
+	}
+	if v := os.Getenv("I2PLAN_EXIT_CLIENT_EXCLUDE_ROUTES"); v != "" {
+		exitClient.ExcludeRoutes = parseCommaSeparated(v)
+	}
+}
+
+// parseCommaSeparated splits a comma-separated string into a slice, trimming whitespace.
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := []string{}
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ',' {
+			if i > start {
+				// Trim whitespace manually to avoid importing strings
+				part := s[start:i]
+				part = trimSpace(part)
+				if part != "" {
+					parts = append(parts, part)
+				}
+			}
+			start = i + 1
+		}
+	}
+	// Handle last part
+	if start < len(s) {
+		part := s[start:]
+		part = trimSpace(part)
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}
+
+// trimSpace removes leading and trailing whitespace from a string.
+func trimSpace(s string) string {
+	start := 0
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
+		start++
+	}
+	end := len(s)
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
 }

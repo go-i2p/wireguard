@@ -462,3 +462,551 @@ func TestLoadConfig_NoFile_WithEnvOverrides(t *testing.T) {
 		t.Errorf("I2P.SAMAddress = %q, want %q", cfg.I2P.SAMAddress, "10.0.0.1:7656")
 	}
 }
+
+func TestDefaultConfig_ExitNode(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// Exit node should be disabled by default
+	if cfg.ExitNode.Enabled {
+		t.Error("exit node should be disabled by default")
+	}
+	if cfg.ExitNode.BandwidthLimitMbps != 0 {
+		t.Errorf("exit node bandwidth limit should default to 0, got %d", cfg.ExitNode.BandwidthLimitMbps)
+	}
+	if cfg.ExitNode.LogConnections {
+		t.Error("exit node log_connections should be false by default")
+	}
+}
+
+func TestDefaultConfig_ExitClient(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// Exit client should be disabled by default
+	if cfg.ExitClient.Enabled {
+		t.Error("exit client should be disabled by default")
+	}
+	if cfg.ExitClient.KillSwitch {
+		t.Error("exit client kill_switch should be false by default")
+	}
+}
+
+func TestValidateExitNodeConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr bool
+	}{
+		{
+			name: "exit node disabled - no validation",
+			modify: func(c *Config) {
+				c.ExitNode.Enabled = false
+				c.ExitNode.PublicInterface = "" // Invalid but ignored when disabled
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit node enabled - valid config",
+			modify: func(c *Config) {
+				c.ExitNode.Enabled = true
+				c.ExitNode.PublicInterface = "eth0"
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit node enabled - missing public interface",
+			modify: func(c *Config) {
+				c.ExitNode.Enabled = true
+				c.ExitNode.PublicInterface = ""
+			},
+			wantErr: true,
+		},
+		{
+			name: "exit node enabled - negative bandwidth limit",
+			modify: func(c *Config) {
+				c.ExitNode.Enabled = true
+				c.ExitNode.PublicInterface = "eth0"
+				c.ExitNode.BandwidthLimitMbps = -10
+			},
+			wantErr: true,
+		},
+		{
+			name: "exit node enabled - zero bandwidth (unlimited)",
+			modify: func(c *Config) {
+				c.ExitNode.Enabled = true
+				c.ExitNode.PublicInterface = "eth0"
+				c.ExitNode.BandwidthLimitMbps = 0
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit node enabled - with allowed clients",
+			modify: func(c *Config) {
+				c.ExitNode.Enabled = true
+				c.ExitNode.PublicInterface = "eth0"
+				c.ExitNode.AllowedClients = []string{"peer1", "peer2"}
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateExitClientConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr bool
+	}{
+		{
+			name: "exit client disabled - no validation",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = false
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit client enabled - valid config",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = true
+				c.ExitClient.ExitNodeID = "exit-node-1"
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit client enabled - auto-select exit",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = true
+				c.ExitClient.ExitNodeID = "" // Auto-select
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit client enabled - with valid exclude routes",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = true
+				c.ExitClient.ExcludeRoutes = []string{"192.168.1.0/24", "10.0.0.0/8"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit client enabled - invalid exclude route (no CIDR)",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = true
+				c.ExitClient.ExcludeRoutes = []string{"192.168.1.0"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "exit client enabled - empty exclude route",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = true
+				c.ExitClient.ExcludeRoutes = []string{""}
+			},
+			wantErr: true,
+		},
+		{
+			name: "exit client enabled - with DNS servers",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = true
+				c.ExitClient.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "exit client enabled - with kill switch",
+			modify: func(c *Config) {
+				c.ExitClient.Enabled = true
+				c.ExitClient.KillSwitch = true
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSaveAndLoadConfig_ExitNode(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Create config with exit node settings
+	original := DefaultConfig()
+	original.ExitNode.Enabled = true
+	original.ExitNode.PublicInterface = "eth0"
+	original.ExitNode.AllowedClients = []string{"peer1", "peer2", "peer3"}
+	original.ExitNode.BandwidthLimitMbps = 100
+	original.ExitNode.LogConnections = true
+
+	if err := SaveConfig(original, configPath); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	// Load it back
+	loaded, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify exit node settings
+	if loaded.ExitNode.Enabled != original.ExitNode.Enabled {
+		t.Errorf("ExitNode.Enabled = %v, want %v", loaded.ExitNode.Enabled, original.ExitNode.Enabled)
+	}
+	if loaded.ExitNode.PublicInterface != original.ExitNode.PublicInterface {
+		t.Errorf("ExitNode.PublicInterface = %q, want %q", loaded.ExitNode.PublicInterface, original.ExitNode.PublicInterface)
+	}
+	if len(loaded.ExitNode.AllowedClients) != len(original.ExitNode.AllowedClients) {
+		t.Errorf("ExitNode.AllowedClients length = %d, want %d", len(loaded.ExitNode.AllowedClients), len(original.ExitNode.AllowedClients))
+	}
+	for i := range original.ExitNode.AllowedClients {
+		if loaded.ExitNode.AllowedClients[i] != original.ExitNode.AllowedClients[i] {
+			t.Errorf("ExitNode.AllowedClients[%d] = %q, want %q", i, loaded.ExitNode.AllowedClients[i], original.ExitNode.AllowedClients[i])
+		}
+	}
+	if loaded.ExitNode.BandwidthLimitMbps != original.ExitNode.BandwidthLimitMbps {
+		t.Errorf("ExitNode.BandwidthLimitMbps = %d, want %d", loaded.ExitNode.BandwidthLimitMbps, original.ExitNode.BandwidthLimitMbps)
+	}
+	if loaded.ExitNode.LogConnections != original.ExitNode.LogConnections {
+		t.Errorf("ExitNode.LogConnections = %v, want %v", loaded.ExitNode.LogConnections, original.ExitNode.LogConnections)
+	}
+}
+
+func TestSaveAndLoadConfig_ExitClient(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Create config with exit client settings
+	original := DefaultConfig()
+	original.ExitClient.Enabled = true
+	original.ExitClient.ExitNodeID = "exit-node-1"
+	original.ExitClient.KillSwitch = true
+	original.ExitClient.DNSServers = []string{"1.1.1.1", "8.8.8.8"}
+	original.ExitClient.ExcludeRoutes = []string{"192.168.1.0/24", "10.0.0.0/8"}
+
+	if err := SaveConfig(original, configPath); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	// Load it back
+	loaded, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify exit client settings
+	if loaded.ExitClient.Enabled != original.ExitClient.Enabled {
+		t.Errorf("ExitClient.Enabled = %v, want %v", loaded.ExitClient.Enabled, original.ExitClient.Enabled)
+	}
+	if loaded.ExitClient.ExitNodeID != original.ExitClient.ExitNodeID {
+		t.Errorf("ExitClient.ExitNodeID = %q, want %q", loaded.ExitClient.ExitNodeID, original.ExitClient.ExitNodeID)
+	}
+	if loaded.ExitClient.KillSwitch != original.ExitClient.KillSwitch {
+		t.Errorf("ExitClient.KillSwitch = %v, want %v", loaded.ExitClient.KillSwitch, original.ExitClient.KillSwitch)
+	}
+	if len(loaded.ExitClient.DNSServers) != len(original.ExitClient.DNSServers) {
+		t.Errorf("ExitClient.DNSServers length = %d, want %d", len(loaded.ExitClient.DNSServers), len(original.ExitClient.DNSServers))
+	}
+	for i := range original.ExitClient.DNSServers {
+		if loaded.ExitClient.DNSServers[i] != original.ExitClient.DNSServers[i] {
+			t.Errorf("ExitClient.DNSServers[%d] = %q, want %q", i, loaded.ExitClient.DNSServers[i], original.ExitClient.DNSServers[i])
+		}
+	}
+	if len(loaded.ExitClient.ExcludeRoutes) != len(original.ExitClient.ExcludeRoutes) {
+		t.Errorf("ExitClient.ExcludeRoutes length = %d, want %d", len(loaded.ExitClient.ExcludeRoutes), len(original.ExitClient.ExcludeRoutes))
+	}
+	for i := range original.ExitClient.ExcludeRoutes {
+		if loaded.ExitClient.ExcludeRoutes[i] != original.ExitClient.ExcludeRoutes[i] {
+			t.Errorf("ExitClient.ExcludeRoutes[%d] = %q, want %q", i, loaded.ExitClient.ExcludeRoutes[i], original.ExitClient.ExcludeRoutes[i])
+		}
+	}
+}
+
+func TestApplyExitNodeEnvOverrides(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		validate func(*testing.T, *Config)
+	}{
+		{
+			name: "exit node basic overrides",
+			envVars: map[string]string{
+				"I2PLAN_EXIT_NODE_ENABLED":              "true",
+				"I2PLAN_EXIT_NODE_PUBLIC_INTERFACE":     "wlan0",
+				"I2PLAN_EXIT_NODE_BANDWIDTH_LIMIT_MBPS": "50",
+				"I2PLAN_EXIT_NODE_LOG_CONNECTIONS":      "true",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if !cfg.ExitNode.Enabled {
+					t.Error("ExitNode.Enabled should be true")
+				}
+				if cfg.ExitNode.PublicInterface != "wlan0" {
+					t.Errorf("ExitNode.PublicInterface = %q, want %q", cfg.ExitNode.PublicInterface, "wlan0")
+				}
+				if cfg.ExitNode.BandwidthLimitMbps != 50 {
+					t.Errorf("ExitNode.BandwidthLimitMbps = %d, want %d", cfg.ExitNode.BandwidthLimitMbps, 50)
+				}
+				if !cfg.ExitNode.LogConnections {
+					t.Error("ExitNode.LogConnections should be true")
+				}
+			},
+		},
+		{
+			name: "exit node allowed clients",
+			envVars: map[string]string{
+				"I2PLAN_EXIT_NODE_ALLOWED_CLIENTS": "peer1,peer2,peer3",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				expected := []string{"peer1", "peer2", "peer3"}
+				if len(cfg.ExitNode.AllowedClients) != len(expected) {
+					t.Errorf("ExitNode.AllowedClients length = %d, want %d", len(cfg.ExitNode.AllowedClients), len(expected))
+				}
+				for i, want := range expected {
+					if cfg.ExitNode.AllowedClients[i] != want {
+						t.Errorf("ExitNode.AllowedClients[%d] = %q, want %q", i, cfg.ExitNode.AllowedClients[i], want)
+					}
+				}
+			},
+		},
+		{
+			name: "exit node allowed clients with whitespace",
+			envVars: map[string]string{
+				"I2PLAN_EXIT_NODE_ALLOWED_CLIENTS": " peer1 , peer2 , peer3 ",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				expected := []string{"peer1", "peer2", "peer3"}
+				if len(cfg.ExitNode.AllowedClients) != len(expected) {
+					t.Errorf("ExitNode.AllowedClients length = %d, want %d", len(cfg.ExitNode.AllowedClients), len(expected))
+				}
+				for i, want := range expected {
+					if cfg.ExitNode.AllowedClients[i] != want {
+						t.Errorf("ExitNode.AllowedClients[%d] = %q, want %q", i, cfg.ExitNode.AllowedClients[i], want)
+					}
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Save original environment
+			origEnv := make(map[string]string)
+			for key := range tt.envVars {
+				origEnv[key] = os.Getenv(key)
+			}
+
+			// Set test environment variables
+			for key, value := range tt.envVars {
+				os.Setenv(key, value)
+			}
+
+			// Restore environment after test
+			defer func() {
+				for key := range tt.envVars {
+					if orig, ok := origEnv[key]; ok {
+						os.Setenv(key, orig)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
+			}()
+
+			// Test applyEnvOverrides
+			cfg := DefaultConfig()
+			applyEnvOverrides(cfg)
+			tt.validate(t, cfg)
+		})
+	}
+}
+
+func TestApplyExitClientEnvOverrides(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVars  map[string]string
+		validate func(*testing.T, *Config)
+	}{
+		{
+			name: "exit client basic overrides",
+			envVars: map[string]string{
+				"I2PLAN_EXIT_CLIENT_ENABLED":      "true",
+				"I2PLAN_EXIT_CLIENT_EXIT_NODE_ID": "exit-node-1",
+				"I2PLAN_EXIT_CLIENT_KILL_SWITCH":  "true",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if !cfg.ExitClient.Enabled {
+					t.Error("ExitClient.Enabled should be true")
+				}
+				if cfg.ExitClient.ExitNodeID != "exit-node-1" {
+					t.Errorf("ExitClient.ExitNodeID = %q, want %q", cfg.ExitClient.ExitNodeID, "exit-node-1")
+				}
+				if !cfg.ExitClient.KillSwitch {
+					t.Error("ExitClient.KillSwitch should be true")
+				}
+			},
+		},
+		{
+			name: "exit client DNS servers",
+			envVars: map[string]string{
+				"I2PLAN_EXIT_CLIENT_DNS_SERVERS": "1.1.1.1,8.8.8.8,9.9.9.9",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				expected := []string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}
+				if len(cfg.ExitClient.DNSServers) != len(expected) {
+					t.Errorf("ExitClient.DNSServers length = %d, want %d", len(cfg.ExitClient.DNSServers), len(expected))
+				}
+				for i, want := range expected {
+					if cfg.ExitClient.DNSServers[i] != want {
+						t.Errorf("ExitClient.DNSServers[%d] = %q, want %q", i, cfg.ExitClient.DNSServers[i], want)
+					}
+				}
+			},
+		},
+		{
+			name: "exit client exclude routes",
+			envVars: map[string]string{
+				"I2PLAN_EXIT_CLIENT_EXCLUDE_ROUTES": "192.168.1.0/24,10.0.0.0/8",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				expected := []string{"192.168.1.0/24", "10.0.0.0/8"}
+				if len(cfg.ExitClient.ExcludeRoutes) != len(expected) {
+					t.Errorf("ExitClient.ExcludeRoutes length = %d, want %d", len(cfg.ExitClient.ExcludeRoutes), len(expected))
+				}
+				for i, want := range expected {
+					if cfg.ExitClient.ExcludeRoutes[i] != want {
+						t.Errorf("ExitClient.ExcludeRoutes[%d] = %q, want %q", i, cfg.ExitClient.ExcludeRoutes[i], want)
+					}
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Save original environment
+			origEnv := make(map[string]string)
+			for key := range tt.envVars {
+				origEnv[key] = os.Getenv(key)
+			}
+
+			// Set test environment variables
+			for key, value := range tt.envVars {
+				os.Setenv(key, value)
+			}
+
+			// Restore environment after test
+			defer func() {
+				for key := range tt.envVars {
+					if orig, ok := origEnv[key]; ok {
+						os.Setenv(key, orig)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
+			}()
+
+			// Test applyEnvOverrides
+			cfg := DefaultConfig()
+			applyEnvOverrides(cfg)
+			tt.validate(t, cfg)
+		})
+	}
+}
+
+func TestParseCommaSeparated(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "empty string",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "single value",
+			input: "value1",
+			want:  []string{"value1"},
+		},
+		{
+			name:  "multiple values",
+			input: "value1,value2,value3",
+			want:  []string{"value1", "value2", "value3"},
+		},
+		{
+			name:  "values with spaces",
+			input: " value1 , value2 , value3 ",
+			want:  []string{"value1", "value2", "value3"},
+		},
+		{
+			name:  "trailing comma",
+			input: "value1,value2,",
+			want:  []string{"value1", "value2"},
+		},
+		{
+			name:  "leading comma",
+			input: ",value1,value2",
+			want:  []string{"value1", "value2"},
+		},
+		{
+			name:  "empty values between commas",
+			input: "value1,,value2",
+			want:  []string{"value1", "value2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCommaSeparated(tt.input)
+			if len(got) != len(tt.want) {
+				t.Errorf("parseCommaSeparated() length = %d, want %d", len(got), len(tt.want))
+				return
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseCommaSeparated()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestContainsCIDRNotation(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"192.168.1.0/24", true},
+		{"10.0.0.0/8", true},
+		{"192.168.1.0", false},
+		{"", false},
+		{"/24", true},
+		{"192.168.1.0/", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := containsCIDRNotation(tt.input)
+			if got != tt.want {
+				t.Errorf("containsCIDRNotation(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}

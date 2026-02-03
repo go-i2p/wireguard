@@ -34,3 +34,25 @@ socket = "rpc.sock"
 enabled = true
 # Bind to specific interface for security
 listen = "127.0.0.1:8080"
+
+# Exit node configuration for production deployments
+# Uncomment and configure if this node will act as an exit
+# [exit_node]
+# enabled = true
+# public_interface = "eth0"
+# # Limit bandwidth to prevent abuse
+# bandwidth_limit_mbps = 100
+# # Restrict to known clients in production
+# allowed_clients = ["peer-public-key-1", "peer-public-key-2"]
+# log_connections = true
+
+# Exit client configuration
+# Uncomment if this node should route through an exit
+# [exit_client]
+# enabled = true
+# exit_node_id = "trusted-exit-node-name"
+# # Enable kill switch for production security
+# kill_switch = true
+# dns_servers = ["1.1.1.1", "8.8.8.8"]
+# # Exclude local network subnets
+# exclude_routes = ["10.0.0.0/8", "192.168.0.0/16"]
