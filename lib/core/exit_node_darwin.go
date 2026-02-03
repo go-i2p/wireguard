@@ -15,6 +15,12 @@ type darwinNATManager struct {
 	rulesActive bool
 }
 
+// darwinPolicyRoutingManager implements policy routing for macOS using route command.
+type darwinPolicyRoutingManager struct {
+	routes   []string // Routes added (for cleanup)
+	isActive bool     // Whether policy routing is currently configured
+}
+
 func newDarwinNATManager() (NATManager, error) {
 	// Check if pfctl is available
 	if _, err := exec.LookPath("pfctl"); err != nil {
@@ -176,6 +182,42 @@ func newDarwinPolicyRoutingManager() (PolicyRoutingManager, error) {
 		routes:   make([]string, 0),
 		isActive: false,
 	}, nil
+}
+
+// Setup configures policy routing on macOS (placeholder implementation).
+func (d *darwinPolicyRoutingManager) Setup(upstreamInterface, meshInterface string) error {
+	if d.isActive {
+		return fmt.Errorf("policy routing is already configured")
+	}
+
+	if upstreamInterface == "" {
+		return fmt.Errorf("upstream interface cannot be empty")
+	}
+
+	if meshInterface == "" {
+		return fmt.Errorf("mesh interface cannot be empty")
+	}
+
+	// TODO: Implement macOS policy routing using route command
+	// For now, return not implemented error
+	return fmt.Errorf("policy routing not yet implemented on macOS")
+}
+
+// Teardown removes policy routing configuration on macOS.
+func (d *darwinPolicyRoutingManager) Teardown() error {
+	if !d.isActive {
+		return nil // Already torn down
+	}
+
+	// TODO: Remove routes added during setup
+	d.routes = nil
+	d.isActive = false
+	return nil
+}
+
+// IsActive returns whether policy routing is currently configured.
+func (d *darwinPolicyRoutingManager) IsActive() bool {
+	return d.isActive
 }
 
 // Policy routing manager stubs for other platforms

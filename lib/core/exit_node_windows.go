@@ -13,6 +13,12 @@ type windowsNATManager struct {
 	rulesActive bool
 }
 
+// windowsPolicyRoutingManager implements policy routing for Windows using netsh and route commands.
+type windowsPolicyRoutingManager struct {
+	routes   []string // Routes added (for cleanup)
+	isActive bool     // Whether policy routing is currently configured
+}
+
 func newWindowsNATManager() (NATManager, error) {
 	// Check if netsh is available
 	if _, err := exec.LookPath("netsh.exe"); err != nil {
@@ -98,6 +104,42 @@ func newWindowsPolicyRoutingManager() (PolicyRoutingManager, error) {
 		routes:   make([]string, 0),
 		isActive: false,
 	}, nil
+}
+
+// Setup configures policy routing on Windows (placeholder implementation).
+func (w *windowsPolicyRoutingManager) Setup(upstreamInterface, meshInterface string) error {
+	if w.isActive {
+		return fmt.Errorf("policy routing is already configured")
+	}
+
+	if upstreamInterface == "" {
+		return fmt.Errorf("upstream interface cannot be empty")
+	}
+
+	if meshInterface == "" {
+		return fmt.Errorf("mesh interface cannot be empty")
+	}
+
+	// TODO: Implement Windows policy routing using netsh and route commands
+	// For now, return not implemented error
+	return fmt.Errorf("policy routing not yet implemented on Windows")
+}
+
+// Teardown removes policy routing configuration on Windows.
+func (w *windowsPolicyRoutingManager) Teardown() error {
+	if !w.isActive {
+		return nil // Already torn down
+	}
+
+	// TODO: Remove routes added during setup
+	w.routes = nil
+	w.isActive = false
+	return nil
+}
+
+// IsActive returns whether policy routing is currently configured.
+func (w *windowsPolicyRoutingManager) IsActive() bool {
+	return w.isActive
 }
 
 // Policy routing manager stubs for other platforms
