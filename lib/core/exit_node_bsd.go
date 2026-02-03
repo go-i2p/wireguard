@@ -164,3 +164,29 @@ func getSysctl(key string) (string, error) {
 	}
 	return string(output), nil
 }
+
+// newBSDPolicyRoutingManager creates a new BSD policy routing manager.
+func newBSDPolicyRoutingManager() (PolicyRoutingManager, error) {
+	// Check if route command is available
+	if _, err := exec.LookPath("route"); err != nil {
+		return nil, fmt.Errorf("route command not found: %w", err)
+	}
+
+	return &bsdPolicyRoutingManager{
+		routes:   make([]string, 0),
+		isActive: false,
+	}, nil
+}
+
+// Policy routing manager stubs for other platforms
+func newLinuxPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("linux not supported on bsd build")
+}
+
+func newDarwinPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("darwin not supported on bsd build")
+}
+
+func newWindowsPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("windows not supported on bsd build")
+}

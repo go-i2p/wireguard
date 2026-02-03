@@ -124,6 +124,16 @@ type ExitNodeConfig struct {
 	// LogConnections enables logging of client connections and traffic patterns.
 	// Useful for debugging and monitoring but may impact privacy.
 	LogConnections bool `toml:"log_connections"`
+	// UpstreamVPN specifies the VPN interface to route mesh traffic through (e.g., "wg-mullvad", "tun0").
+	// Leave empty to route directly through PublicInterface.
+	UpstreamVPN string `toml:"upstream_vpn"`
+	// AutoDetect enables automatic detection of upstream VPN interfaces.
+	// When true, the exit node will scan for active VPN connections and use the first available.
+	AutoDetect bool `toml:"auto_detect_vpn"`
+	// FallbackBehavior controls what happens when upstream VPN becomes unavailable.
+	// "direct" routes traffic directly through PublicInterface (default).
+	// "block" blocks all traffic until VPN reconnects (more privacy-focused).
+	FallbackBehavior string `toml:"fallback_behavior"`
 }
 
 // ClientExitConfig contains settings for using another node as an exit.
@@ -183,6 +193,8 @@ func DefaultConfig() *Config {
 			Enabled:            false,
 			BandwidthLimitMbps: 0,
 			LogConnections:     false,
+			AutoDetect:         false,
+			FallbackBehavior:   "direct",
 		},
 		ExitClient: ClientExitConfig{
 			Enabled:    false,

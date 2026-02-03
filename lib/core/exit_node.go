@@ -11,27 +11,31 @@ import (
 )
 
 // ExitNode manages the exit node functionality, including IP forwarding,
-// NAT/masquerading, and traffic management for mesh clients.
+// NAT/masquerading, policy routing, and traffic management for mesh clients.
 //
 // CROSS-PLATFORM APPROACH:
 // Instead of using OS-specific commands (iptables/sysctl), this implementation uses:
 // 1. Platform-specific NAT managers that implement a common interface
 // 2. Platform-specific forwarding managers for IP forwarding control
-// 3. Native OS APIs for NAT and routing configuration
+// 3. Platform-specific policy routing managers for upstream VPN routing
+// 4. Native OS APIs for NAT and routing configuration
 //
 // Exit nodes require elevated privileges (CAP_NET_ADMIN or root) to:
 //   - Enable IP forwarding via platform-specific APIs
 //   - Configure NAT/masquerading via platform firewall
-//   - Manage routing tables
+//   - Manage routing tables and policy rules
 type ExitNode struct {
-	config            ExitNodeConfig
-	publicInterface   string
-	isActive          bool
-	mu                sync.RWMutex
-	natManager        NATManager
-	fwdManager        ForwardingManager
-	metricsCollector  *metrics.ExitMetricsCollector
-	metricsUpdateDone chan struct{} // signal to stop metrics update loop
+	config              ExitNodeConfig
+	publicInterface     string
+	upstreamInterface   string // Currently active upstream VPN interface
+	isActive            bool
+	policyRoutingActive bool
+	mu                  sync.RWMutex
+	natManager          NATManager
+	fwdManager          ForwardingManager
+	policyManager       PolicyRoutingManager
+	metricsCollector    *metrics.ExitMetricsCollector
+	metricsUpdateDone   chan struct{} // signal to stop metrics update loop
 }
 
 // NATManager defines the cross-platform interface for managing NAT/masquerading.
@@ -52,6 +56,18 @@ type ForwardingManager interface {
 	Enable() error
 	// Restore restores the original forwarding state
 	Restore() error
+}
+
+// PolicyRoutingManager defines the cross-platform interface for managing policy routing.
+// This enables routing mesh traffic through upstream VPNs for enhanced privacy.
+// Platform-specific implementations handle routing tables, policy rules, and interface routing.
+type PolicyRoutingManager interface {
+	// Setup configures policy routing to route mesh traffic through the upstream VPN interface
+	Setup(upstreamInterface, meshInterface string) error
+	// Teardown removes all policy routing rules and custom routing tables
+	Teardown() error
+	// IsActive returns true if policy routing is currently configured
+	IsActive() bool
 }
 
 // NewExitNode creates a new exit node instance with the given configuration.
@@ -78,14 +94,23 @@ func NewExitNode(config ExitNodeConfig) (*ExitNode, error) {
 		return nil, fmt.Errorf("create forwarding manager: %w", err)
 	}
 
+	// Create platform-specific policy routing manager
+	policyManager, err := newPlatformPolicyRoutingManager()
+	if err != nil {
+		return nil, fmt.Errorf("create policy routing manager: %w", err)
+	}
+
 	return &ExitNode{
-		config:            config,
-		publicInterface:   config.PublicInterface,
-		isActive:          false,
-		natManager:        natManager,
-		fwdManager:        fwdManager,
-		metricsCollector:  metrics.NewExitMetricsCollector(10 * time.Second),
-		metricsUpdateDone: make(chan struct{}),
+		config:              config,
+		publicInterface:     config.PublicInterface,
+		upstreamInterface:   config.UpstreamVPN,
+		isActive:            false,
+		policyRoutingActive: false,
+		natManager:          natManager,
+		fwdManager:          fwdManager,
+		policyManager:       policyManager,
+		metricsCollector:    metrics.NewExitMetricsCollector(10 * time.Second),
+		metricsUpdateDone:   make(chan struct{}),
 	}, nil
 }
 
@@ -143,7 +168,16 @@ func (e *ExitNode) Stop() error {
 	// Stop metrics update loop
 	close(e.metricsUpdateDone)
 
-	// Remove NAT rules first
+	// Teardown policy routing first if active
+	if e.policyRoutingActive {
+		if err := e.policyManager.Teardown(); err != nil {
+			log.Warn("failed to teardown policy routing", "error", err)
+		}
+		e.policyRoutingActive = false
+		e.upstreamInterface = ""
+	}
+
+	// Remove NAT rules
 	if err := e.natManager.Teardown(); err != nil {
 		log.Warn("failed to teardown NAT", "error", err)
 	}
@@ -195,6 +229,129 @@ func newPlatformForwardingManager() (ForwardingManager, error) {
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
+}
+
+// newPlatformPolicyRoutingManager creates a platform-specific policy routing manager.
+func newPlatformPolicyRoutingManager() (PolicyRoutingManager, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return newLinuxPolicyRoutingManager()
+	case "darwin":
+		return newDarwinPolicyRoutingManager()
+	case "windows":
+		return newWindowsPolicyRoutingManager()
+	case "freebsd", "openbsd", "netbsd":
+		return newBSDPolicyRoutingManager()
+	default:
+		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+}
+
+// SetupPolicyRouting configures routing to send mesh traffic through an upstream VPN.
+// This enables "double VPN" functionality where mesh traffic is routed through both
+// the mesh encryption and the upstream VPN for enhanced privacy.
+//
+// If upstreamInterface is empty and AutoDetect is enabled, this method will
+// automatically detect available VPN interfaces and use the first active one.
+//
+// The mesh interface is assumed to be "wg0" - this may need to be configurable
+// in the future for systems with multiple WireGuard interfaces.
+func (e *ExitNode) SetupPolicyRouting(upstreamInterface string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.policyRoutingActive {
+		return fmt.Errorf("policy routing is already active")
+	}
+
+	// Auto-detect upstream VPN if requested and no specific interface provided
+	if upstreamInterface == "" && e.config.AutoDetect {
+		vpns, err := DetectUpstreamVPNs()
+		if err != nil {
+			return fmt.Errorf("auto-detect upstream VPNs: %w", err)
+		}
+
+		// Find the first active VPN interface
+		for _, vpn := range vpns {
+			if vpn.IsActive {
+				upstreamInterface = vpn.Interface
+				log.Info("auto-detected upstream VPN", "interface", upstreamInterface, "type", vpn.Type)
+				break
+			}
+		}
+
+		if upstreamInterface == "" {
+			if e.config.FallbackBehavior == "block" {
+				return fmt.Errorf("no active upstream VPN found and fallback is set to block")
+			}
+			log.Info("no upstream VPN detected, routing directly")
+			return nil
+		}
+	}
+
+	// Verify the upstream interface exists and is active
+	if upstreamInterface != "" {
+		exists, err := InterfaceExists(upstreamInterface)
+		if err != nil {
+			return fmt.Errorf("check upstream interface %s: %w", upstreamInterface, err)
+		}
+		if !exists {
+			if e.config.FallbackBehavior == "block" {
+				return fmt.Errorf("upstream interface %s does not exist and fallback is set to block", upstreamInterface)
+			}
+			log.Warn("upstream interface does not exist, routing directly", "interface", upstreamInterface)
+			return nil
+		}
+	}
+
+	// Setup policy routing through the upstream interface
+	meshInterface := "wg0" // TODO: Make this configurable
+	if err := e.policyManager.Setup(upstreamInterface, meshInterface); err != nil {
+		return fmt.Errorf("setup policy routing: %w", err)
+	}
+
+	e.upstreamInterface = upstreamInterface
+	e.policyRoutingActive = true
+
+	log.Info("policy routing configured", "upstream", upstreamInterface, "mesh", meshInterface)
+	return nil
+}
+
+// TeardownPolicyRouting removes all policy routing configuration and returns
+// to direct routing through the public interface.
+func (e *ExitNode) TeardownPolicyRouting() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if !e.policyRoutingActive {
+		return nil // Already torn down
+	}
+
+	if err := e.policyManager.Teardown(); err != nil {
+		log.Warn("failed to teardown policy routing", "error", err)
+		// Continue with cleanup even if teardown fails
+	}
+
+	e.policyRoutingActive = false
+	e.upstreamInterface = ""
+
+	log.Info("policy routing torn down")
+	return nil
+}
+
+// IsPolicyRoutingActive returns whether policy routing is currently configured.
+func (e *ExitNode) IsPolicyRoutingActive() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.policyRoutingActive
+}
+
+// GetUpstreamInterface returns the currently configured upstream VPN interface.
+// Returns empty string if no upstream VPN is configured.
+func (e *ExitNode) GetUpstreamInterface() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.upstreamInterface
 }
 
 // GetMetrics returns the current metrics snapshot.

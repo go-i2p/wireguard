@@ -84,3 +84,31 @@ func (w *windowsForwardingManager) Restore() error {
 	log.Info("windows: would restore IP forwarding state")
 	return nil
 }
+
+// newWindowsPolicyRoutingManager creates a new Windows policy routing manager.
+func newWindowsPolicyRoutingManager() (PolicyRoutingManager, error) {
+	// Check if route command is available
+	if _, err := exec.LookPath("route.exe"); err != nil {
+		if _, err := exec.LookPath("route"); err != nil {
+			return nil, fmt.Errorf("route command not found: %w", err)
+		}
+	}
+
+	return &windowsPolicyRoutingManager{
+		routes:   make([]string, 0),
+		isActive: false,
+	}, nil
+}
+
+// Policy routing manager stubs for other platforms
+func newLinuxPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("linux not supported on windows build")
+}
+
+func newDarwinPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("darwin not supported on windows build")
+}
+
+func newBSDPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("bsd not supported on windows build")
+}

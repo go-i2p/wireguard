@@ -13,6 +13,17 @@ type linuxNATManager struct {
 	rules []string // Track rules for cleanup
 }
 
+// linuxPolicyRoutingManager implements PolicyRoutingManager for Linux using ip route and ip rule.
+// It creates custom routing tables and policy rules to route mesh traffic through upstream VPNs.
+type linuxPolicyRoutingManager struct {
+	tableID    int      // Custom routing table ID
+	rules      []string // Policy rules added (for cleanup)
+	routes     []string // Routes added (for cleanup)
+	isActive   bool     // Whether policy routing is currently configured
+	meshIface  string   // Mesh interface (e.g., "wg0")
+	upstreamIF string   // Upstream VPN interface
+}
+
 func newLinuxNATManager() (NATManager, error) {
 	// Check if iptables is available
 	if _, err := exec.LookPath("iptables"); err != nil {
@@ -175,6 +186,121 @@ func getSysctl(key string) (string, error) {
 	return string(output), nil
 }
 
+// Policy Routing Manager Implementation
+
+// Setup configures policy routing to route mesh traffic through the upstream VPN interface.
+func (l *linuxPolicyRoutingManager) Setup(upstreamInterface, meshInterface string) error {
+	if l.isActive {
+		return fmt.Errorf("policy routing is already configured")
+	}
+
+	if upstreamInterface == "" {
+		return fmt.Errorf("upstream interface cannot be empty")
+	}
+
+	if meshInterface == "" {
+		return fmt.Errorf("mesh interface cannot be empty")
+	}
+
+	l.meshIface = meshInterface
+	l.upstreamIF = upstreamInterface
+
+	log.Info("linux: setting up policy routing", "upstream", upstreamInterface, "mesh", meshInterface, "table", l.tableID)
+
+	// Add default route to custom table via upstream interface
+	routeCmd := fmt.Sprintf("route add default dev %s table %d", upstreamInterface, l.tableID)
+	if err := l.runIPCommand(routeCmd); err != nil {
+		return fmt.Errorf("add default route to table %d: %w", l.tableID, err)
+	}
+	l.routes = append(l.routes, fmt.Sprintf("default dev %s table %d", upstreamInterface, l.tableID))
+
+	// Add policy rule: traffic from mesh interface uses custom table
+	ruleCmd := fmt.Sprintf("rule add iif %s table %d priority 100", meshInterface, l.tableID)
+	if err := l.runIPCommand(ruleCmd); err != nil {
+		l.cleanupRoute(l.routes[0])
+		return fmt.Errorf("add policy rule for %s: %w", meshInterface, err)
+	}
+	l.rules = append(l.rules, fmt.Sprintf("iif %s table %d priority 100", meshInterface, l.tableID))
+
+	l.isActive = true
+	log.Info("linux: policy routing configured successfully",
+		"table", l.tableID, "rules", len(l.rules), "routes", len(l.routes))
+
+	return nil
+}
+
+// Teardown removes all policy routing configuration.
+func (l *linuxPolicyRoutingManager) Teardown() error {
+	if !l.isActive {
+		return nil
+	}
+
+	log.Info("linux: tearing down policy routing", "table", l.tableID)
+
+	var teardownErrors []string
+
+	// Remove all policy rules (in reverse order)
+	for i := len(l.rules) - 1; i >= 0; i-- {
+		rule := l.rules[i]
+		cmd := fmt.Sprintf("rule del %s", rule)
+		if err := l.runIPCommand(cmd); err != nil {
+			teardownErrors = append(teardownErrors, fmt.Sprintf("remove rule %s: %v", rule, err))
+			log.Warn("linux: failed to remove policy rule", "rule", rule, "error", err)
+		}
+	}
+
+	// Remove all routes (in reverse order)
+	for i := len(l.routes) - 1; i >= 0; i-- {
+		route := l.routes[i]
+		if err := l.cleanupRoute(route); err != nil {
+			teardownErrors = append(teardownErrors, fmt.Sprintf("remove route %s: %v", route, err))
+		}
+	}
+
+	// Clear state
+	l.rules = l.rules[:0]
+	l.routes = l.routes[:0]
+	l.isActive = false
+	l.meshIface = ""
+	l.upstreamIF = ""
+
+	if len(teardownErrors) > 0 {
+		return fmt.Errorf("policy routing teardown had errors: %s", strings.Join(teardownErrors, "; "))
+	}
+
+	log.Info("linux: policy routing torn down successfully")
+	return nil
+}
+
+// IsActive returns whether policy routing is currently configured.
+func (l *linuxPolicyRoutingManager) IsActive() bool {
+	return l.isActive
+}
+
+// runIPCommand executes an "ip" command with the given arguments.
+func (l *linuxPolicyRoutingManager) runIPCommand(args string) error {
+	parts := strings.Fields(args)
+	cmd := exec.Command("ip", parts...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip %s failed: %w (output: %s)", args, err, string(output))
+	}
+
+	log.Debug("linux: executed ip command", "cmd", fmt.Sprintf("ip %s", args), "output", string(output))
+	return nil
+}
+
+// cleanupRoute removes a route from the custom table.
+func (l *linuxPolicyRoutingManager) cleanupRoute(route string) error {
+	cmd := fmt.Sprintf("route del %s", route)
+	if err := l.runIPCommand(cmd); err != nil {
+		log.Warn("linux: failed to remove route", "route", route, "error", err)
+		return err
+	}
+	return nil
+}
+
 // Stubs for other platforms when building on Linux
 func newDarwinNATManager() (NATManager, error) {
 	return nil, fmt.Errorf("darwin not supported on linux build")
@@ -197,5 +323,33 @@ func newWindowsForwardingManager() (ForwardingManager, error) {
 }
 
 func newBSDForwardingManager() (ForwardingManager, error) {
+	return nil, fmt.Errorf("bsd not supported on linux build")
+}
+
+// newLinuxPolicyRoutingManager creates a new Linux policy routing manager.
+func newLinuxPolicyRoutingManager() (PolicyRoutingManager, error) {
+	// Check if ip command is available
+	if _, err := exec.LookPath("ip"); err != nil {
+		return nil, fmt.Errorf("ip command not found (install iproute2): %w", err)
+	}
+
+	return &linuxPolicyRoutingManager{
+		tableID:  100, // Custom table ID for mesh traffic
+		rules:    make([]string, 0),
+		routes:   make([]string, 0),
+		isActive: false,
+	}, nil
+}
+
+// Policy routing manager stubs for other platforms
+func newDarwinPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("darwin not supported on linux build")
+}
+
+func newWindowsPolicyRoutingManager() (PolicyRoutingManager, error) {
+	return nil, fmt.Errorf("windows not supported on linux build")
+}
+
+func newBSDPolicyRoutingManager() (PolicyRoutingManager, error) {
 	return nil, fmt.Errorf("bsd not supported on linux build")
 }
