@@ -17,6 +17,12 @@ In addition to the low-level bind interface, this library includes a complete **
 - **Invite system** - secure peer authentication with expiring invite codes
 - **Routing table** - automatic IP-to-peer routing with collision detection
 - **Multiple interfaces** - JSON-RPC, Terminal UI (BubbleTea), and Web UI
+- **Exit node support** - route all internet traffic through designated mesh peers
+  - Automatic exit node discovery and selection based on load/latency
+  - DNS leak prevention with configurable DNS servers
+  - Kill switch to block traffic if exit connection fails
+  - Per-client bandwidth limits and connection monitoring
+  - See [Exit Node Configuration Guide](docs/exit-nodes.md) for details
 
 ## Trust Model
 
@@ -289,9 +295,77 @@ sudo setcap cap_net_admin=+ep ./i2plan
 ./i2plan rpc status
 ./i2plan rpc peers.list
 ./i2plan rpc invite.create
+
+# Exit node management (requires elevated privileges)
+./i2plan rpc exit-node.start        # Start exit node
+./i2plan rpc exit-node.stop         # Stop exit node
+./i2plan rpc exit-node.status       # Check exit node status
+./i2plan rpc exit-node.metrics      # View traffic metrics
+
+# Exit client management
+./i2plan rpc exit-client.enable     # Enable exit client mode
+./i2plan rpc exit-client.disable    # Disable exit client mode
+./i2plan rpc exit-client.status     # Check connection status
+./i2plan rpc exit-nodes.list        # List available exit nodes
 ```
 
 **Architecture Note:** The TUI and Web interfaces are **clients** that connect to the running node via RPC. They don't start their own node - they control an existing one. Start the node daemon first, then connect with `i2plan tui` or `i2plan web` in a separate terminal.
+
+### Exit Node Usage
+
+Configure a node as an exit to allow other mesh members to route their traffic through it. See the [Exit Node Configuration Guide](docs/exit-nodes.md) for comprehensive documentation.
+
+**Quick Start - Exit Node:**
+
+```toml
+# config.toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"           # Your internet interface
+BandwidthLimitMbps = 100           # Optional bandwidth limit
+AllowedClients = []                # Empty = all mesh members allowed
+```
+
+```bash
+# Start the exit node (requires root/CAP_NET_ADMIN)
+sudo i2plan start
+
+# Verify exit node is advertising
+i2plan rpc exit-node.status
+```
+
+**Quick Start - Exit Client:**
+
+```toml
+# config.toml
+[ExitClient]
+Enabled = true
+ExitNodeID = ""                    # Empty = automatic selection
+KillSwitch = true                  # Block traffic if exit fails
+DNSServers = ["1.1.1.1", "8.8.8.8"]  # Prevent DNS leaks
+ExcludeRoutes = ["192.168.1.0/24"]   # Local network bypass
+```
+
+```bash
+# Start the exit client (requires root/CAP_NET_ADMIN)
+sudo i2plan start
+
+# Check your public IP (should show exit node's IP)
+curl ifconfig.me
+
+# Verify connection
+i2plan rpc exit-client.status
+```
+
+**Features:**
+- Automatic exit node discovery via gossip protocol
+- Smart selection based on load, latency, and bandwidth
+- DNS leak prevention with configurable DNS servers
+- Kill switch to prevent IP leaks if connection fails
+- Per-client traffic metrics and monitoring
+- Bandwidth limiting to prevent abuse
+
+See [docs/exit-nodes.md](docs/exit-nodes.md) for complete configuration options, security considerations, and troubleshooting.
 
 ## How It Works
 

@@ -88,6 +88,59 @@ If pre-built packages are unavailable for your platform, see [Building i2plan](#
 
 You'll need Go (for building), I2P router, and WireGuard installed on your system.
 
+### Exit Node Additional Requirements
+
+If you plan to run an **exit node** (routing traffic for other mesh members), additional system requirements apply:
+
+**Operating System Support:**
+- Linux kernel 3.10+ (recommended 4.19+)
+- macOS 10.15+
+- Windows 10/11
+- FreeBSD 12+, OpenBSD 6.9+
+
+**System Tools (Linux):**
+
+Linux requires **one of**:
+- `iptables` - Traditional packet filtering (widely available)
+- `nftables` - Modern packet filtering (kernel 3.13+)
+
+Check availability:
+```bash
+# Check for iptables
+which iptables
+
+# Check for nftables
+which nft
+
+# Check kernel modules
+lsmod | grep -E 'ip_tables|nf_tables'
+```
+
+Install if missing:
+```bash
+# Debian/Ubuntu
+sudo apt-get install iptables nftables
+
+# RHEL/CentOS/Fedora
+sudo dnf install iptables nftables
+
+# Arch Linux
+sudo pacman -S iptables nftables
+```
+
+**Elevated Privileges:**
+- **Linux**: `CAP_NET_ADMIN` capability or root access
+- **macOS**: Root access (requires `sudo`)
+- **Windows**: Administrator privileges
+- **BSD**: Root access or `doas` (OpenBSD)
+
+**Network Requirements:**
+- Public IP address or port forwarding (for optimal routing)
+- Adequate bandwidth for expected client load
+- Stable internet connection with public network interface (eth0, wlan0, en0, etc.)
+
+See [docs/exit-nodes.md](docs/exit-nodes.md) for comprehensive exit node configuration and security considerations.
+
 ---
 
 ## Platform-Specific Setup
