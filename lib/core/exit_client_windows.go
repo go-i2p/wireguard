@@ -155,3 +155,29 @@ func (w *windowsFirewallManager) Restore() error {
 	w.rulesAdded = false
 	return nil
 }
+
+// Route manager stubs for other platforms
+func newLinuxRouteManager() (RouteManager, error) {
+	return nil, fmt.Errorf("linux not supported on windows build")
+}
+
+func newDarwinRouteManager() (RouteManager, error) {
+	return nil, fmt.Errorf("darwin not supported on windows build")
+}
+
+func newBSDRouteManager() (RouteManager, error) {
+	return nil, fmt.Errorf("bsd not supported on windows build")
+}
+
+// Firewall manager stubs for other platforms
+func newLinuxFirewallManager() (FirewallManager, error) {
+	return nil, fmt.Errorf("linux not supported on windows build")
+}
+
+func newDarwinFirewallManager() (FirewallManager, error) {
+	return nil, fmt.Errorf("darwin not supported on windows build")
+}
+
+func newBSDFirewallManager() (FirewallManager, error) {
+	return nil, fmt.Errorf("bsd not supported on windows build")
+}

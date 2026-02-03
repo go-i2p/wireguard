@@ -190,3 +190,29 @@ func newDarwinPolicyRoutingManager() (PolicyRoutingManager, error) {
 func newWindowsPolicyRoutingManager() (PolicyRoutingManager, error) {
 	return nil, fmt.Errorf("windows not supported on bsd build")
 }
+
+// NAT manager stubs for other platforms
+func newLinuxNATManager() (NATManager, error) {
+	return nil, fmt.Errorf("linux not supported on bsd build")
+}
+
+func newDarwinNATManager() (NATManager, error) {
+	return nil, fmt.Errorf("darwin not supported on bsd build")
+}
+
+func newWindowsNATManager() (NATManager, error) {
+	return nil, fmt.Errorf("windows not supported on bsd build")
+}
+
+// Forwarding manager stubs for other platforms
+func newLinuxForwardingManager() (ForwardingManager, error) {
+	return nil, fmt.Errorf("linux not supported on bsd build")
+}
+
+func newDarwinForwardingManager() (ForwardingManager, error) {
+	return nil, fmt.Errorf("darwin not supported on bsd build")
+}
+
+func newWindowsForwardingManager() (ForwardingManager, error) {
+	return nil, fmt.Errorf("windows not supported on bsd build")
+}
