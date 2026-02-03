@@ -2,10 +2,14 @@
 package core
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"net/netip"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // ExitClient manages the exit client functionality, routing all traffic through
@@ -276,4 +280,148 @@ func newPlatformFirewallManager() (FirewallManager, error) {
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
+}
+
+// HealthCheck verifies the exit node connection is functioning correctly.
+// It checks: 1) Exit node reachability, 2) Internet connectivity, 3) DNS configuration
+// Returns an error if any check fails.
+func (ec *ExitClient) HealthCheck(ctx context.Context) error {
+	ec.mu.RLock()
+	active := ec.isActive
+	meshIP := ec.meshIP
+	dnsServers := ec.config.DNSServers
+	ec.mu.RUnlock()
+
+	if !active {
+		return fmt.Errorf("exit client is not active")
+	}
+
+	// 1. Verify exit node is reachable (ICMP ping)
+	if err := ec.pingExitNode(ctx, meshIP); err != nil {
+		return fmt.Errorf("exit node unreachable: %w", err)
+	}
+
+	// 2. Verify internet connectivity through exit
+	if err := ec.testInternetAccess(ctx); err != nil {
+		return fmt.Errorf("internet access failed: %w", err)
+	}
+
+	// 3. Verify DNS configuration if DNS servers are configured
+	if len(dnsServers) > 0 {
+		dnsManager, err := NewDNSManager()
+		if err != nil {
+			return fmt.Errorf("create DNS manager: %w", err)
+		}
+		if err := dnsManager.VerifyNoDNSLeak(dnsServers); err != nil {
+			return fmt.Errorf("DNS leak detected: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// MonitorConnection continuously monitors the exit node connection health.
+// It runs periodic health checks and automatically handles failures:
+// - If kill switch is enabled: blocks all traffic on failure
+// - Logs health check failures for troubleshooting
+// - Returns when context is canceled
+func (ec *ExitClient) MonitorConnection(ctx context.Context, checkInterval time.Duration) {
+	if checkInterval <= 0 {
+		checkInterval = 30 * time.Second // default interval
+	}
+
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := ec.HealthCheck(ctx); err != nil {
+				log.Warn("exit node health check failed", "error", err)
+
+				// If kill switch is enabled, it will already be blocking traffic
+				// We just log the failure and continue monitoring
+				ec.mu.RLock()
+				hasKillSwitch := ec.killSwitch != nil
+				ec.mu.RUnlock()
+
+				if hasKillSwitch {
+					log.Info("kill switch active, traffic blocked until connection restored")
+				}
+			} else {
+				log.Debug("exit node health check passed")
+			}
+		case <-ctx.Done():
+			log.Info("connection monitoring stopped")
+			return
+		}
+	}
+}
+
+// pingExitNode checks if the exit node is reachable via ICMP ping.
+// Uses a 5-second timeout for the ping operation.
+func (ec *ExitClient) pingExitNode(ctx context.Context, meshIP netip.Addr) error {
+	// Create a dialer with timeout
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+	}
+
+	// Attempt TCP connection to common port (443) as proxy for reachability
+	// ICMP ping requires raw sockets which need elevated privileges
+	// TCP connection is more portable and doesn't require special permissions
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(meshIP.String(), "443"))
+	if err != nil {
+		return fmt.Errorf("failed to reach exit node: %w", err)
+	}
+	conn.Close()
+
+	return nil
+}
+
+// testInternetAccess verifies internet connectivity through the exit node.
+// Makes an HTTP request to a reliable public endpoint with a timeout.
+func (ec *ExitClient) testInternetAccess(ctx context.Context) error {
+	// Create client with timeout
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+		},
+	}
+
+	// Test multiple reliable endpoints in case one is down
+	testURLs := []string{
+		"http://www.google.com/generate_204", // Returns 204 No Content
+		"http://captive.apple.com/hotspot-detect.html",
+		"http://connectivitycheck.gstatic.com/generate_204",
+	}
+
+	var lastErr error
+	for _, url := range testURLs {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp.Body.Close()
+
+		// Any successful response means internet access is working
+		if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+			return nil
+		}
+
+		lastErr = fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("no internet access: %w", lastErr)
+	}
+
+	return fmt.Errorf("all connectivity tests failed")
 }

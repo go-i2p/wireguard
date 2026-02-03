@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"time"
+
+	"github.com/go-i2p/wireguard/lib/metrics"
 )
 
 // ExitNode manages the exit node functionality, including IP forwarding,
@@ -21,12 +24,14 @@ import (
 //   - Configure NAT/masquerading via platform firewall
 //   - Manage routing tables
 type ExitNode struct {
-	config          ExitNodeConfig
-	publicInterface string
-	isActive        bool
-	mu              sync.RWMutex
-	natManager      NATManager
-	fwdManager      ForwardingManager
+	config            ExitNodeConfig
+	publicInterface   string
+	isActive          bool
+	mu                sync.RWMutex
+	natManager        NATManager
+	fwdManager        ForwardingManager
+	metricsCollector  *metrics.ExitMetricsCollector
+	metricsUpdateDone chan struct{} // signal to stop metrics update loop
 }
 
 // NATManager defines the cross-platform interface for managing NAT/masquerading.
@@ -74,11 +79,13 @@ func NewExitNode(config ExitNodeConfig) (*ExitNode, error) {
 	}
 
 	return &ExitNode{
-		config:          config,
-		publicInterface: config.PublicInterface,
-		isActive:        false,
-		natManager:      natManager,
-		fwdManager:      fwdManager,
+		config:            config,
+		publicInterface:   config.PublicInterface,
+		isActive:          false,
+		natManager:        natManager,
+		fwdManager:        fwdManager,
+		metricsCollector:  metrics.NewExitMetricsCollector(10 * time.Second),
+		metricsUpdateDone: make(chan struct{}),
 	}, nil
 }
 
@@ -114,6 +121,10 @@ func (e *ExitNode) Start() error {
 
 	e.isActive = true
 	log.Info("exit node started successfully")
+
+	// Start metrics update loop in background
+	go e.updateMetricsLoop()
+
 	return nil
 }
 
@@ -128,6 +139,9 @@ func (e *ExitNode) Stop() error {
 	}
 
 	log.Info("stopping exit node")
+
+	// Stop metrics update loop
+	close(e.metricsUpdateDone)
 
 	// Remove NAT rules first
 	if err := e.natManager.Teardown(); err != nil {
@@ -180,5 +194,48 @@ func newPlatformForwardingManager() (ForwardingManager, error) {
 		return newBSDForwardingManager()
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+}
+
+// GetMetrics returns the current metrics snapshot.
+// The returned metrics are safe to read and modify without affecting the collector.
+func (e *ExitNode) GetMetrics() metrics.ExitMetrics {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.metricsCollector == nil {
+		return metrics.ExitMetrics{}
+	}
+
+	return e.metricsCollector.GetMetrics()
+}
+
+// GetMetricsCollector returns the metrics collector for direct access.
+// This allows external code to record traffic events (bytes sent/received, latency, etc.)
+func (e *ExitNode) GetMetricsCollector() *metrics.ExitMetricsCollector {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.metricsCollector
+}
+
+// updateMetricsLoop periodically updates bandwidth calculations.
+// Runs in a background goroutine until metricsUpdateDone is closed.
+func (e *ExitNode) updateMetricsLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			e.mu.RLock()
+			collector := e.metricsCollector
+			e.mu.RUnlock()
+
+			if collector != nil {
+				collector.CalculateBandwidth()
+			}
+		case <-e.metricsUpdateDone:
+			return
+		}
 	}
 }

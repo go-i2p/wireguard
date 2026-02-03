@@ -1,9 +1,12 @@
 package core
 
 import (
+	"context"
+	"net/netip"
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNewExitClient(t *testing.T) {
@@ -327,6 +330,139 @@ func TestPlatformManagers(t *testing.T) {
 		}
 		t.Logf("Platform %s: firewall manager created successfully", runtime.GOOS)
 	})
+}
+
+func TestExitClient_HealthCheck_NotActive(t *testing.T) {
+	config := ClientExitConfig{
+		Enabled: true,
+	}
+
+	ec, err := NewExitClient(config)
+	if err != nil {
+		t.Fatalf("NewExitClient() failed: %v", err)
+	}
+
+	ctx := context.Background()
+	err = ec.HealthCheck(ctx)
+	if err == nil {
+		t.Error("HealthCheck() should fail when client is not active")
+	}
+	if !contains(err.Error(), "not active") {
+		t.Errorf("expected 'not active' error, got: %v", err)
+	}
+}
+
+func TestExitClient_PingExitNode(t *testing.T) {
+	config := ClientExitConfig{
+		Enabled: true,
+	}
+
+	ec, err := NewExitClient(config)
+	if err != nil {
+		t.Fatalf("NewExitClient() failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Test unreachable IP (using TEST-NET-1 from RFC 5737)
+	unreachableIP := netip.MustParseAddr("192.0.2.1")
+	err = ec.pingExitNode(ctx, unreachableIP)
+	if err == nil {
+		t.Error("pingExitNode() should fail for unreachable IP")
+	}
+
+	// Test with localhost (should succeed if port 443 is open or fail gracefully)
+	localhostIP := netip.MustParseAddr("127.0.0.1")
+	err = ec.pingExitNode(ctx, localhostIP)
+	// We expect this to fail since localhost:443 is unlikely to be listening
+	// but we're testing the function doesn't panic or hang
+	if err != nil {
+		t.Logf("pingExitNode(localhost) failed as expected: %v", err)
+	}
+}
+
+func TestExitClient_TestInternetAccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping internet access test in short mode")
+	}
+
+	config := ClientExitConfig{
+		Enabled: true,
+	}
+
+	ec, err := NewExitClient(config)
+	if err != nil {
+		t.Fatalf("NewExitClient() failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	err = ec.testInternetAccess(ctx)
+	if err != nil {
+		// Internet access test may fail in CI/test environments
+		// Log but don't fail the test
+		t.Logf("testInternetAccess() failed (may be expected in test environment): %v", err)
+	} else {
+		t.Log("testInternetAccess() succeeded")
+	}
+}
+
+func TestExitClient_MonitorConnection(t *testing.T) {
+	config := ClientExitConfig{
+		Enabled: true,
+	}
+
+	ec, err := NewExitClient(config)
+	if err != nil {
+		t.Fatalf("NewExitClient() failed: %v", err)
+	}
+
+	// Start monitoring with very short interval
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// MonitorConnection should return when context is canceled
+	done := make(chan struct{})
+	go func() {
+		ec.MonitorConnection(ctx, 100*time.Millisecond)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success - monitoring stopped when context canceled
+	case <-time.After(2 * time.Second):
+		t.Error("MonitorConnection() did not stop when context was canceled")
+	}
+}
+
+func TestExitClient_MonitorConnection_DefaultInterval(t *testing.T) {
+	config := ClientExitConfig{
+		Enabled: true,
+	}
+
+	ec, err := NewExitClient(config)
+	if err != nil {
+		t.Fatalf("NewExitClient() failed: %v", err)
+	}
+
+	// Test with zero interval (should use default)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		ec.MonitorConnection(ctx, 0) // zero interval
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(1 * time.Second):
+		t.Error("MonitorConnection() with zero interval did not stop")
+	}
 }
 
 // Helper functions
