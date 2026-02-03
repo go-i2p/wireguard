@@ -3,28 +3,50 @@ package core
 
 import (
 	"fmt"
-	"os/exec"
-	"strings"
+	"runtime"
 	"sync"
 )
 
 // ExitNode manages the exit node functionality, including IP forwarding,
 // NAT/masquerading, and traffic management for mesh clients.
 //
-// Exit nodes require elevated privileges (CAP_NET_ADMIN or root) to:
-//   - Enable IP forwarding via sysctl
-//   - Configure NAT/masquerading via iptables
-//   - Manage routing tables
+// CROSS-PLATFORM APPROACH:
+// Instead of using OS-specific commands (iptables/sysctl), this implementation uses:
+// 1. Platform-specific NAT managers that implement a common interface
+// 2. Platform-specific forwarding managers for IP forwarding control
+// 3. Native OS APIs for NAT and routing configuration
 //
-// The exit node forwards traffic from mesh clients to the public internet,
-// acting as a gateway. All configuration is restored on shutdown.
+// Exit nodes require elevated privileges (CAP_NET_ADMIN or root) to:
+//   - Enable IP forwarding via platform-specific APIs
+//   - Configure NAT/masquerading via platform firewall
+//   - Manage routing tables
 type ExitNode struct {
 	config          ExitNodeConfig
 	publicInterface string
 	isActive        bool
 	mu              sync.RWMutex
-	iptablesRules   []string // Track rules for cleanup
-	originalForward string   // Original IP forward setting
+	natManager      NATManager
+	fwdManager      ForwardingManager
+}
+
+// NATManager defines the cross-platform interface for managing NAT/masquerading.
+// Platform-specific implementations handle the details of firewall configuration.
+type NATManager interface {
+	// Setup configures NAT/masquerading for the given public interface
+	Setup(publicInterface string) error
+	// Teardown removes all NAT/masquerading rules
+	Teardown() error
+}
+
+// ForwardingManager defines the cross-platform interface for managing IP forwarding.
+// Platform-specific implementations handle sysctl, registry, or other mechanisms.
+type ForwardingManager interface {
+	// SaveState saves the current forwarding state for restoration
+	SaveState() error
+	// Enable enables IP forwarding
+	Enable() error
+	// Restore restores the original forwarding state
+	Restore() error
 }
 
 // NewExitNode creates a new exit node instance with the given configuration.
@@ -39,21 +61,24 @@ func NewExitNode(config ExitNodeConfig) (*ExitNode, error) {
 		return nil, fmt.Errorf("public_interface is required for exit node")
 	}
 
-	// Check if we have iptables available
-	if err := checkCommandAvailable("iptables"); err != nil {
-		return nil, fmt.Errorf("iptables not available: %w", err)
+	// Create platform-specific NAT manager
+	natManager, err := newPlatformNATManager()
+	if err != nil {
+		return nil, fmt.Errorf("create NAT manager: %w", err)
 	}
 
-	// Check if we have sysctl available
-	if err := checkCommandAvailable("sysctl"); err != nil {
-		return nil, fmt.Errorf("sysctl not available: %w", err)
+	// Create platform-specific forwarding manager
+	fwdManager, err := newPlatformForwardingManager()
+	if err != nil {
+		return nil, fmt.Errorf("create forwarding manager: %w", err)
 	}
 
 	return &ExitNode{
 		config:          config,
 		publicInterface: config.PublicInterface,
 		isActive:        false,
-		iptablesRules:   make([]string, 0),
+		natManager:      natManager,
+		fwdManager:      fwdManager,
 	}, nil
 }
 
@@ -71,19 +96,19 @@ func (e *ExitNode) Start() error {
 	log.Info("starting exit node", "interface", e.publicInterface)
 
 	// Save original IP forwarding state
-	if err := e.saveIPForwardState(); err != nil {
-		return fmt.Errorf("save IP forward state: %w", err)
+	if err := e.fwdManager.SaveState(); err != nil {
+		return fmt.Errorf("save forwarding state: %w", err)
 	}
 
 	// Enable IP forwarding
-	if err := e.enableIPForwarding(); err != nil {
+	if err := e.fwdManager.Enable(); err != nil {
 		return fmt.Errorf("enable IP forwarding: %w", err)
 	}
 
 	// Setup NAT/masquerading
-	if err := e.setupNAT(); err != nil {
+	if err := e.natManager.Setup(e.publicInterface); err != nil {
 		// Rollback IP forwarding on failure
-		_ = e.restoreIPForwardState()
+		_ = e.fwdManager.Restore()
 		return fmt.Errorf("setup NAT: %w", err)
 	}
 
@@ -105,13 +130,13 @@ func (e *ExitNode) Stop() error {
 	log.Info("stopping exit node")
 
 	// Remove NAT rules first
-	if err := e.teardownNAT(); err != nil {
+	if err := e.natManager.Teardown(); err != nil {
 		log.Warn("failed to teardown NAT", "error", err)
 	}
 
 	// Restore IP forwarding
-	if err := e.restoreIPForwardState(); err != nil {
-		log.Warn("failed to restore IP forward state", "error", err)
+	if err := e.fwdManager.Restore(); err != nil {
+		log.Warn("failed to restore forwarding state", "error", err)
 	}
 
 	e.isActive = false
@@ -126,133 +151,34 @@ func (e *ExitNode) IsActive() bool {
 	return e.isActive
 }
 
-// enableIPForwarding enables IPv4 forwarding via sysctl.
-// IPv6 forwarding is attempted but failures are logged as warnings.
-func (e *ExitNode) enableIPForwarding() error {
-	// Enable IPv4 forwarding
-	if err := setSysctl("net.ipv4.ip_forward", "1"); err != nil {
-		return fmt.Errorf("enable IPv4 forwarding: %w", err)
+// newPlatformNATManager creates a platform-specific NAT manager.
+func newPlatformNATManager() (NATManager, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return newLinuxNATManager()
+	case "darwin":
+		return newDarwinNATManager()
+	case "windows":
+		return newWindowsNATManager()
+	case "freebsd", "openbsd", "netbsd":
+		return newBSDNATManager()
+	default:
+		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
-
-	// Try to enable IPv6 forwarding (optional, don't fail if it doesn't work)
-	if err := setSysctl("net.ipv6.conf.all.forwarding", "1"); err != nil {
-		log.Warn("could not enable IPv6 forwarding (optional)", "error", err)
-	}
-
-	return nil
 }
 
-// saveIPForwardState saves the current IPv4 forwarding state for restoration.
-func (e *ExitNode) saveIPForwardState() error {
-	value, err := getSysctl("net.ipv4.ip_forward")
-	if err != nil {
-		return fmt.Errorf("get current IP forward state: %w", err)
+// newPlatformForwardingManager creates a platform-specific forwarding manager.
+func newPlatformForwardingManager() (ForwardingManager, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return newLinuxForwardingManager()
+	case "darwin":
+		return newDarwinForwardingManager()
+	case "windows":
+		return newWindowsForwardingManager()
+	case "freebsd", "openbsd", "netbsd":
+		return newBSDForwardingManager()
+	default:
+		return nil, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
-	e.originalForward = strings.TrimSpace(value)
-	return nil
-}
-
-// restoreIPForwardState restores the original IPv4 forwarding state.
-func (e *ExitNode) restoreIPForwardState() error {
-	if e.originalForward == "" {
-		return nil
-	}
-	return setSysctl("net.ipv4.ip_forward", e.originalForward)
-}
-
-// setupNAT configures iptables rules for NAT/masquerading and forwarding.
-// Rules are tracked for cleanup during teardown.
-func (e *ExitNode) setupNAT() error {
-	// NAT rule: masquerade traffic going out the public interface
-	natRule := fmt.Sprintf("-t nat -A POSTROUTING -o %s -j MASQUERADE", e.publicInterface)
-	if err := e.addIPTablesRule(natRule); err != nil {
-		return fmt.Errorf("add NAT rule: %w", err)
-	}
-
-	// Forward rule: accept traffic from WireGuard interface
-	fwdRuleIn := "-A FORWARD -i wg0 -j ACCEPT"
-	if err := e.addIPTablesRule(fwdRuleIn); err != nil {
-		return fmt.Errorf("add forward rule (in): %w", err)
-	}
-
-	// Forward rule: accept established/related traffic back to WireGuard
-	fwdRuleOut := "-A FORWARD -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT"
-	if err := e.addIPTablesRule(fwdRuleOut); err != nil {
-		return fmt.Errorf("add forward rule (out): %w", err)
-	}
-
-	return nil
-}
-
-// teardownNAT removes all iptables rules that were added during setup.
-// It attempts to remove all rules even if some fail.
-func (e *ExitNode) teardownNAT() error {
-	var errs []string
-
-	// Remove rules in reverse order
-	for i := len(e.iptablesRules) - 1; i >= 0; i-- {
-		rule := e.iptablesRules[i]
-		// Convert -A to -D to delete the rule
-		deleteRule := strings.Replace(rule, " -A ", " -D ", 1)
-		if err := runIPTables(deleteRule); err != nil {
-			errs = append(errs, fmt.Sprintf("remove rule %q: %v", rule, err))
-		}
-	}
-
-	e.iptablesRules = nil
-
-	if len(errs) > 0 {
-		return fmt.Errorf("teardown errors: %s", strings.Join(errs, "; "))
-	}
-	return nil
-}
-
-// addIPTablesRule adds an iptables rule and tracks it for cleanup.
-func (e *ExitNode) addIPTablesRule(rule string) error {
-	if err := runIPTables(rule); err != nil {
-		return err
-	}
-	e.iptablesRules = append(e.iptablesRules, rule)
-	return nil
-}
-
-// runIPTables executes an iptables command with the given arguments.
-// The rule string should include all arguments (e.g., "-t nat -A POSTROUTING ...").
-func runIPTables(rule string) error {
-	args := strings.Fields(rule)
-	cmd := exec.Command("iptables", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("iptables %s: %w (output: %s)", rule, err, string(output))
-	}
-	return nil
-}
-
-// setSysctl sets a sysctl parameter to the given value.
-func setSysctl(key, value string) error {
-	cmd := exec.Command("sysctl", "-w", fmt.Sprintf("%s=%s", key, value))
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("sysctl -w %s=%s: %w (output: %s)", key, value, err, string(output))
-	}
-	return nil
-}
-
-// getSysctl retrieves the current value of a sysctl parameter.
-func getSysctl(key string) (string, error) {
-	cmd := exec.Command("sysctl", "-n", key)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("sysctl -n %s: %w", key, err)
-	}
-	return string(output), nil
-}
-
-// checkCommandAvailable checks if a command is available in the system PATH.
-func checkCommandAvailable(name string) error {
-	_, err := exec.LookPath(name)
-	if err != nil {
-		return fmt.Errorf("command %q not found in PATH", name)
-	}
-	return nil
 }
