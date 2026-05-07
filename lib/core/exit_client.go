@@ -30,6 +30,8 @@ type ExitClient struct {
 	config       ClientExitConfig
 	meshIP       netip.Addr // Exit node's mesh IP address
 	isActive     bool
+	connectedAt  time.Time // When the connection was established
+	lastCheck    time.Time // Last health check time
 	mu           sync.RWMutex
 	routeManager RouteManager
 	killSwitch   *KillSwitch
@@ -145,6 +147,8 @@ func (ec *ExitClient) Start(exitNodeMeshIP string) error {
 	}
 
 	ec.isActive = true
+	ec.connectedAt = time.Now()
+	ec.lastCheck = time.Now()
 	log.Info("exit client started successfully")
 	return nil
 }
@@ -486,4 +490,52 @@ func (ec *ExitClient) testInternetAccess(ctx context.Context) error {
 	}
 
 	return fmt.Errorf("all connectivity tests failed")
+}
+
+// ExitClientStatus contains exit client connection status information.
+type ExitClientStatus struct {
+	Connected      bool
+	ExitNodeMeshIP string
+	ConnectedAt    time.Time
+	LastCheck      time.Time
+}
+
+// GetStatus returns the current exit client status.
+func (ec *ExitClient) GetStatus() ExitClientStatus {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
+	return ExitClientStatus{
+		Connected:      ec.isActive,
+		ExitNodeMeshIP: ec.meshIP.String(),
+		ConnectedAt:    ec.connectedAt,
+		LastCheck:      ec.lastCheck,
+	}
+}
+
+// GetExitNodeMeshIP returns the exit node's mesh IP address.
+func (ec *ExitClient) GetExitNodeMeshIP() string {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
+	return ec.meshIP.String()
+}
+
+// GetConnectedAt returns when the connection was established.
+func (ec *ExitClient) GetConnectedAt() time.Time {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
+	return ec.connectedAt
+}
+
+// GetLastCheck returns the last health check time.
+func (ec *ExitClient) GetLastCheck() time.Time {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
+	return ec.lastCheck
+}
+
+// UpdateLastCheck updates the last health check time.
+func (ec *ExitClient) UpdateLastCheck() {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	ec.lastCheck = time.Now()
 }

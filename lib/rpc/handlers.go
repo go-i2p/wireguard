@@ -71,6 +71,34 @@ type BanProvider interface {
 	RemoveBan(nodeID string) bool
 }
 
+// ExitNodeProvider provides access to exit node operations for RPC handlers.
+type ExitNodeProvider interface {
+	// Start starts the exit node service.
+	Start() error
+	// Stop stops the exit node service.
+	Stop() error
+	// IsActive returns true if the exit node is active.
+	IsActive() bool
+	// GetMetrics returns current exit node metrics.
+	GetMetrics() metrics.ExitMetrics
+}
+
+// ExitClientProvider provides access to exit client operations for RPC handlers.
+type ExitClientProvider interface {
+	// Start starts the exit client with the given exit node mesh IP.
+	Start(exitNodeMeshIP string) error
+	// Stop stops the exit client.
+	Stop() error
+	// IsActive returns true if the exit client is active.
+	IsActive() bool
+	// GetExitNodeMeshIP returns the exit node's mesh IP address.
+	GetExitNodeMeshIP() string
+	// GetConnectedAt returns when the connection was established.
+	GetConnectedAt() time.Time
+	// GetLastCheck returns the last health check time.
+	GetLastCheck() time.Time
+}
+
 // BanEntry is used by BanProvider to return ban information.
 type BanEntry struct {
 	NodeID      string
@@ -90,17 +118,21 @@ type Handlers struct {
 	routes          RouteProvider
 	config          ConfigProvider
 	bans            BanProvider
+	exitNode        ExitNodeProvider
+	exitClient      ExitClientProvider
 	inviteRateLimit *ratelimit.Limiter // Rate limiter for invite acceptance
 }
 
 // HandlersConfig configures the RPC handlers.
 type HandlersConfig struct {
-	Node   NodeProvider
-	Peers  PeerProvider
-	Invite InviteProvider
-	Routes RouteProvider
-	Config ConfigProvider
-	Bans   BanProvider
+	Node       NodeProvider
+	Peers      PeerProvider
+	Invite     InviteProvider
+	Routes     RouteProvider
+	Config     ConfigProvider
+	Bans       BanProvider
+	ExitNode   ExitNodeProvider
+	ExitClient ExitClientProvider
 }
 
 // NewHandlers creates RPC handlers.
@@ -113,6 +145,8 @@ func NewHandlers(cfg HandlersConfig) *Handlers {
 		routes:          cfg.Routes,
 		config:          cfg.Config,
 		bans:            cfg.Bans,
+		exitNode:        cfg.ExitNode,
+		exitClient:      cfg.ExitClient,
 		inviteRateLimit: ratelimit.New(0.1, 5), // 0.1/sec (1 per 10s), burst 5
 	}
 }
@@ -131,7 +165,15 @@ func (h *Handlers) RegisterAll(s *Server) {
 	s.RegisterHandler("bans.list", h.BansList)
 	s.RegisterHandler("bans.add", h.BansAdd)
 	s.RegisterHandler("bans.remove", h.BansRemove)
-	log.WithField("count", 11).Debug("RPC handlers registered")
+	s.RegisterHandler("exit-node.status", h.ExitNodeStatus)
+	s.RegisterHandler("exit-node.start", h.ExitNodeStart)
+	s.RegisterHandler("exit-node.stop", h.ExitNodeStop)
+	s.RegisterHandler("exit-node.metrics", h.ExitNodeMetrics)
+	s.RegisterHandler("exit-client.enable", h.ExitClientEnable)
+	s.RegisterHandler("exit-client.disable", h.ExitClientDisable)
+	s.RegisterHandler("exit-client.status", h.ExitClientStatus)
+	s.RegisterHandler("exit-nodes.list", h.ExitNodesList)
+	log.WithField("count", 19).Debug("RPC handlers registered")
 }
 
 // Status returns the node status.
@@ -563,5 +605,230 @@ func (h *Handlers) BansRemove(ctx context.Context, params json.RawMessage) (any,
 	return &BanRemoveResult{
 		Success: true,
 		Message: "peer unbanned",
+	}, nil
+}
+
+// ---- Exit Node Handlers ----
+
+// ExitNodeStatus returns the exit node status and metrics.
+func (h *Handlers) ExitNodeStatus(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-node.status request")
+	if h.exitNode == nil {
+		log.Warn("exit-node.status request failed: exit node not configured")
+		return nil, ErrInternal("exit node not configured")
+	}
+
+	m := h.exitNode.GetMetrics()
+	log.WithField("active", h.exitNode.IsActive()).WithField("clientCount", m.ActiveClients()).Debug("exit-node.status request completed")
+	return &ExitNodeStatusResult{
+		Active:          h.exitNode.IsActive(),
+		ClientCount:     int(m.ActiveClients()),
+		BytesSent:       m.BytesForwarded(),
+		BytesReceived:   m.BytesReceived(),
+		PacketsSent:     0, // Not tracked in current metrics
+		PacketsReceived: 0, // Not tracked in current metrics
+	}, nil
+}
+
+// ExitNodeStart starts the exit node service.
+func (h *Handlers) ExitNodeStart(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-node.start request")
+	if h.exitNode == nil {
+		log.Warn("exit-node.start request failed: exit node not configured")
+		return nil, ErrInternal("exit node not configured")
+	}
+
+	if h.exitNode.IsActive() {
+		log.Debug("exit-node.start: already active")
+		return &ExitNodeStartResult{
+			Success: true,
+			Message: "exit node already running",
+		}, nil
+	}
+
+	log.Info("starting exit node")
+	if err := h.exitNode.Start(); err != nil {
+		log.WithError(err).Warn("exit-node.start request failed")
+		return nil, ErrInternal(err.Error())
+	}
+
+	log.Debug("exit-node.start request completed")
+	return &ExitNodeStartResult{
+		Success: true,
+		Message: "exit node started successfully",
+	}, nil
+}
+
+// ExitNodeStop stops the exit node service.
+func (h *Handlers) ExitNodeStop(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-node.stop request")
+	if h.exitNode == nil {
+		log.Warn("exit-node.stop request failed: exit node not configured")
+		return nil, ErrInternal("exit node not configured")
+	}
+
+	if !h.exitNode.IsActive() {
+		log.Debug("exit-node.stop: already stopped")
+		return &ExitNodeStopResult{
+			Success: true,
+			Message: "exit node already stopped",
+		}, nil
+	}
+
+	log.Info("stopping exit node")
+	if err := h.exitNode.Stop(); err != nil {
+		log.WithError(err).Warn("exit-node.stop request failed")
+		return nil, ErrInternal(err.Error())
+	}
+
+	log.Debug("exit-node.stop request completed")
+	return &ExitNodeStopResult{
+		Success: true,
+		Message: "exit node stopped successfully",
+	}, nil
+}
+
+// ExitNodeMetrics returns detailed exit node metrics.
+func (h *Handlers) ExitNodeMetrics(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-node.metrics request")
+	if h.exitNode == nil {
+		log.Warn("exit-node.metrics request failed: exit node not configured")
+		return nil, ErrInternal("exit node not configured")
+	}
+
+	m := h.exitNode.GetMetrics()
+	log.WithField("clientCount", m.ActiveClients()).Debug("exit-node.metrics request completed")
+	return &ExitNodeMetricsResult{
+		ClientCount:     int(m.ActiveClients()),
+		BytesSent:       m.BytesForwarded(),
+		BytesReceived:   m.BytesReceived(),
+		PacketsSent:     0, // Not tracked in current metrics
+		PacketsReceived: 0, // Not tracked in current metrics
+	}, nil
+}
+
+// ---- Exit Client Handlers ----
+
+// ExitClientEnable enables exit client mode and connects to an exit node.
+func (h *Handlers) ExitClientEnable(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-client.enable request")
+	if h.exitClient == nil {
+		log.Warn("exit-client.enable request failed: exit client not configured")
+		return nil, ErrInternal("exit client not configured")
+	}
+
+	var p ExitClientEnableParams
+	if params != nil {
+		if err := json.Unmarshal(params, &p); err != nil {
+			log.WithError(err).Debug("exit-client.enable request failed: invalid params")
+			return nil, ErrInvalidParams(err.Error())
+		}
+	}
+
+	if h.exitClient.IsActive() {
+		log.Debug("exit-client.enable: already active")
+		return &ExitClientEnableResult{
+			Success:    true,
+			Message:    "exit client already running",
+			ExitNodeID: "", // TODO: Look up node ID from mesh IP
+		}, nil
+	}
+
+	// TODO: If exit_node_mesh_ip is empty, auto-discover via routing table
+	exitNodeMeshIP := p.ExitNodeMeshIP
+	if exitNodeMeshIP == "" {
+		log.Warn("exit-client.enable: auto-discovery not yet implemented")
+		return nil, ErrInvalidParams("exit_node_mesh_ip is required (auto-discovery not yet implemented)")
+	}
+
+	log.WithField("exitNodeMeshIP", exitNodeMeshIP).Info("enabling exit client")
+	if err := h.exitClient.Start(exitNodeMeshIP); err != nil {
+		log.WithError(err).Warn("exit-client.enable request failed")
+		return nil, ErrInternal(err.Error())
+	}
+
+	log.Debug("exit-client.enable request completed")
+	return &ExitClientEnableResult{
+		Success:    true,
+		Message:    "exit client enabled successfully",
+		ExitNodeID: "", // TODO: Look up node ID from mesh IP
+	}, nil
+}
+
+// ExitClientDisable disables exit client mode.
+func (h *Handlers) ExitClientDisable(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-client.disable request")
+	if h.exitClient == nil {
+		log.Warn("exit-client.disable request failed: exit client not configured")
+		return nil, ErrInternal("exit client not configured")
+	}
+
+	if !h.exitClient.IsActive() {
+		log.Debug("exit-client.disable: already disabled")
+		return &ExitClientDisableResult{
+			Success: true,
+			Message: "exit client already disabled",
+		}, nil
+	}
+
+	log.Info("disabling exit client")
+	if err := h.exitClient.Stop(); err != nil {
+		log.WithError(err).Warn("exit-client.disable request failed")
+		return nil, ErrInternal(err.Error())
+	}
+
+	log.Debug("exit-client.disable request completed")
+	return &ExitClientDisableResult{
+		Success: true,
+		Message: "exit client disabled successfully",
+	}, nil
+}
+
+// ExitClientStatus returns the exit client connection status.
+func (h *Handlers) ExitClientStatus(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-client.status request")
+	if h.exitClient == nil {
+		log.Warn("exit-client.status request failed: exit client not configured")
+		return nil, ErrInternal("exit client not configured")
+	}
+
+	isActive := h.exitClient.IsActive()
+	result := &ExitClientStatusResult{
+		Connected: isActive,
+	}
+
+	if isActive {
+		result.ExitNodeMeshIP = h.exitClient.GetExitNodeMeshIP()
+		result.ExitNodeID = "" // TODO: Look up node ID from mesh IP
+		connectedAt := h.exitClient.GetConnectedAt()
+		lastCheck := h.exitClient.GetLastCheck()
+		if !connectedAt.IsZero() {
+			result.ConnectedAt = connectedAt.Format(time.RFC3339)
+		}
+		if !lastCheck.IsZero() {
+			result.LastCheck = lastCheck.Format(time.RFC3339)
+		}
+	}
+
+	log.WithField("connected", isActive).Debug("exit-client.status request completed")
+	return result, nil
+}
+
+// ExitNodesList returns all available exit nodes discovered via gossip.
+func (h *Handlers) ExitNodesList(ctx context.Context, params json.RawMessage) (any, *Error) {
+	log.Debug("handling exit-nodes.list request")
+	if h.routes == nil {
+		log.Warn("exit-nodes.list request failed: routing table not available")
+		return nil, ErrInternal("routing table not available")
+	}
+
+	// Get routing table which has GetExitNodes() method
+	// Note: This requires the routes provider to expose exit node info
+	// For now, return empty list as a placeholder
+	// TODO: Extend RouteProvider interface to include GetExitNodes()
+	log.Debug("exit-nodes.list request completed (no exit nodes discovered)")
+	return &ExitNodesListResult{
+		ExitNodes: []ExitNodeInfo{},
+		Total:     0,
 	}, nil
 }

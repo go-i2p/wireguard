@@ -375,3 +375,117 @@ type BanRemoveResult struct {
 	// Message provides additional context
 	Message string `json:"message"`
 }
+
+// ---- Exit Node Management Types ----
+
+// ExitNodeStatusResult is the response for "exit-node.status" method.
+type ExitNodeStatusResult struct {
+	// Active indicates if the exit node is running
+	Active bool `json:"active"`
+	// ClientCount is the number of connected exit clients
+	ClientCount int `json:"client_count"`
+	// BytesSent is the total bytes sent to clients
+	BytesSent uint64 `json:"bytes_sent"`
+	// BytesReceived is the total bytes received from clients
+	BytesReceived uint64 `json:"bytes_received"`
+	// PacketsSent is the total packets sent to clients
+	PacketsSent uint64 `json:"packets_sent"`
+	// PacketsReceived is the total packets received from clients
+	PacketsReceived uint64 `json:"packets_received"`
+}
+
+// ExitNodeStartResult is the response for "exit-node.start" method.
+type ExitNodeStartResult struct {
+	// Success indicates if the exit node was started
+	Success bool `json:"success"`
+	// Message provides additional context
+	Message string `json:"message"`
+}
+
+// ExitNodeStopResult is the response for "exit-node.stop" method.
+type ExitNodeStopResult struct {
+	// Success indicates if the exit node was stopped
+	Success bool `json:"success"`
+	// Message provides additional context
+	Message string `json:"message"`
+}
+
+// ExitNodeMetricsResult is the response for "exit-node.metrics" method.
+type ExitNodeMetricsResult struct {
+	// ClientCount is the number of connected exit clients
+	ClientCount int `json:"client_count"`
+	// BytesSent is the total bytes sent to clients
+	BytesSent uint64 `json:"bytes_sent"`
+	// BytesReceived is the total bytes received from clients
+	BytesReceived uint64 `json:"bytes_received"`
+	// PacketsSent is the total packets sent to clients
+	PacketsSent uint64 `json:"packets_sent"`
+	// PacketsReceived is the total packets received from clients
+	PacketsReceived uint64 `json:"packets_received"`
+}
+
+// ---- Exit Client Management Types ----
+
+// ExitClientEnableParams is the request for "exit-client.enable" method.
+type ExitClientEnableParams struct {
+	// ExitNodeMeshIP is the mesh IP of the exit node (optional, auto-discover if empty)
+	ExitNodeMeshIP string `json:"exit_node_mesh_ip,omitempty"`
+}
+
+// ExitClientEnableResult is the response for "exit-client.enable" method.
+type ExitClientEnableResult struct {
+	// Success indicates if the exit client was enabled
+	Success bool `json:"success"`
+	// Message provides additional context
+	Message string `json:"message"`
+	// ExitNodeID is the node ID of the selected exit node
+	ExitNodeID string `json:"exit_node_id,omitempty"`
+}
+
+// ExitClientDisableResult is the response for "exit-client.disable" method.
+type ExitClientDisableResult struct {
+	// Success indicates if the exit client was disabled
+	Success bool `json:"success"`
+	// Message provides additional context
+	Message string `json:"message"`
+}
+
+// ExitClientStatusResult is the response for "exit-client.status" method.
+type ExitClientStatusResult struct {
+	// Connected indicates if the exit client is connected
+	Connected bool `json:"connected"`
+	// ExitNodeID is the node ID of the exit node
+	ExitNodeID string `json:"exit_node_id,omitempty"`
+	// ExitNodeMeshIP is the mesh IP of the exit node
+	ExitNodeMeshIP string `json:"exit_node_mesh_ip,omitempty"`
+	// ConnectedAt is when the connection was established
+	ConnectedAt string `json:"connected_at,omitempty"`
+	// LastCheck is when the last health check was performed
+	LastCheck string `json:"last_check,omitempty"`
+}
+
+// ExitNodesListResult is the response for "exit-nodes.list" method.
+type ExitNodesListResult struct {
+	// ExitNodes is the list of available exit nodes
+	ExitNodes []ExitNodeInfo `json:"exit_nodes"`
+	// Total is the total number of exit nodes
+	Total int `json:"total"`
+}
+
+// ExitNodeInfo represents information about an available exit node.
+type ExitNodeInfo struct {
+	// NodeID is the node's unique identifier
+	NodeID string `json:"node_id"`
+	// MeshIP is the exit node's mesh tunnel IP
+	MeshIP string `json:"mesh_ip"`
+	// Load is the current load (0.0 to 1.0)
+	Load float64 `json:"load"`
+	// ClientCount is the number of connected clients
+	ClientCount int `json:"client_count"`
+	// BandwidthMbps is the advertised bandwidth in Mbps
+	BandwidthMbps int `json:"bandwidth_mbps,omitempty"`
+	// Country is the two-letter ISO country code
+	Country string `json:"country,omitempty"`
+	// LastSeen is when we last received an advertisement
+	LastSeen string `json:"last_seen"`
+}

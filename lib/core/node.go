@@ -949,12 +949,14 @@ func (n *Node) initRPCServer(ctx context.Context) error {
 	}
 
 	handlers := rpc.NewHandlers(rpc.HandlersConfig{
-		Node:   n,
-		Peers:  n,
-		Invite: n,
-		Routes: n,
-		Config: n,
-		Bans:   n,
+		Node:       n,
+		Peers:      n,
+		Invite:     n,
+		Routes:     n,
+		Config:     n,
+		Bans:       n,
+		ExitNode:   n.exitNode,
+		ExitClient: n.exitClient,
 	})
 	handlers.RegisterAll(n.rpcServer)
 
@@ -1912,6 +1914,20 @@ func (n *Node) InviteStore() *identity.InviteStore {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.inviteStore
+}
+
+// ExitNode returns the exit node if configured, or nil.
+func (n *Node) ExitNode() *ExitNode {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.exitNode
+}
+
+// ExitClient returns the exit client if configured, or nil.
+func (n *Node) ExitClient() *ExitClient {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.exitClient
 }
 
 // TunnelIPAddr returns the tunnel IP as netip.Addr.
