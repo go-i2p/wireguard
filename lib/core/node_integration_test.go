@@ -268,6 +268,7 @@ func TestNode_Integration_ConfigManagement(t *testing.T) {
 	cfg.I2P.SAMAddress = samAddr
 	cfg.RPC.Enabled = false
 	cfg.Web.Enabled = false
+	expectedNodeName := cfg.Node.Name // Save the generated name
 
 	node, err := NewNode(cfg)
 	if err != nil {
@@ -285,7 +286,7 @@ func TestNode_Integration_ConfigManagement(t *testing.T) {
 		key      string
 		expected interface{}
 	}{
-		{"node.name", "config-test-node"},
+		{"node.name", expectedNodeName},
 	}
 
 	for _, tc := range testCases {

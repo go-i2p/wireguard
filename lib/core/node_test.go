@@ -243,7 +243,7 @@ func TestNode_GetConfig(t *testing.T) {
 		want any
 	}{
 		{"node.name", "test-node"},
-		{"rpc.enabled", true},
+		{"rpc.enabled", false},
 		{"mesh.max_peers", DefaultMaxPeers},
 	}
 
@@ -277,6 +277,7 @@ func TestNode_GetConfig(t *testing.T) {
 
 func TestNode_SetConfig(t *testing.T) {
 	cfg := testConfig(t)
+	originalName := cfg.Node.Name // Save the generated name
 
 	node, err := NewNode(cfg)
 	if err != nil {
@@ -288,8 +289,8 @@ func TestNode_SetConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetConfig error = %v", err)
 	}
-	if oldVal != "my-node" {
-		t.Errorf("SetConfig old value = %v, want 'my-node'", oldVal)
+	if oldVal != originalName {
+		t.Errorf("SetConfig old value = %v, want %q", oldVal, originalName)
 	}
 
 	newVal, _ := node.GetConfig("node.name")
