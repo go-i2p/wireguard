@@ -21,6 +21,14 @@ type RPCClient interface {
 	InviteCreate(ctx context.Context, expiry string, maxUses int) (*rpc.InviteCreateResult, error)
 	// InviteAccept accepts an invite code.
 	InviteAccept(ctx context.Context, inviteCode string) (*rpc.InviteAcceptResult, error)
+	// ExitNodeStatus returns the exit node status.
+	ExitNodeStatus(ctx context.Context) (map[string]any, error)
+	// ExitNodeMetrics returns the exit node metrics.
+	ExitNodeMetrics(ctx context.Context) (map[string]any, error)
+	// ExitNodeStart starts the exit node.
+	ExitNodeStart(ctx context.Context) (map[string]any, error)
+	// ExitNodeStop stops the exit node.
+	ExitNodeStop(ctx context.Context) (map[string]any, error)
 	// Close closes the RPC connection.
 	Close() error
 }

@@ -106,6 +106,32 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleExitNode renders the exit node management page.
+func (s *Server) handleExitNode(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Get exit node status
+	status, err := s.rpcClient.ExitNodeStatus(ctx)
+	if err != nil {
+		log.Error("rpc exit-node.status error", "error", err)
+		s.renderTemplate(w, "exit-node", map[string]any{
+			"Error":       "Failed to fetch exit node status",
+			"CurrentPage": "exit-node",
+		})
+		return
+	}
+
+	// Get exit node metrics (optional - may fail if not enabled)
+	metrics, _ := s.rpcClient.ExitNodeMetrics(ctx)
+
+	s.renderTemplate(w, "exit-node", map[string]any{
+		"Status":      status,
+		"Metrics":     metrics,
+		"CurrentPage": "exit-node",
+	})
+}
+
 // API Handlers
 
 // handleAPICSRFToken generates and returns a new CSRF token.
@@ -369,4 +395,34 @@ func (s *Server) handleAPIReadiness(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ready",
 	})
+}
+
+// handleAPIExitNodeStart starts the exit node.
+func (s *Server) handleAPIExitNodeStart(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	result, err := s.rpcClient.ExitNodeStart(ctx)
+	if err != nil {
+		log.Error("rpc exit-node.start error", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to start exit node: "+err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// handleAPIExitNodeStop stops the exit node.
+func (s *Server) handleAPIExitNodeStop(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	result, err := s.rpcClient.ExitNodeStop(ctx)
+	if err != nil {
+		log.Error("rpc exit-node.stop error", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to stop exit node: "+err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, result)
 }

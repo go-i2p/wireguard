@@ -103,6 +103,7 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /peers", s.handlePeers)
 	mux.HandleFunc("GET /invites", s.handleInvites)
 	mux.HandleFunc("GET /routes", s.handleRoutes)
+	mux.HandleFunc("GET /exit-node", s.handleExitNode)
 	mux.HandleFunc("GET /settings", s.handleSettings)
 
 	// API endpoints
@@ -113,6 +114,8 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/invite/create", s.handleAPIInviteCreate)
 	mux.HandleFunc("POST /api/invite/accept", s.handleAPIInviteAccept)
 	mux.HandleFunc("POST /api/invite/qr", s.handleAPIInviteQR)
+	mux.HandleFunc("POST /api/exit-node/start", s.handleAPIExitNodeStart)
+	mux.HandleFunc("POST /api/exit-node/stop", s.handleAPIExitNodeStop)
 
 	// Health check endpoints
 	mux.HandleFunc("GET /api/health", s.handleAPIHealth)

@@ -1,0 +1,143 @@
+{{template "base" .}}
+{{define "content"}}
+<section id="exit-node-page" aria-labelledby="exit-node-title">
+<h1 id="exit-node-title">Exit Node Management</h1>
+
+{{if .Error}}
+<div class="alert alert-error" role="alert" id="exit-node-error">{{.Error}}</div>
+{{else}}
+<div class="grid" id="exit-node-panel">
+    <article class="card" id="exit-node-status-card">
+        <h3>Exit Node Status</h3>
+        <div class="status-item">
+            <span class="label">Enabled:</span>
+            <span class="value status-indicator status-{{if .Status.Enabled}}active{{else}}inactive{{end}}">
+                {{if .Status.Enabled}}Active{{else}}Inactive{{end}}
+            </span>
+        </div>
+        {{if .Status.Enabled}}
+        <div class="status-item">
+            <span class="label">Active Clients:</span>
+            <span class="value" id="active-clients-count">{{.Status.ActiveClients}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Public Interface:</span>
+            <span class="value">{{.Status.PublicInterface}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Bandwidth Limit:</span>
+            <span class="value">{{if .Status.BandwidthLimit}}{{.Status.BandwidthLimit}} Mbps{{else}}<em>Unlimited</em>{{end}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Upstream VPN:</span>
+            <span class="value">{{if .Status.UpstreamVPN}}<span class="status-indicator status-active">Connected</span>{{else}}<em>Not configured</em>{{end}}</span>
+        </div>
+        {{end}}
+    </article>
+
+    {{if .Status.Enabled}}
+    <article class="card" id="exit-node-metrics-card">
+        <h3>Traffic Metrics</h3>
+        {{if .Metrics}}
+        <div class="status-item">
+            <span class="label">Total Bytes In:</span>
+            <span class="value" id="total-bytes-in">{{.Metrics.TotalBytesIn}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Total Bytes Out:</span>
+            <span class="value" id="total-bytes-out">{{.Metrics.TotalBytesOut}}</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Current Bandwidth:</span>
+            <span class="value" id="current-bandwidth">{{.Metrics.CurrentBandwidth}}</span>
+        </div>
+        {{else}}
+        <p><em>No metrics available</em></p>
+        {{end}}
+    </article>
+    {{end}}
+</div>
+
+<div class="actions" id="exit-node-actions">
+    {{if .Status.Enabled}}
+    <button type="button" class="btn btn-danger" id="stop-exit-btn" onclick="stopExitNode()">Stop Exit Node</button>
+    {{else}}
+    <button type="button" class="btn btn-primary" id="start-exit-btn" onclick="startExitNode()">Start Exit Node</button>
+    {{end}}
+    <button type="button" class="btn btn-secondary" id="refresh-exit-btn" onclick="refreshExitNode()">Refresh</button>
+</div>
+
+{{if .Status.Enabled}}
+{{if .Metrics}}
+{{if .Metrics.Clients}}
+<article class="card" id="exit-clients-card">
+    <h3>Connected Clients</h3>
+    <table id="exit-clients-table" aria-label="Connected exit clients">
+        <thead>
+            <tr>
+                <th>Node ID</th>
+                <th>Bytes In</th>
+                <th>Bytes Out</th>
+                <th>Connected Since</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Metrics.Clients}}
+            <tr>
+                <td class="mono">{{truncate .NodeID 24}}</td>
+                <td>{{.BytesIn}}</td>
+                <td>{{.BytesOut}}</td>
+                <td>{{.ConnectedSince}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</article>
+{{end}}
+{{end}}
+{{end}}
+
+{{end}}
+</section>
+
+<script>
+function startExitNode() {
+    fetch('/api/exit-node/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert('Failed to start exit node: ' + data.error);
+        } else {
+            location.reload();
+        }
+    })
+    .catch(error => alert('Error: ' + error));
+}
+
+function stopExitNode() {
+    if (!confirm('Are you sure you want to stop the exit node?')) {
+        return;
+    }
+    fetch('/api/exit-node/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert('Failed to stop exit node: ' + data.error);
+        } else {
+            location.reload();
+        }
+    })
+    .catch(error => alert('Error: ' + error));
+}
+
+function refreshExitNode() {
+    location.reload();
+}
+</script>
+{{end}}

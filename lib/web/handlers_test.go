@@ -26,6 +26,14 @@ type mockRPCClient struct {
 	inviteCreateErr    error
 	inviteAcceptResult *rpc.InviteAcceptResult
 	inviteAcceptErr    error
+	exitNodeStatus     map[string]any
+	exitNodeStatusErr  error
+	exitNodeMetrics    map[string]any
+	exitNodeMetricsErr error
+	exitNodeStart      map[string]any
+	exitNodeStartErr   error
+	exitNodeStop       map[string]any
+	exitNodeStopErr    error
 	closed             bool
 }
 
@@ -51,6 +59,22 @@ func (m *mockRPCClient) InviteCreate(_ context.Context, _ string, _ int) (*rpc.I
 
 func (m *mockRPCClient) InviteAccept(_ context.Context, _ string) (*rpc.InviteAcceptResult, error) {
 	return m.inviteAcceptResult, m.inviteAcceptErr
+}
+
+func (m *mockRPCClient) ExitNodeStatus(_ context.Context) (map[string]any, error) {
+	return m.exitNodeStatus, m.exitNodeStatusErr
+}
+
+func (m *mockRPCClient) ExitNodeMetrics(_ context.Context) (map[string]any, error) {
+	return m.exitNodeMetrics, m.exitNodeMetricsErr
+}
+
+func (m *mockRPCClient) ExitNodeStart(_ context.Context) (map[string]any, error) {
+	return m.exitNodeStart, m.exitNodeStartErr
+}
+
+func (m *mockRPCClient) ExitNodeStop(_ context.Context) (map[string]any, error) {
+	return m.exitNodeStop, m.exitNodeStopErr
 }
 
 func (m *mockRPCClient) Close() error {

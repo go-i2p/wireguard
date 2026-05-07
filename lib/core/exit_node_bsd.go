@@ -17,8 +17,11 @@ type bsdNATManager struct {
 
 // bsdPolicyRoutingManager implements policy routing for BSD systems using route command.
 type bsdPolicyRoutingManager struct {
-	routes   []string // Routes added (for cleanup)
-	isActive bool     // Whether policy routing is currently configured
+	routes          []string // Routes added (for cleanup)
+	isActive        bool     // Whether policy routing is currently configured
+	meshInterface   string   // Mesh interface (e.g., "tun0")
+	upstreamIface   string   // Upstream VPN interface
+	upstreamGateway string   // Gateway for upstream interface
 }
 
 func newBSDNATManager() (NATManager, error) {
@@ -184,7 +187,7 @@ func newBSDPolicyRoutingManager() (PolicyRoutingManager, error) {
 	}, nil
 }
 
-// Setup configures policy routing on BSD systems (placeholder implementation).
+// Setup configures policy routing on BSD systems using route command.
 func (b *bsdPolicyRoutingManager) Setup(upstreamInterface, meshInterface string) error {
 	if b.isActive {
 		return fmt.Errorf("policy routing is already configured")
@@ -198,9 +201,63 @@ func (b *bsdPolicyRoutingManager) Setup(upstreamInterface, meshInterface string)
 		return fmt.Errorf("mesh interface cannot be empty")
 	}
 
-	// TODO: Implement BSD policy routing using route command
-	// For now, return not implemented error
-	return fmt.Errorf("policy routing not yet implemented on BSD")
+	b.meshInterface = meshInterface
+	b.upstreamIface = upstreamInterface
+
+	log.Info("bsd: setting up policy routing", "upstream", upstreamInterface, "mesh", meshInterface)
+
+	// Get the gateway for the upstream interface
+	gateway, err := b.getInterfaceGateway(upstreamInterface)
+	if err != nil {
+		return fmt.Errorf("get upstream gateway: %w", err)
+	}
+	b.upstreamGateway = gateway
+
+	log.Info("bsd: found upstream gateway", "gateway", gateway, "interface", upstreamInterface)
+
+	// Add route for mesh subnet (10.42.0.0/16) via upstream interface
+	meshSubnet := "10.42.0.0/16"
+	routeCmd := []string{"add", "-net", meshSubnet, "-interface", upstreamInterface}
+	if gateway != "" {
+		routeCmd = append(routeCmd, "-gateway", gateway)
+	}
+
+	cmd := exec.Command("route", routeCmd...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("add route for %s: %w (output: %s)", meshSubnet, err, string(output))
+	}
+
+	b.routes = append(b.routes, meshSubnet)
+	b.isActive = true
+
+	log.Info("bsd: policy routing configured successfully", "routes", len(b.routes))
+	return nil
+}
+
+// getInterfaceGateway retrieves the gateway address for a given network interface.
+func (b *bsdPolicyRoutingManager) getInterfaceGateway(iface string) (string, error) {
+	// Use 'route get default' to find the default gateway
+	cmd := exec.Command("route", "-n", "get", "default")
+	output, err := cmd.Output()
+	if err != nil {
+		// Try getting the gateway directly from the interface
+		return "", nil // Return empty string to use interface-only routing
+	}
+
+	// Parse the output to find the gateway line
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "gateway:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				return parts[1], nil
+			}
+		}
+	}
+
+	// No gateway found, use interface-only routing
+	return "", nil
 }
 
 // Teardown removes policy routing configuration on BSD systems.
@@ -209,9 +266,32 @@ func (b *bsdPolicyRoutingManager) Teardown() error {
 		return nil // Already torn down
 	}
 
-	// TODO: Remove routes added during setup
+	log.Info("bsd: tearing down policy routing", "routes", len(b.routes))
+
+	var teardownErrors []string
+
+	// Remove all routes (in reverse order)
+	for i := len(b.routes) - 1; i >= 0; i-- {
+		subnet := b.routes[i]
+		cmd := exec.Command("route", "delete", "-net", subnet)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			teardownErrors = append(teardownErrors, fmt.Sprintf("remove route %s: %v", subnet, err))
+			log.Warn("bsd: failed to remove route", "subnet", subnet, "error", err, "output", string(output))
+		}
+	}
+
+	// Clear state
 	b.routes = nil
 	b.isActive = false
+	b.meshInterface = ""
+	b.upstreamIface = ""
+	b.upstreamGateway = ""
+
+	if len(teardownErrors) > 0 {
+		return fmt.Errorf("policy routing teardown had errors: %s", strings.Join(teardownErrors, "; "))
+	}
+
+	log.Info("bsd: policy routing torn down successfully")
 	return nil
 }
 

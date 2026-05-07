@@ -17,8 +17,11 @@ type darwinNATManager struct {
 
 // darwinPolicyRoutingManager implements policy routing for macOS using route command.
 type darwinPolicyRoutingManager struct {
-	routes   []string // Routes added (for cleanup)
-	isActive bool     // Whether policy routing is currently configured
+	routes          []string // Routes added (for cleanup)
+	isActive        bool     // Whether policy routing is currently configured
+	meshInterface   string   // Mesh interface (e.g., "utun0")
+	upstreamIface   string   // Upstream VPN interface
+	upstreamGateway string   // Gateway for upstream interface
 }
 
 func newDarwinNATManager() (NATManager, error) {
@@ -184,7 +187,7 @@ func newDarwinPolicyRoutingManager() (PolicyRoutingManager, error) {
 	}, nil
 }
 
-// Setup configures policy routing on macOS (placeholder implementation).
+// Setup configures policy routing on macOS using route command.
 func (d *darwinPolicyRoutingManager) Setup(upstreamInterface, meshInterface string) error {
 	if d.isActive {
 		return fmt.Errorf("policy routing is already configured")
@@ -198,9 +201,63 @@ func (d *darwinPolicyRoutingManager) Setup(upstreamInterface, meshInterface stri
 		return fmt.Errorf("mesh interface cannot be empty")
 	}
 
-	// TODO: Implement macOS policy routing using route command
-	// For now, return not implemented error
-	return fmt.Errorf("policy routing not yet implemented on macOS")
+	d.meshInterface = meshInterface
+	d.upstreamIface = upstreamInterface
+
+	log.Info("darwin: setting up policy routing", "upstream", upstreamInterface, "mesh", meshInterface)
+
+	// Get the gateway for the upstream interface
+	gateway, err := d.getInterfaceGateway(upstreamInterface)
+	if err != nil {
+		return fmt.Errorf("get upstream gateway: %w", err)
+	}
+	d.upstreamGateway = gateway
+
+	log.Info("darwin: found upstream gateway", "gateway", gateway, "interface", upstreamInterface)
+
+	// Add route for mesh subnet (10.42.0.0/16) via upstream interface
+	meshSubnet := "10.42.0.0/16"
+	routeCmd := []string{"add", "-net", meshSubnet, "-interface", upstreamInterface}
+	if gateway != "" {
+		routeCmd = append(routeCmd, "-gateway", gateway)
+	}
+
+	cmd := exec.Command("route", routeCmd...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("add route for %s: %w (output: %s)", meshSubnet, err, string(output))
+	}
+
+	d.routes = append(d.routes, meshSubnet)
+	d.isActive = true
+
+	log.Info("darwin: policy routing configured successfully", "routes", len(d.routes))
+	return nil
+}
+
+// getInterfaceGateway retrieves the gateway address for a given network interface.
+func (d *darwinPolicyRoutingManager) getInterfaceGateway(iface string) (string, error) {
+	// Use 'route get default' to find the default gateway
+	cmd := exec.Command("route", "-n", "get", "default")
+	output, err := cmd.Output()
+	if err != nil {
+		// Try getting the gateway directly from the interface
+		return "", nil // Return empty string to use interface-only routing
+	}
+
+	// Parse the output to find the gateway line
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "gateway:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				return parts[1], nil
+			}
+		}
+	}
+
+	// No gateway found, use interface-only routing
+	return "", nil
 }
 
 // Teardown removes policy routing configuration on macOS.
@@ -209,9 +266,32 @@ func (d *darwinPolicyRoutingManager) Teardown() error {
 		return nil // Already torn down
 	}
 
-	// TODO: Remove routes added during setup
+	log.Info("darwin: tearing down policy routing", "routes", len(d.routes))
+
+	var teardownErrors []string
+
+	// Remove all routes (in reverse order)
+	for i := len(d.routes) - 1; i >= 0; i-- {
+		subnet := d.routes[i]
+		cmd := exec.Command("route", "delete", "-net", subnet)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			teardownErrors = append(teardownErrors, fmt.Sprintf("remove route %s: %v", subnet, err))
+			log.Warn("darwin: failed to remove route", "subnet", subnet, "error", err, "output", string(output))
+		}
+	}
+
+	// Clear state
 	d.routes = nil
 	d.isActive = false
+	d.meshInterface = ""
+	d.upstreamIface = ""
+	d.upstreamGateway = ""
+
+	if len(teardownErrors) > 0 {
+		return fmt.Errorf("policy routing teardown had errors: %s", strings.Join(teardownErrors, "; "))
+	}
+
+	log.Info("darwin: policy routing torn down successfully")
 	return nil
 }
 

@@ -115,6 +115,12 @@ type ExitNodeConfig struct {
 	// PublicInterface is the network interface for outbound internet traffic (e.g., "eth0", "wlan0").
 	// This interface is used for NAT/masquerading of mesh traffic.
 	PublicInterface string `toml:"public_interface"`
+	// MeshInterface is the WireGuard interface name for the mesh network (default: "wg0").
+	// This is used for policy routing when an upstream VPN is configured.
+	MeshInterface string `toml:"mesh_interface"`
+	// Country is the geographic location of this exit node (e.g., "US", "SE", "JP").
+	// Used by clients to select exit nodes by location. Leave empty for "unknown".
+	Country string `toml:"country"`
 	// AllowedClients lists peer public keys or names allowed to use this exit.
 	// Empty list allows all mesh peers to use this exit node.
 	AllowedClients []string `toml:"allowed_clients"`
@@ -198,6 +204,8 @@ func DefaultConfig() *Config {
 		},
 		ExitNode: ExitNodeConfig{
 			Enabled:            false,
+			MeshInterface:      "wg0",
+			Country:            "unknown",
 			BandwidthLimitMbps: 0,
 			LogConnections:     false,
 			AutoDetect:         false,

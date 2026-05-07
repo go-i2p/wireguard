@@ -5,6 +5,7 @@ package core
 import (
 	"fmt"
 	"net/netip"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -123,7 +124,9 @@ func (d *darwinRouteManager) GetDefaultGateway() (netip.Addr, error) {
 
 // darwinFirewallManager implements FirewallManager for macOS using pf (packet filter).
 type darwinFirewallManager struct {
-	rulesAdded bool
+	rulesAdded   bool
+	rulesFile    string
+	anchorLoaded bool
 }
 
 func newDarwinFirewallManager() (FirewallManager, error) {
@@ -133,15 +136,51 @@ func newDarwinFirewallManager() (FirewallManager, error) {
 	}
 
 	return &darwinFirewallManager{
-		rulesAdded: false,
+		rulesAdded:   false,
+		rulesFile:    "/etc/pf.anchors/i2plan-killswitch",
+		anchorLoaded: false,
 	}, nil
 }
 
 func (d *darwinFirewallManager) BlockNonVPN(allowedInterface string) error {
-	// For MVP, this is a placeholder
-	// Full implementation would use pfctl to add rules
-	log.Info("darwin: would block non-VPN traffic", "interface", allowedInterface)
+	if d.rulesAdded {
+		return fmt.Errorf("firewall rules already active")
+	}
+
+	log.Info("darwin: enabling kill switch", "interface", allowedInterface)
+
+	// Create PF rules to block all traffic except through the allowed interface
+	rules := fmt.Sprintf(`# i2plan kill switch - block all traffic except VPN
+block all
+pass on lo0
+pass on %s
+`, allowedInterface)
+
+	// Write rules to anchor file
+	if err := os.WriteFile(d.rulesFile, []byte(rules), 0644); err != nil {
+		return fmt.Errorf("write pf rules: %w", err)
+	}
+
+	// Load the anchor
+	cmd := exec.Command("pfctl", "-a", "i2plan-killswitch", "-f", d.rulesFile)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		// Clean up the rules file
+		_ = os.Remove(d.rulesFile)
+		return fmt.Errorf("load pf anchor: %w (output: %s)", err, string(output))
+	}
+
+	// Enable pf if not already enabled
+	cmd = exec.Command("pfctl", "-e")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		// Ignore error if already enabled
+		if !strings.Contains(string(output), "already enabled") {
+			log.Warn("pfctl enable", "error", err, "output", string(output))
+		}
+	}
+
 	d.rulesAdded = true
+	d.anchorLoaded = true
+	log.Info("darwin: kill switch enabled", "interface", allowedInterface)
 	return nil
 }
 
@@ -150,8 +189,24 @@ func (d *darwinFirewallManager) Restore() error {
 		return nil
 	}
 
-	log.Info("darwin: would restore firewall rules")
+	log.Info("darwin: disabling kill switch")
+
+	// Flush the anchor
+	if d.anchorLoaded {
+		cmd := exec.Command("pfctl", "-a", "i2plan-killswitch", "-F", "all")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.Warn("darwin: failed to flush pf anchor", "error", err, "output", string(output))
+		}
+	}
+
+	// Remove the rules file
+	if err := os.Remove(d.rulesFile); err != nil && !os.IsNotExist(err) {
+		log.Warn("darwin: failed to remove rules file", "error", err)
+	}
+
 	d.rulesAdded = false
+	d.anchorLoaded = false
+	log.Info("darwin: kill switch disabled")
 	return nil
 }
 

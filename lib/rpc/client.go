@@ -377,3 +377,39 @@ func (c *Client) BansRemove(ctx context.Context, nodeID string) (*BanRemoveResul
 	}
 	return &result, nil
 }
+
+// ExitNodeStatus calls the "exit-node.status" method.
+func (c *Client) ExitNodeStatus(ctx context.Context) (map[string]any, error) {
+	var result map[string]any
+	if err := c.Call(ctx, "exit-node.status", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ExitNodeMetrics calls the "exit-node.metrics" method.
+func (c *Client) ExitNodeMetrics(ctx context.Context) (map[string]any, error) {
+	var result map[string]any
+	if err := c.Call(ctx, "exit-node.metrics", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ExitNodeStart calls the "exit-node.start" method.
+func (c *Client) ExitNodeStart(ctx context.Context) (map[string]any, error) {
+	var result map[string]any
+	if err := c.Call(ctx, "exit-node.start", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ExitNodeStop calls the "exit-node.stop" method.
+func (c *Client) ExitNodeStop(ctx context.Context) (map[string]any, error) {
+	var result map[string]any
+	if err := c.Call(ctx, "exit-node.stop", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}

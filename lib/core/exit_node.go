@@ -313,7 +313,10 @@ func (e *ExitNode) SetupPolicyRouting(upstreamInterface string) error {
 	}
 
 	// Setup policy routing through the upstream interface
-	meshInterface := "wg0" // TODO: Make this configurable
+	meshInterface := e.config.MeshInterface
+	if meshInterface == "" {
+		meshInterface = "wg0"
+	}
 	if err := e.policyManager.Setup(upstreamInterface, meshInterface); err != nil {
 		return fmt.Errorf("setup policy routing: %w", err)
 	}
@@ -406,10 +409,14 @@ func (e *ExitNode) BuildExitAdvertisement() *mesh.ExitNodeAdvertisement {
 	upstreamVPNs, err := DetectUpstreamVPNs()
 	if err == nil && len(upstreamVPNs) > 0 {
 		vpn := upstreamVPNs[0] // Use first detected VPN
+		country := e.config.Country
+		if country == "" {
+			country = "unknown"
+		}
 		ad.UpstreamVPN = &mesh.UpstreamVPNInfo{
 			Provider: detectVPNProvider(vpn.Interface),
-			Country:  "unknown", // TODO: Implement country detection
-			Verified: true,      // TODO: Implement health check
+			Country:  country,
+			Verified: e.verifyUpstreamConnection(),
 		}
 	}
 
@@ -460,6 +467,25 @@ func (e *ExitNode) buildAvailableRoutes() []mesh.RouteSpec {
 }
 
 // detectVPNProvider attempts to identify the VPN provider from interface name.
+// verifyUpstreamConnection checks if the upstream VPN connection is healthy.
+// Returns true if no upstream VPN is configured or if the upstream interface
+// exists and is active.
+func (e *ExitNode) verifyUpstreamConnection() bool {
+	// If no upstream VPN configured, consider it "verified"
+	if e.upstreamInterface == "" {
+		return true
+	}
+
+	// Check if the upstream interface exists
+	exists, err := InterfaceExists(e.upstreamInterface)
+	if err != nil || !exists {
+		return false
+	}
+
+	return true
+}
+
+// detectVPNProvider attempts to identify the VPN provider from the interface name.
 func detectVPNProvider(interfaceName string) string {
 	name := strings.ToLower(interfaceName)
 

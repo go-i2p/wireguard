@@ -122,8 +122,11 @@ func (w *windowsRouteManager) GetDefaultGateway() (netip.Addr, error) {
 
 // windowsFirewallManager implements FirewallManager for Windows using netsh advfirewall.
 type windowsFirewallManager struct {
-	rulesAdded bool
-	ruleName   string
+	rulesAdded        bool
+	ruleName          string
+	originalPolicy    string
+	meshRuleAdded     bool
+	loopbackRuleAdded bool
 }
 
 func newWindowsFirewallManager() (FirewallManager, error) {
@@ -133,16 +136,54 @@ func newWindowsFirewallManager() (FirewallManager, error) {
 	}
 
 	return &windowsFirewallManager{
-		rulesAdded: false,
-		ruleName:   "i2plan-killswitch",
+		rulesAdded:        false,
+		ruleName:          "i2plan-killswitch",
+		meshRuleAdded:     false,
+		loopbackRuleAdded: false,
 	}, nil
 }
 
 func (w *windowsFirewallManager) BlockNonVPN(allowedInterface string) error {
-	// For MVP, this is a placeholder
-	// Full implementation would use netsh advfirewall to add rules
-	log.Info("windows: would block non-VPN traffic", "interface", allowedInterface)
+	if w.rulesAdded {
+		return fmt.Errorf("firewall rules already active")
+	}
+
+	log.Info("windows: enabling kill switch", "interface", allowedInterface)
+
+	// 1. Save current firewall policy
+	cmd := exec.Command("netsh", "advfirewall", "show", "allprofiles", "state")
+	output, _ := cmd.Output()
+	w.originalPolicy = string(output)
+
+	// 2. Block all outbound traffic
+	cmd = exec.Command("netsh", "advfirewall", "set", "allprofiles", "firewallpolicy", "blockinbound,blockoutbound")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("set firewall policy: %w (output: %s)", err, string(output))
+	}
+
+	// 3. Allow mesh interface (outbound)
+	cmd = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		"name="+w.ruleName+"-mesh", "dir=out", "action=allow",
+		"interfacetype=any", "enable=yes")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		// Try to restore policy before returning error
+		_ = exec.Command("netsh", "advfirewall", "reset").Run()
+		return fmt.Errorf("add mesh rule: %w (output: %s)", err, string(output))
+	}
+	w.meshRuleAdded = true
+
+	// 4. Allow loopback
+	cmd = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		"name="+w.ruleName+"-loopback", "dir=out", "action=allow",
+		"localip=127.0.0.1", "enable=yes")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		log.Warn("windows: failed to add loopback rule (non-critical)", "error", err, "output", string(output))
+	} else {
+		w.loopbackRuleAdded = true
+	}
+
 	w.rulesAdded = true
+	log.Info("windows: kill switch enabled", "interface", allowedInterface)
 	return nil
 }
 
@@ -151,8 +192,34 @@ func (w *windowsFirewallManager) Restore() error {
 		return nil
 	}
 
-	log.Info("windows: would restore firewall rules")
+	log.Info("windows: disabling kill switch")
+
+	// Remove mesh rule
+	if w.meshRuleAdded {
+		cmd := exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+w.ruleName+"-mesh")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.Warn("windows: failed to remove mesh rule", "error", err, "output", string(output))
+		}
+	}
+
+	// Remove loopback rule
+	if w.loopbackRuleAdded {
+		cmd := exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+w.ruleName+"-loopback")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.Warn("windows: failed to remove loopback rule", "error", err, "output", string(output))
+		}
+	}
+
+	// Reset firewall policy to defaults
+	cmd := exec.Command("netsh", "advfirewall", "reset")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("reset firewall policy: %w (output: %s)", err, string(output))
+	}
+
 	w.rulesAdded = false
+	w.meshRuleAdded = false
+	w.loopbackRuleAdded = false
+	log.Info("windows: kill switch disabled")
 	return nil
 }
 
