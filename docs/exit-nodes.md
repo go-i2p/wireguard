@@ -7,11 +7,12 @@ This guide explains how to configure and use exit nodes in the i2plan mesh VPN. 
 1. [Overview](#overview)
 2. [System Requirements](#system-requirements)
 3. [Exit Node Configuration](#exit-node-configuration)
-4. [Exit Client Configuration](#exit-client-configuration)
-5. [Security Considerations](#security-considerations)
-6. [Performance Tuning](#performance-tuning)
-7. [Monitoring and Metrics](#monitoring-and-metrics)
-8. [Troubleshooting](#troubleshooting)
+4. [Upstream VPN Configuration (Double-VPN)](#upstream-vpn-configuration-double-vpn)
+5. [Exit Client Configuration](#exit-client-configuration)
+6. [Security Considerations](#security-considerations)
+7. [Performance Tuning](#performance-tuning)
+8. [Monitoring and Metrics](#monitoring-and-metrics)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -222,6 +223,284 @@ i2plan rpc peers list
 
 ---
 
+## Upstream VPN Configuration (Double-VPN)
+
+Exit nodes can now route mesh traffic through an upstream commercial VPN provider, creating a "double-VPN" configuration for enhanced privacy and routing flexibility.
+
+### Overview
+
+When an exit node is configured with an upstream VPN:
+- Mesh traffic is routed through: `Client → I2P → Exit Node → Upstream VPN → Internet`
+- Provides three layers of encryption: I2P + WireGuard + Upstream VPN
+- Exit node advertises available routes (direct and VPN) via gossip protocol
+- Clients can select preferred routes based on requirements
+- Automatic health monitoring ensures VPN connectivity
+
+### Upstream VPN Detection
+
+The exit node can automatically detect upstream VPN interfaces:
+
+```toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"
+
+# Automatic VPN detection (recommended)
+AutoDetectVPN = true
+
+# Fallback behavior when VPN disconnects
+FallbackBehavior = "direct"  # Options: "direct" (default), "block"
+```
+
+**Auto-detection recognizes these VPN providers:**
+- **Mullvad**: wg-mullvad, wg-se1, wg-us1, etc.
+- **ProtonVPN**: proton0, protonvpn0
+- **NordVPN**: nordlynx, nordvpn
+- **IVPN**: ivpn0, tun-ivpn
+- **TunnelBear**: tun0 (with specific patterns)
+- **Generic WireGuard**: wg0-wg9
+- **Generic OpenVPN**: tun0-tun9, tap0-tap4
+
+### Manual VPN Configuration
+
+For better control, specify the exact VPN interface:
+
+```toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"
+
+# Specify upstream VPN interface manually
+UpstreamVPN = "wg-mullvad"
+
+# Auto-detect disabled when interface explicitly set
+AutoDetectVPN = false
+
+# Block traffic if VPN goes down (recommended for privacy)
+FallbackBehavior = "block"
+```
+
+### Popular VPN Provider Examples
+
+#### Mullvad WireGuard
+
+```toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"
+UpstreamVPN = "wg-mullvad"  # Mullvad's interface name
+FallbackBehavior = "block"   # Block if Mullvad disconnects
+
+# Mullvad uses wg-quick config at /etc/wireguard/wg-mullvad.conf
+# Start Mullvad before i2plan: sudo wg-quick up wg-mullvad
+```
+
+#### ProtonVPN
+
+```toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"
+UpstreamVPN = "proton0"      # ProtonVPN's interface
+FallbackBehavior = "block"
+
+# ProtonVPN CLI: protonvpn-cli connect
+# Then start i2plan
+```
+
+#### NordVPN
+
+```toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"
+UpstreamVPN = "nordlynx"     # NordVPN's WireGuard interface
+FallbackBehavior = "block"
+
+# NordVPN: nordvpn connect
+# Then start i2plan
+```
+
+#### Generic WireGuard VPN
+
+```toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"
+UpstreamVPN = "wg0"          # Your WireGuard interface
+FallbackBehavior = "direct"  # Allow direct if VPN fails
+
+# Start your VPN: sudo wg-quick up wg0
+# Then start i2plan
+```
+
+#### OpenVPN
+
+```toml
+[ExitNode]
+Enabled = true
+PublicInterface = "eth0"
+UpstreamVPN = "tun0"         # OpenVPN's tun interface
+FallbackBehavior = "block"
+
+# OpenVPN: sudo openvpn --config your-config.ovpn
+# Then start i2plan
+```
+
+### Policy Routing (Linux Only)
+
+**Note**: Policy routing for upstream VPN is currently **Linux-only**. macOS, Windows, and BSD support is planned for future releases.
+
+On Linux, i2plan automatically configures policy routing to direct mesh traffic through the upstream VPN:
+
+```bash
+# i2plan creates:
+# 1. Custom routing table (ID 100) for mesh traffic
+# 2. Route rule directing mesh traffic to VPN interface
+# 3. Cleanup on shutdown
+
+# View policy routing (after i2plan starts):
+ip rule show
+# Output includes: "from all iif wg0 lookup 100"
+
+ip route show table 100
+# Output shows: "default dev wg-mullvad"
+```
+
+**Platform Limitations:**
+- **Linux**: Full policy routing support ✅
+- **macOS**: Policy routing planned (currently returns "not implemented")
+- **Windows**: Policy routing planned (currently returns "not implemented")
+- **BSD**: Policy routing planned (currently returns "not implemented")
+
+### VPN Health Checks
+
+Exit nodes automatically monitor upstream VPN health every 30 seconds:
+
+```bash
+# Health check verifies:
+# 1. VPN interface exists
+# 2. Interface is in "UP" state
+# 3. Interface has assigned IP addresses
+
+# View health check logs
+journalctl -u i2plan -f | grep -i "vpn"
+
+# Example logs:
+# INFO exit_node: VPN health check passed interface=wg-mullvad
+# WARN exit_node: VPN interface down, using fallback interface=wg-mullvad
+```
+
+Health check failures trigger fallback behavior:
+- `FallbackBehavior = "direct"`: Routes traffic directly through PublicInterface
+- `FallbackBehavior = "block"`: Stops forwarding mesh traffic (privacy mode)
+
+### Route Advertisement
+
+Exit nodes with upstream VPNs advertise multiple routes to clients:
+
+```bash
+# Example advertisement from exit node:
+{
+  "available_routes": [
+    {
+      "name": "direct",
+      "priority": 100,
+      "bandwidth": 100,  # Mbps
+      "latency": 50      # ms
+    },
+    {
+      "name": "mullvad-sweden",
+      "priority": 50,
+      "bandwidth": 50,
+      "latency": 100
+    }
+  ],
+  "upstream_vpn": {
+    "provider": "mullvad",
+    "country": "SE",
+    "verified": true
+  }
+}
+
+# Clients can select "direct" or "mullvad-sweden" route
+```
+
+### Verifying Upstream VPN Setup
+
+```bash
+# 1. Start your upstream VPN first
+sudo wg-quick up wg-mullvad  # Example for Mullvad
+
+# 2. Verify VPN interface is up
+ip addr show wg-mullvad
+# Should show interface with IP address and "UP" state
+
+# 3. Start i2plan with exit node enabled
+sudo i2plan start
+
+# 4. Check exit node status
+i2plan rpc exit-node status
+# Should show upstream VPN detected
+
+# 5. Verify policy routing (Linux)
+ip rule show | grep wg0
+# Should show rule directing mesh traffic
+
+# 6. Check advertisement (from another mesh peer)
+i2plan rpc peers list
+# Should show your exit node with VPN routes advertised
+```
+
+### Upstream VPN Workflows
+
+#### Start Sequence
+
+```bash
+# 1. Start upstream VPN
+sudo wg-quick up wg-mullvad
+
+# 2. Verify VPN is connected
+ping -c 3 -I wg-mullvad 1.1.1.1
+
+# 3. Start i2plan
+sudo i2plan start
+
+# 4. Verify exit node initialized
+i2plan rpc exit-node status
+```
+
+#### Stop Sequence
+
+```bash
+# 1. Stop i2plan (cleans up routing rules)
+sudo i2plan stop
+
+# 2. Stop upstream VPN
+sudo wg-quick down wg-mullvad
+```
+
+#### Automatic Startup (systemd)
+
+```bash
+# Make upstream VPN start before i2plan
+sudo systemctl edit i2plan.service
+
+# Add dependency:
+[Unit]
+After=wg-quick@wg-mullvad.service
+Requires=wg-quick@wg-mullvad.service
+
+# Enable both services
+sudo systemctl enable wg-quick@wg-mullvad
+sudo systemctl enable i2plan
+
+# Start/stop together
+sudo systemctl start i2plan  # Starts Mullvad first automatically
+```
+
+---
+
 ## Exit Client Configuration
 
 ### Basic Exit Client Setup
@@ -289,6 +568,117 @@ Then update your config:
 [ExitClient]
 Enabled = true
 ExitNodeID = "peer-abc123"  # Specific node
+KillSwitch = true
+```
+
+### Route Selection (Phase 2)
+
+**New in Phase 2**: Clients can now select specific routes based on preferences when exit nodes advertise multiple options (direct and VPN-backed).
+
+#### Preferred Route Selection
+
+Request a specific route by name:
+
+```toml
+[ExitClient]
+Enabled = true
+
+# Request specific route (e.g., "mullvad-sweden", "protonvpn-us", "direct")
+PreferredRoute = "mullvad-sweden"
+
+# Fallback to any route if preferred unavailable
+RequireVPN = false
+```
+
+**Route Name Examples:**
+- `"direct"` - Direct routing through exit node's public interface
+- `"mullvad-sweden"` - Traffic routed through Mullvad VPN in Sweden
+- `"protonvpn-us"` - Traffic routed through ProtonVPN in US
+- `"nordvpn-uk"` - Traffic routed through NordVPN in UK
+
+#### Require VPN-Backed Routes
+
+Mandate VPN-backed exit nodes for maximum privacy:
+
+```toml
+[ExitClient]
+Enabled = true
+
+# Only use exit nodes with upstream VPNs
+RequireVPN = true
+
+# Optional: prefer specific VPN route
+PreferredRoute = "mullvad-sweden"
+
+# Block traffic if no VPN routes available (recommended)
+KillSwitch = true
+```
+
+When `RequireVPN = true`:
+- Client filters out exit nodes without upstream VPNs
+- Only routes through exit nodes advertising VPN backing
+- Returns error if no VPN-backed exit nodes available
+- Provides triple encryption: I2P + WireGuard + Upstream VPN
+
+#### Route Selection Priority
+
+When multiple exit nodes match preferences:
+
+1. **Exact Match**: PreferredRoute name matches exactly (highest priority)
+2. **VPN Requirement**: RequireVPN filters non-VPN routes
+3. **Load Balancing**: Lower load preferred (fewer active clients)
+4. **Route Priority**: Higher route priority value preferred
+5. **Bandwidth**: Higher bandwidth routes preferred
+
+```toml
+[ExitClient]
+Enabled = true
+
+# Priority order:
+# 1. Exit nodes advertising "mullvad-sweden" route
+# 2. Must have VPN backing
+# 3. Select node with lowest current load
+PreferredRoute = "mullvad-sweden"
+RequireVPN = true
+```
+
+#### Example Configurations
+
+**Maximum Privacy (Triple Encryption):**
+```toml
+[ExitClient]
+Enabled = true
+RequireVPN = true         # Must use VPN-backed exit
+PreferredRoute = ""       # Any VPN provider
+KillSwitch = true         # Block if connection fails
+DNSServers = ["1.1.1.1"]  # Encrypted DNS
+```
+
+**Specific VPN Provider:**
+```toml
+[ExitClient]
+Enabled = true
+RequireVPN = true
+PreferredRoute = "mullvad-sweden"  # Prefer Mullvad Sweden
+# Falls back to other VPN routes if Mullvad unavailable
+KillSwitch = true
+```
+
+**Direct Routing (No VPN):**
+```toml
+[ExitClient]
+Enabled = true
+RequireVPN = false
+PreferredRoute = "direct"  # Explicitly request direct routing
+KillSwitch = true
+```
+
+**Automatic Selection:**
+```toml
+[ExitClient]
+Enabled = true
+# No preferences - automatic load-based selection
+# May select VPN or direct routes based on availability
 KillSwitch = true
 ```
 
