@@ -571,7 +571,7 @@ ExitNodeID = "peer-abc123"  # Specific node
 KillSwitch = true
 ```
 
-### Route Selection (Phase 2)
+### Route Selection
 
 **New in Phase 2**: Clients can now select specific routes based on preferences when exit nodes advertise multiple options (direct and VPN-backed).
 
@@ -1276,6 +1276,185 @@ sudo i2plan restart
 
 # Test local access
 ping 192.168.1.1  # Your router
+```
+
+### Upstream VPN Issues
+
+**Problem: VPN interface not detected with AutoDetectVPN**
+
+```bash
+# Find your VPN interface name manually
+ip addr show  # Linux/BSD
+ifconfig      # macOS
+
+# Look for tun/tap/wg interfaces with IP addresses
+# Common patterns: tun0, wg0, wg-mullvad, proton0, nordlynx
+
+# Configure manually instead of auto-detect:
+# Edit config.toml:
+[ExitNode]
+UpstreamVPN = "wg-mullvad"  # Use exact interface name
+AutoDetectVPN = false
+
+# Restart
+sudo i2plan restart
+```
+
+**Problem: VPN health checks failing**
+
+```bash
+# Check if VPN interface is actually up
+ip link show wg-mullvad | grep "state UP"
+
+# Ensure VPN has IP address assigned
+ip addr show wg-mullvad
+
+# Look for:
+# 1. "UP" in flags: <UP,POINTOPOINT,RUNNING>
+# 2. inet address: inet 10.64.0.2/32
+
+# If interface down, start VPN first:
+sudo wg-quick up wg-mullvad  # WireGuard
+sudo openvpn --config vpn.ovpn  # OpenVPN
+nordvpn connect  # NordVPN
+protonvpn-cli connect  # ProtonVPN
+
+# Then start i2plan
+sudo i2plan start
+
+# Check health check logs
+journalctl -u i2plan -f | grep -i "health\|vpn"
+```
+
+**Problem: Policy routing not working (Linux)**
+
+```bash
+# Verify routing rules exist
+ip rule show | grep "lookup 100"
+# Should see: from all iif wg0 lookup 100
+
+# Check custom routing table
+ip route show table 100
+# Should see: default dev wg-mullvad
+
+# If missing, restart i2plan to recreate
+sudo i2plan restart
+
+# Or add manually (temporary):
+sudo ip rule add from all iif wg0 table 100
+sudo ip route add default dev wg-mullvad table 100
+
+# Test routing
+# Traffic from wg0 should go through wg-mullvad
+```
+
+**Problem: Policy routing not available on macOS/Windows/BSD**
+
+```bash
+# Policy routing is currently Linux-only
+# Workarounds:
+
+# Option 1: Use Linux for exit node
+# Set up exit node on Linux machine
+
+# Option 2: Wait for platform support
+# macOS/Windows/BSD support planned for Phase 2.1
+
+# Option 3: Manual system routing (advanced, not recommended)
+# Configure routing tables manually outside i2plan
+```
+
+**Problem: Fallback behavior not activating**
+
+```bash
+# Check FallbackBehavior configuration
+grep FallbackBehavior ~/.i2plan/config.toml
+
+# Should show:
+# FallbackBehavior = "direct"  # or "block"
+
+# Test fallback by disconnecting VPN:
+sudo wg-quick down wg-mullvad
+
+# Watch logs for fallback activation:
+journalctl -u i2plan -f | grep -i "fallback\|vpn"
+
+# Should see: "VPN interface down, using fallback"
+
+# If fallback = "direct": Traffic routes through PublicInterface
+# If fallback = "block": Forwarding stops
+
+# Reconnect VPN:
+sudo wg-quick up wg-mullvad
+```
+
+### Client Route Selection Issues
+
+**Problem: "No suitable exit node found" error**
+
+```bash
+# List available exit nodes and routes
+i2plan rpc exit-nodes list
+
+# Check if any exit nodes are available
+# Check what routes they advertise
+
+# If preferences too restrictive, relax:
+# Edit config.toml:
+[ExitClient]
+RequireVPN = false       # Accept any exit node
+PreferredRoute = ""      # No specific route
+
+# Restart
+sudo i2plan restart
+
+# Wait for gossip propagation (10-30 seconds)
+sleep 30 && i2plan rpc exit-nodes list
+```
+
+**Problem: Route selection ignores PreferredRoute**
+
+```bash
+# Check current route selection
+i2plan rpc exit-client status
+
+# Should show:
+# ExitNodeID: peer-abc123
+# RouteName: <route-name>
+
+# Verify preferred route is available
+i2plan rpc exit-nodes list | grep -A 10 "peer-abc123"
+
+# Look for preferred route in available_routes
+
+# If not found, route is unavailable
+# Options:
+# 1. Use different PreferredRoute
+# 2. Remove PreferredRoute for automatic selection
+# 3. Configure exit node to provide that route
+
+# Edit config.toml with correct route name:
+[ExitClient]
+PreferredRoute = "mullvad-sweden"  # Must match exactly
+
+sudo i2plan restart
+```
+
+**Problem: No VPN routes available with RequireVPN=true**
+
+```bash
+# Check if any exit nodes have upstream VPNs
+i2plan rpc exit-nodes list | grep -i "vpn\|upstream"
+
+# If no VPN-backed exit nodes:
+# Option 1: Configure exit node with UpstreamVPN
+# Option 2: Disable RequireVPN requirement
+
+# Edit config.toml:
+[ExitClient]
+RequireVPN = false  # Accept direct routes too
+
+sudo i2plan restart
 ```
 
 ### General Debugging
