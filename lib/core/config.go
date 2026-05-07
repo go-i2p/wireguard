@@ -145,6 +145,13 @@ type ClientExitConfig struct {
 	// ExitNodeID identifies the exit node by peer public key or name.
 	// Leave empty to auto-select the best available exit node.
 	ExitNodeID string `toml:"exit_node_id"`
+	// PreferredRoute specifies a preferred routing option name (e.g., "mullvad-sweden", "direct").
+	// If empty, the best route is auto-selected based on bandwidth and latency.
+	// If specified but not available, falls back to other routes unless RequireVPN is true.
+	PreferredRoute string `toml:"preferred_route"`
+	// RequireVPN mandates that only exit nodes with upstream VPN connections can be used.
+	// If true and no VPN-backed exits are available, connection fails rather than using direct routing.
+	RequireVPN bool `toml:"require_vpn"`
 	// KillSwitch blocks all non-mesh traffic if the exit node becomes unavailable.
 	// Prevents traffic leaks but blocks internet access until exit reconnects.
 	KillSwitch bool `toml:"kill_switch"`

@@ -54,9 +54,10 @@ type GossipEngine struct {
 	config GossipConfig
 
 	// Dependencies
-	peerManager  *PeerManager
-	routingTable *RoutingTable
-	sender       MessageSender
+	peerManager      *PeerManager
+	routingTable     *RoutingTable
+	sender           MessageSender
+	exitNodeProvider ExitNodeProvider
 
 	// Our identity
 	nodeID      string
@@ -83,17 +84,25 @@ type GossipEngine struct {
 	wg      sync.WaitGroup
 }
 
+// ExitNodeProvider provides access to exit node information for gossip.
+type ExitNodeProvider interface {
+	// BuildExitAdvertisement creates an exit node advertisement if this node is an exit.
+	// Returns nil if node is not running as an exit or has no info to share.
+	BuildExitAdvertisement() *ExitNodeAdvertisement
+}
+
 // GossipEngineConfig configures the gossip engine dependencies.
 type GossipEngineConfig struct {
-	Config       GossipConfig
-	PeerManager  *PeerManager
-	RoutingTable *RoutingTable
-	Sender       MessageSender
-	NodeID       string
-	I2PDest      string
-	WGPublicKey  string
-	TunnelIP     string
-	NetworkID    string
+	Config           GossipConfig
+	PeerManager      *PeerManager
+	RoutingTable     *RoutingTable
+	Sender           MessageSender
+	ExitNodeProvider ExitNodeProvider
+	NodeID           string
+	I2PDest          string
+	WGPublicKey      string
+	TunnelIP         string
+	NetworkID        string
 }
 
 // NewGossipEngine creates a new gossip engine.
@@ -113,16 +122,17 @@ func NewGossipEngine(cfg GossipEngineConfig) *GossipEngine {
 	rng := mrand.New(mrand.NewSource(seed))
 
 	return &GossipEngine{
-		config:       config,
-		peerManager:  cfg.PeerManager,
-		routingTable: cfg.RoutingTable,
-		sender:       cfg.Sender,
-		nodeID:       cfg.NodeID,
-		i2pDest:      cfg.I2PDest,
-		wgPublicKey:  cfg.WGPublicKey,
-		tunnelIP:     cfg.TunnelIP,
-		networkID:    cfg.NetworkID,
-		rng:          rng,
+		config:           config,
+		peerManager:      cfg.PeerManager,
+		routingTable:     cfg.RoutingTable,
+		sender:           cfg.Sender,
+		exitNodeProvider: cfg.ExitNodeProvider,
+		nodeID:           cfg.NodeID,
+		i2pDest:          cfg.I2PDest,
+		wgPublicKey:      cfg.WGPublicKey,
+		tunnelIP:         cfg.TunnelIP,
+		networkID:        cfg.NetworkID,
+		rng:              rng,
 	}
 }
 
@@ -366,6 +376,11 @@ func (g *GossipEngine) sendAnnouncement() {
 		PeerCount:   peerCount,
 	}
 
+	// Include exit node advertisement if available
+	if g.exitNodeProvider != nil {
+		announce.ExitNode = g.exitNodeProvider.BuildExitAdvertisement()
+	}
+
 	data, err := EncodeMessage(MsgPeerAnnounce, announce)
 	if err != nil {
 		log.Error("failed to encode announcement", "error", err)
@@ -589,6 +604,18 @@ func (g *GossipEngine) handlePeerAnnounce(msg *Message) error {
 	// Update peer last seen
 	if g.peerManager != nil {
 		g.peerManager.UpdatePeerSeen(announce.NodeID)
+	}
+
+	// Process exit node advertisement if present
+	if announce.ExitNode != nil && g.routingTable != nil {
+		log.Debug("received exit node advertisement",
+			"from", announce.NodeID,
+			"capabilities", announce.ExitNode.Capabilities,
+			"load", announce.ExitNode.CurrentLoad,
+			"routes", len(announce.ExitNode.AvailableRoutes))
+
+		// Store exit node advertisement in routing table
+		g.routingTable.UpdateExitNode(announce.NodeID, announce.ExitNode)
 	}
 
 	log.Debug("received peer announcement",

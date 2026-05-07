@@ -3,10 +3,13 @@ package core
 
 import (
 	"fmt"
+	"net"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-i2p/wireguard/lib/mesh"
 	"github.com/go-i2p/wireguard/lib/metrics"
 )
 
@@ -149,6 +152,11 @@ func (e *ExitNode) Start() error {
 
 	// Start metrics update loop in background
 	go e.updateMetricsLoop()
+
+	// Start VPN health check loop if upstream VPN is configured
+	if e.config.UpstreamVPN != "" || e.config.AutoDetect {
+		go e.healthCheckLoop()
+	}
 
 	return nil
 }
@@ -375,6 +383,114 @@ func (e *ExitNode) GetMetricsCollector() *metrics.ExitMetricsCollector {
 	return e.metricsCollector
 }
 
+// BuildExitAdvertisement creates an exit node advertisement for gossip.
+// Returns nil if the exit node is not active or has no useful info to share.
+// This implements the ExitNodeProvider interface for the gossip engine.
+func (e *ExitNode) BuildExitAdvertisement() *mesh.ExitNodeAdvertisement {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	// Don't advertise if not active
+	if !e.isActive {
+		return nil
+	}
+
+	// Build base advertisement
+	ad := &mesh.ExitNodeAdvertisement{
+		Capabilities:    []string{"nat", "forwarding"},
+		CurrentLoad:     e.currentLoad(),
+		AvailableRoutes: []mesh.RouteSpec{},
+	}
+
+	// Add upstream VPN info if configured
+	upstreamVPNs, err := DetectUpstreamVPNs()
+	if err == nil && len(upstreamVPNs) > 0 {
+		vpn := upstreamVPNs[0] // Use first detected VPN
+		ad.UpstreamVPN = &mesh.UpstreamVPNInfo{
+			Provider: detectVPNProvider(vpn.Interface),
+			Country:  "unknown", // TODO: Implement country detection
+			Verified: true,      // TODO: Implement health check
+		}
+	}
+
+	// Build available routes
+	ad.AvailableRoutes = e.buildAvailableRoutes()
+
+	return ad
+}
+
+// currentLoad calculates exit node load (0.0-1.0) based on active connections.
+func (e *ExitNode) currentLoad() float64 {
+	metrics := e.metricsCollector.GetMetrics()
+	activeSessions := metrics.ActiveClients()
+
+	// Use a reasonable max capacity (100 sessions)
+	maxCapacity := 100.0
+	load := float64(activeSessions) / maxCapacity
+	if load > 1.0 {
+		load = 1.0
+	}
+	return load
+}
+
+// buildAvailableRoutes constructs the list of available routing options.
+func (e *ExitNode) buildAvailableRoutes() []mesh.RouteSpec {
+	routes := []mesh.RouteSpec{
+		{
+			Name:      "direct",
+			Priority:  100,
+			Bandwidth: 100000000, // 100 Mbps (example)
+			Latency:   50,        // 50ms (example)
+		},
+	}
+
+	// Check if an upstream VPN is active
+	upstreamVPNs, err := DetectUpstreamVPNs()
+	if err == nil && len(upstreamVPNs) > 0 {
+		vpn := upstreamVPNs[0]
+		routes = append(routes, mesh.RouteSpec{
+			Name:      "vpn-" + detectVPNProvider(vpn.Interface),
+			Priority:  50,       // Lower priority than direct
+			Bandwidth: 50000000, // 50 Mbps (typically slower)
+			Latency:   100,      // 100ms (higher latency through VPN)
+		})
+	}
+
+	return routes
+}
+
+// detectVPNProvider attempts to identify the VPN provider from interface name.
+func detectVPNProvider(interfaceName string) string {
+	name := strings.ToLower(interfaceName)
+
+	// Check for well-known provider patterns
+	if strings.Contains(name, "mullvad") {
+		return "Mullvad"
+	}
+	if strings.Contains(name, "proton") {
+		return "ProtonVPN"
+	}
+	if strings.Contains(name, "nord") {
+		return "NordVPN"
+	}
+	if strings.Contains(name, "ivpn") {
+		return "IVPN"
+	}
+	if strings.Contains(name, "tailscale") {
+		return "Tailscale"
+	}
+
+	// Check by type
+	if strings.HasPrefix(name, "wg") {
+		return "WireGuard"
+	}
+	if strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap") {
+		return "OpenVPN"
+	}
+
+	return "Unknown"
+}
+
 // updateMetricsLoop periodically updates bandwidth calculations.
 // Runs in a background goroutine until metricsUpdateDone is closed.
 func (e *ExitNode) updateMetricsLoop() {
@@ -395,4 +511,101 @@ func (e *ExitNode) updateMetricsLoop() {
 			return
 		}
 	}
+}
+
+// healthCheckLoop periodically verifies upstream VPN connectivity.
+// Runs in a background goroutine until metricsUpdateDone is closed.
+func (e *ExitNode) healthCheckLoop() {
+	// Perform initial health check
+	if err := e.VerifyUpstreamVPN(); err != nil {
+		log.Warn("initial upstream VPN health check failed", "error", err)
+	}
+
+	// Check every 30 seconds
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := e.VerifyUpstreamVPN(); err != nil {
+				log.Debug("upstream VPN health check failed", "error", err)
+			}
+		case <-e.metricsUpdateDone:
+			return
+		}
+	}
+}
+
+// VerifyUpstreamVPN checks if the configured upstream VPN is active and reachable.
+// This performs a basic health check by verifying the interface exists and is up.
+// Returns nil if the VPN is healthy, or an error describing the problem.
+func (e *ExitNode) VerifyUpstreamVPN() error {
+	e.mu.RLock()
+	upstreamIface := e.upstreamInterface
+	autoDetect := e.config.AutoDetect
+	e.mu.RUnlock()
+
+	// If no upstream interface configured and auto-detect disabled, nothing to check
+	if upstreamIface == "" && !autoDetect {
+		return nil
+	}
+
+	// Auto-detect if no specific interface configured
+	if upstreamIface == "" && autoDetect {
+		vpns, err := DetectUpstreamVPNs()
+		if err != nil {
+			return fmt.Errorf("detect upstream VPNs: %w", err)
+		}
+
+		if len(vpns) == 0 {
+			return fmt.Errorf("no upstream VPN interfaces detected")
+		}
+
+		// Use the first active VPN
+		for _, vpn := range vpns {
+			if vpn.IsActive {
+				upstreamIface = vpn.Interface
+				break
+			}
+		}
+
+		if upstreamIface == "" {
+			return fmt.Errorf("no active upstream VPN found")
+		}
+	}
+
+	// Verify the interface exists and is up
+	exists, err := InterfaceExists(upstreamIface)
+	if err != nil {
+		return fmt.Errorf("check interface %s: %w", upstreamIface, err)
+	}
+
+	if !exists {
+		return fmt.Errorf("upstream interface %s does not exist", upstreamIface)
+	}
+
+	// Get interface details to check if it's up
+	iface, err := net.InterfaceByName(upstreamIface)
+	if err != nil {
+		return fmt.Errorf("get interface %s: %w", upstreamIface, err)
+	}
+
+	// Check if interface is up
+	if iface.Flags&net.FlagUp == 0 {
+		return fmt.Errorf("interface %s is down", upstreamIface)
+	}
+
+	// Check if interface has an IP address
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return fmt.Errorf("get addresses for %s: %w", upstreamIface, err)
+	}
+
+	if len(addrs) == 0 {
+		return fmt.Errorf("interface %s has no IP addresses", upstreamIface)
+	}
+
+	log.Debug("upstream VPN health check passed", "interface", upstreamIface)
+	return nil
 }

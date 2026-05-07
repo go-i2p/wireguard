@@ -35,11 +35,12 @@ type RouteEntry struct {
 
 // RoutingTable manages the mesh network routing table.
 type RoutingTable struct {
-	mu       sync.RWMutex
-	routes   map[netip.Addr]*RouteEntry // keyed by TunnelIP
-	byNodeID map[string]*RouteEntry     // secondary index by NodeID
-	subnet   netip.Prefix
-	filePath string
+	mu        sync.RWMutex
+	routes    map[netip.Addr]*RouteEntry        // keyed by TunnelIP
+	byNodeID  map[string]*RouteEntry            // secondary index by NodeID
+	exitNodes map[string]*ExitNodeAdvertisement // exit node advertisements by NodeID
+	subnet    netip.Prefix
+	filePath  string
 }
 
 // RoutingTableConfig configures the routing table.
@@ -59,10 +60,11 @@ func NewRoutingTable(cfg RoutingTableConfig) *RoutingTable {
 
 	log.WithField("subnet", subnet.String()).Debug("creating new routing table")
 	return &RoutingTable{
-		routes:   make(map[netip.Addr]*RouteEntry),
-		byNodeID: make(map[string]*RouteEntry),
-		subnet:   subnet,
-		filePath: cfg.FilePath,
+		routes:    make(map[netip.Addr]*RouteEntry),
+		byNodeID:  make(map[string]*RouteEntry),
+		exitNodes: make(map[string]*ExitNodeAdvertisement),
+		subnet:    subnet,
+		filePath:  cfg.FilePath,
 	}
 }
 
@@ -407,4 +409,94 @@ func (e *IPCollisionError) Error() string {
 func IsIPCollision(err error) bool {
 	var collisionErr *IPCollisionError
 	return errors.As(err, &collisionErr)
+}
+
+// UpdateExitNode updates the exit node advertisement for a given node.
+func (rt *RoutingTable) UpdateExitNode(nodeID string, adv *ExitNodeAdvertisement) {
+	log.WithField("nodeID", nodeID).Debug("updating exit node advertisement")
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	if adv == nil {
+		// Remove exit node if advertisement is nil
+		delete(rt.exitNodes, nodeID)
+		log.WithField("nodeID", nodeID).Debug("removed exit node advertisement")
+		return
+	}
+
+	// Store a copy of the advertisement
+	advCopy := *adv
+	if advCopy.UpstreamVPN != nil {
+		vpnCopy := *advCopy.UpstreamVPN
+		advCopy.UpstreamVPN = &vpnCopy
+	}
+	if advCopy.AvailableRoutes != nil {
+		routesCopy := make([]RouteSpec, len(advCopy.AvailableRoutes))
+		copy(routesCopy, advCopy.AvailableRoutes)
+		advCopy.AvailableRoutes = routesCopy
+	}
+	if advCopy.Capabilities != nil {
+		capsCopy := make([]string, len(advCopy.Capabilities))
+		copy(capsCopy, advCopy.Capabilities)
+		advCopy.Capabilities = capsCopy
+	}
+
+	rt.exitNodes[nodeID] = &advCopy
+	log.WithField("nodeID", nodeID).WithField("capabilities", advCopy.Capabilities).Debug("updated exit node advertisement")
+}
+
+// GetExitNodes returns all exit node advertisements.
+func (rt *RoutingTable) GetExitNodes() map[string]*ExitNodeAdvertisement {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	result := make(map[string]*ExitNodeAdvertisement, len(rt.exitNodes))
+	for nodeID, adv := range rt.exitNodes {
+		advCopy := *adv
+		if advCopy.UpstreamVPN != nil {
+			vpnCopy := *advCopy.UpstreamVPN
+			advCopy.UpstreamVPN = &vpnCopy
+		}
+		if advCopy.AvailableRoutes != nil {
+			routesCopy := make([]RouteSpec, len(advCopy.AvailableRoutes))
+			copy(routesCopy, advCopy.AvailableRoutes)
+			advCopy.AvailableRoutes = routesCopy
+		}
+		if advCopy.Capabilities != nil {
+			capsCopy := make([]string, len(advCopy.Capabilities))
+			copy(capsCopy, advCopy.Capabilities)
+			advCopy.Capabilities = capsCopy
+		}
+		result[nodeID] = &advCopy
+	}
+	return result
+}
+
+// GetExitNode returns the exit node advertisement for a specific node.
+func (rt *RoutingTable) GetExitNode(nodeID string) (*ExitNodeAdvertisement, bool) {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	adv, ok := rt.exitNodes[nodeID]
+	if !ok {
+		return nil, false
+	}
+
+	// Return a copy
+	advCopy := *adv
+	if advCopy.UpstreamVPN != nil {
+		vpnCopy := *advCopy.UpstreamVPN
+		advCopy.UpstreamVPN = &vpnCopy
+	}
+	if advCopy.AvailableRoutes != nil {
+		routesCopy := make([]RouteSpec, len(advCopy.AvailableRoutes))
+		copy(routesCopy, advCopy.AvailableRoutes)
+		advCopy.AvailableRoutes = routesCopy
+	}
+	if advCopy.Capabilities != nil {
+		capsCopy := make([]string, len(advCopy.Capabilities))
+		copy(capsCopy, advCopy.Capabilities)
+		advCopy.Capabilities = capsCopy
+	}
+	return &advCopy, true
 }

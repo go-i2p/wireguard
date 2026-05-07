@@ -92,6 +92,10 @@ type Node struct {
 	rpcServer *rpc.Server
 	webServer *web.Server
 
+	// Exit node/client components
+	exitNode   *ExitNode
+	exitClient *ExitClient
+
 	// Derived values
 	tunnelIP netip.Addr
 }
@@ -235,6 +239,17 @@ func (n *Node) initMeshPhase(nodeCtx context.Context) error {
 		n.emitError(err, "failed to initialize mesh")
 		return err
 	}
+
+	// Initialize exit node if enabled
+	if err := n.initExitNode(); err != nil {
+		log.Warn("failed to initialize exit node", "error", err)
+	}
+
+	// Initialize exit client if enabled
+	if err := n.initExitClient(); err != nil {
+		log.Warn("failed to initialize exit client", "error", err)
+	}
+
 	return nil
 }
 
@@ -699,16 +714,23 @@ func (n *Node) initGossipEngine(ctx context.Context) error {
 	gossipConfig.HeartbeatInterval = n.config.Mesh.HeartbeatInterval
 	gossipConfig.PeerTimeout = n.config.Mesh.PeerTimeout
 
+	// Only pass exit node provider if exit node is actually initialized and non-nil
+	var exitProvider mesh.ExitNodeProvider
+	if n.exitNode != nil {
+		exitProvider = n.exitNode
+	}
+
 	n.gossip = mesh.NewGossipEngine(mesh.GossipEngineConfig{
-		Config:       gossipConfig,
-		PeerManager:  n.peers,
-		RoutingTable: n.routing,
-		Sender:       n.sender,
-		NodeID:       n.identity.NodeID(),
-		I2PDest:      n.identity.I2PDest(),
-		WGPublicKey:  n.identity.PublicKey().String(),
-		TunnelIP:     n.tunnelIP.String(),
-		NetworkID:    n.identity.NetworkID(),
+		Config:           gossipConfig,
+		PeerManager:      n.peers,
+		RoutingTable:     n.routing,
+		Sender:           n.sender,
+		ExitNodeProvider: exitProvider, // Pass exit node for advertisement (nil-safe)
+		NodeID:           n.identity.NodeID(),
+		I2PDest:          n.identity.I2PDest(),
+		WGPublicKey:      n.identity.PublicKey().String(),
+		TunnelIP:         n.tunnelIP.String(),
+		NetworkID:        n.identity.NetworkID(),
 	})
 
 	n.trans.SetMeshHandler(func(data []byte, from i2pkeys.I2PAddr) {
@@ -850,6 +872,52 @@ func (n *Node) handleI2PReconnect() error {
 	return nil
 }
 
+// initExitNode initializes the exit node if enabled in config.
+func (n *Node) initExitNode() error {
+	if !n.config.ExitNode.Enabled {
+		return nil
+	}
+
+	log.Info("initializing exit node", "interface", n.config.ExitNode.PublicInterface)
+
+	exitNode, err := NewExitNode(n.config.ExitNode)
+	if err != nil {
+		return fmt.Errorf("creating exit node: %w", err)
+	}
+
+	if err := exitNode.Start(); err != nil {
+		return fmt.Errorf("starting exit node: %w", err)
+	}
+
+	n.mu.Lock()
+	n.exitNode = exitNode
+	n.mu.Unlock()
+
+	log.Info("exit node started successfully")
+	return nil
+}
+
+// initExitClient initializes the exit client if enabled in config.
+func (n *Node) initExitClient() error {
+	if !n.config.ExitClient.Enabled {
+		return nil
+	}
+
+	log.Info("initializing exit client", "exit_node_id", n.config.ExitClient.ExitNodeID)
+
+	exitClient, err := NewExitClient(n.config.ExitClient)
+	if err != nil {
+		return fmt.Errorf("creating exit client: %w", err)
+	}
+
+	n.mu.Lock()
+	n.exitClient = exitClient
+	n.mu.Unlock()
+
+	log.Info("exit client initialized")
+	return nil
+}
+
 // initInterfaces starts RPC and Web interfaces if enabled.
 func (n *Node) initInterfaces(ctx context.Context) error {
 	if n.config.RPC.Enabled {
@@ -926,15 +994,17 @@ func (n *Node) initWebServer() error {
 
 // cleanup shuts down all components in reverse order with progress logging.
 func (n *Node) cleanup() {
-	log.Info("cleanup phase 1/5: stopping interfaces")
+	log.Info("cleanup phase 1/6: stopping interfaces")
 	n.cleanupInterfaces()
-	log.Info("cleanup phase 2/5: stopping mesh services")
+	log.Info("cleanup phase 2/6: stopping exit node/client")
+	n.cleanupExitComponents()
+	log.Info("cleanup phase 3/6: stopping mesh services")
 	n.cleanupMeshServices()
-	log.Info("cleanup phase 3/5: persisting state")
+	log.Info("cleanup phase 4/6: persisting state")
 	n.cleanupPersistence()
-	log.Info("cleanup phase 4/5: closing device")
+	log.Info("cleanup phase 5/6: closing device")
 	n.cleanupDevice()
-	log.Info("cleanup phase 5/5: closing transport")
+	log.Info("cleanup phase 6/6: closing transport")
 	n.cleanupTransport()
 	log.Info("cleanup complete")
 }
@@ -970,6 +1040,36 @@ func (n *Node) cleanupInterfaces() {
 		}
 		cancel()
 		n.rpcServer = nil
+	}
+}
+
+// cleanupExitComponents stops exit node and exit client if they are running.
+func (n *Node) cleanupExitComponents() {
+	n.mu.Lock()
+	exitNode := n.exitNode
+	exitClient := n.exitClient
+	n.mu.Unlock()
+
+	if exitNode != nil {
+		if err := exitNode.Stop(); err != nil {
+			log.Warn("failed to stop exit node", "error", err)
+		} else {
+			log.Debug("exit node stopped")
+		}
+		n.mu.Lock()
+		n.exitNode = nil
+		n.mu.Unlock()
+	}
+
+	if exitClient != nil {
+		if err := exitClient.Stop(); err != nil {
+			log.Warn("failed to stop exit client", "error", err)
+		} else {
+			log.Debug("exit client stopped")
+		}
+		n.mu.Lock()
+		n.exitClient = nil
+		n.mu.Unlock()
 	}
 }
 

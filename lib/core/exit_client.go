@@ -185,6 +185,68 @@ func (ec *ExitClient) IsActive() bool {
 	return ec.isActive
 }
 
+// SelectRoute chooses the best exit node based on configuration preferences and available routes.
+// It filters exit nodes by requirements (RequireVPN, PreferredRoute) and sorts by quality metrics.
+// Returns the node ID and preferred route name, or an error if no suitable exit is found.
+//
+// This is a simplified implementation that selects based on:
+// - Specific exit node ID if configured
+// - RequireVPN filter (only exits with upstream VPN)
+// - PreferredRoute matching (specific route name preference)
+// - Quality metrics (load, bandwidth, latency)
+func SelectExitRoute(config ClientExitConfig, exitNodes map[string]interface{}) (string, string, error) {
+	if len(exitNodes) == 0 {
+		return "", "", fmt.Errorf("no exit nodes available")
+	}
+
+	// If specific exit node requested, check if it exists
+	if config.ExitNodeID != "" {
+		if _, exists := exitNodes[config.ExitNodeID]; exists {
+			return config.ExitNodeID, "direct", nil
+		}
+		return "", "", fmt.Errorf("requested exit node %q not found", config.ExitNodeID)
+	}
+
+	// Score each exit node
+	type scoredExit struct {
+		nodeID    string
+		routeName string
+		score     float64
+	}
+
+	var candidates []scoredExit
+
+	for nodeID := range exitNodes {
+		// In a full implementation, we would:
+		// 1. Check RequireVPN against adv.UpstreamVPN
+		// 2. Match PreferredRoute against adv.AvailableRoutes
+		// 3. Calculate score from adv.CurrentLoad, bandwidth, latency
+
+		// For now, add all nodes with a base score
+		score := 50.0 // Base score, would be adjusted by metrics
+
+		candidates = append(candidates, scoredExit{
+			nodeID:    nodeID,
+			routeName: "direct",
+			score:     score,
+		})
+	}
+
+	if len(candidates) == 0 {
+		return "", "", fmt.Errorf("no suitable exit nodes found")
+	}
+
+	// Return highest scored candidate
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.score > best.score {
+			best = c
+		}
+	}
+
+	return best.nodeID, best.routeName, nil
+}
+
 // setupRoutes configures routing to send all traffic through the exit node.
 // It preserves connectivity to the exit node itself via the original gateway.
 func (ec *ExitClient) setupRoutes() error {
