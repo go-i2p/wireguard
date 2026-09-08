@@ -35,23 +35,23 @@ require (
 	github.com/dchest/siphash v1.2.3 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/go-i2p/common v0.1.59999 // indirect
-	github.com/go-i2p/crypto v0.1.59999 // indirect
-	github.com/go-i2p/elgamal v0.1.59999 // indirect
-	github.com/go-i2p/go-datagrams v0.1.59999 // indirect
-	github.com/go-i2p/go-i2cp v0.1.59999 // indirect
-	github.com/go-i2p/go-i2p v0.1.59999 // indirect
+	github.com/go-i2p/common v0.1.60000-0.20260701134558-e5f5cf65a7f5 // indirect
+	github.com/go-i2p/crypto v0.1.60000-0.20260701135847-3ade996b68a0 // indirect
+	github.com/go-i2p/elgamal v0.1.60000-0.20260701131626-b5c8141026fc // indirect
+	github.com/go-i2p/go-datagrams v0.1.67 // indirect
+	github.com/go-i2p/go-i2cp v0.1.60000-0.20260701134816-aa86eb2db4a5 // indirect
+	github.com/go-i2p/go-i2p v0.1.67 // indirect
 	github.com/go-i2p/go-nat-listener v0.1.68 // indirect
-	github.com/go-i2p/go-noise v0.1.59999 // indirect
-	github.com/go-i2p/go-sam-bridge v0.1.59999 // indirect
+	github.com/go-i2p/go-noise v0.1.60000-0.20260701134708-a15c74fe448e // indirect
+	github.com/go-i2p/go-sam-bridge v0.1.67 // indirect
 	github.com/go-i2p/go-sam-go v0.33.1 // indirect
-	github.com/go-i2p/go-streaming v0.1.59999 // indirect
-	github.com/go-i2p/go-unzip v0.0.0-20260908192035-1d47af1fc238 // indirect
-	github.com/go-i2p/noise v1.1.1-0.20260327201800-8e41bb3d9f1e // indirect
-	github.com/go-i2p/path v0.1.59999 // indirect
-	github.com/go-i2p/pool v0.1.59999 // indirect
-	github.com/go-i2p/red25519 v0.0.0-20260908192929-b906f5fda5c0 // indirect
-	github.com/go-i2p/su3 v0.1.59999 // indirect
+	github.com/go-i2p/go-streaming v0.1.67 // indirect
+	github.com/go-i2p/go-unzip v0.0.0-20260908193701-6ecb33740b07 // indirect
+	github.com/go-i2p/noise v1.1.1-0.20260612013029-6d1ef3427561 // indirect
+	github.com/go-i2p/path v0.1.60000-0.20260701134624-ee3ce0cb2483 // indirect
+	github.com/go-i2p/pool v0.1.60000-0.20260701134610-0724f29e205d // indirect
+	github.com/go-i2p/red25519 v0.0.0-20260908204607-9444de34c638 // indirect
+	github.com/go-i2p/su3 v0.1.60000-0.20260701134531-62efdb4e3f71 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
@@ -81,14 +81,14 @@ require (
 	go.step.sm/crypto v0.90.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
+	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
-	gvisor.dev/gvisor v0.0.0-20260908192009-0c9d044ba9c6 // indirect
+	gvisor.dev/gvisor v0.0.0-20260908203637-b6c312b83f13 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
 
